@@ -1,0 +1,361 @@
+@@@!atrep
+
+@@/ bibliogramma: a BibTeX-isomorphic bibliography format as an
+@@/ atrep dialektos - an extension litogramma documents use for
+@@/ references (englossis embedding; the cite mono links by
+@@/ key). The data model is biblatex-shaped and covers the full
+@@/ regular census of entry types and data fields; classic
+@@/ BibTeX is the lossy export. Canonical terms are LATIN - the
+@@/ entry genos draws from the genera vocabulary and the field
+@@/ lemma from the campi vocabulary, with aliases across ~40
+@@/ languages for the naturally-translatable terms (technical
+@@/ terms carry Latin plus the biblatex name): a bibliography
+@@/ authored in any covered language kanonizes, and hashes,
+@@/ identically. Vocabulary-bound genoses are semantic and
+@@/ survive litosis. Out of scope (Tier C, pass-through
+@@/ verbatim): the relational machinery - crossref, xdata
+@@/ inheritance, related, entryset - and processing hints
+@@/ (options, sort*, short* names, ids); biber resolves those
+@@/ downstream when the target is biblatex.
+
+@=== entry
+@& lemma
+grammata
+&@
+@% genera
+@"bibliography entry; lemma is the citation key, genos the genus"@
+===@
+
+@=== field
+@: lemma=campi
+grammata
+:@
+@"entry field; the lemma is the field name (campus)"@
+===@
+
+@==% genera
+commentarius: article articolo articulo artigo artikel artikkel
+commentarius: artikkeli artikull artikuls artykuł artículo bài-báo
+commentarius: cikk makale maqale maqola raksts straipsnis članak
+commentarius: článek άρθρο статия стаття статья מאמר مقالة مقاله लेख
+commentarius: প্রবন্ধ บทความ 文章 記事 논문
+liber: boek bog bok book buch grāmata kirja kitab kitap kitob kniha
+liber: knjiga knyga książka könyv libro libër livre livro sách βιβλίο
+liber: книга книжка ספר كتاب کتاب किताब पुस्तक বই หนังสือ 书 書籍 책
+libellus: booklet brochure broschüre brosur broszura broşurë broşür
+libellus: brožura folleto füzet kirjanen opuscolo φυλλάδιο брошура
+libellus: брошюра חוברת جزوه كتيب पुस्तिका 小冊子 小册子 소책자
+collectio: colección coletânea collection derleme gyűjtemény kokoelma
+collectio: kumpulan përmbledhje raccolta sammlung sborník zbiór
+collectio: zbornik συλλογή сборник אוסף مجموعة مجموعه संग्रह সংকলন 文集
+collectio: 論文集 총서
+membrum: in-collection incollection
+acta: actas actes atti konferenssijulkaisu közlemények materiały
+acta: proceedings prosiding tagungsband πρακτικά труды وقائع 会议录 회보
+relatio: bildiri communication conference conference-paper előadás
+relatio: inproceedings konferenssiesitelmä konferenzbeitrag ponencia
+relatio: příspěvek referat relazione εισήγηση доклад саопштење 会议论文
+relatio: 学会発表 학술대회논문
+renuntiatio: ataskaita bericht informe izvještaj jelentés laporan
+renuntiatio: rapor raport raportti rapport rapporto relatório report
+renuntiatio: techreport ziņojums zpráva έκθεση отчет отчёт דוח تقرير
+renuntiatio: گزارش रिपोर्ट প্রতিবেদন รายงาน 報告書 报告 보고서
+enchiridion: handboek handbok handbook handbuch håndbog käsikirja
+enchiridion: kézikönyv kılavuz manual manuale manuel panduan
+enchiridion: podręcznik priručnik příručka rokasgrāmata vadovas
+enchiridion: εγχειρίδιο наръчник руководство справочник מדריך دليل
+enchiridion: راهنما हस्तपुस्तिका নির্দেশিকা คู่มือ マニュアル 手册 매뉴얼
+miscellanea: dažādi divers diverse egyéb lain-lain misc miscellaneous
+miscellanea: misceláneo razno różne různé sekalaista sonstiges varie
+miscellanea: çeşitli övrigt įvairūs διάφορα разни разное שונות متفرقات
+miscellanea: متفرقه विविध বিবিধ เบ็ดเตล็ด その他 其他 기타
+interretialis: daring electronic en-ligne en-línea internete
+interretialis: internetowy mrežno on-line online tiešsaistē verkossa
+interretialis: web webpage www çevrimiçi διαδικτυακό онлайн מקוון
+interretialis: آنلاین عبر-الإنترنت ऑनलाइन অনলাইন ออนไลน์ オンライン 在线 온라인
+diploma: brevet brevetto paten patent patentas patente patents
+diploma: patentschrift patentti patentë szabadalom
+diploma: δίπλωμα-ευρεσιτεχνίας патент פטנט براءة پتنت पेटेंट পেটেন্ট
+diploma: สิทธิบัตร 专利 特許 특허
+periodicum: berkala czasopismo folyóirat kausijulkaisu periodical
+periodicum: periodico periodik periodika periodikum
+periodicum: periodinis-leidinys periódico périodique süreli-yayın
+periodicum: tidskrift tidsskrift zeitschrift περιοδικό периодика
+periodicum: כתב-עת دورية نشریه पत्रिका সাময়িকী วารสาร 定期刊行物 期刊 정기간행물
+dissertatio: afhandling avhandling disertace disertacija disertacion
+dissertatio: disertasi disertācija dissertation mastersthesis
+dissertatio: phdthesis proefschrift rozprawa tese tesi tesis tez
+dissertatio: thesis thèse väitöskirja értekezés διατριβή дисертация
+dissertatio: дисертація диссертация עבודת-גמר أطروحة پایان‌نامه
+dissertatio: शोध-प्रबंध অভিসন্দর্ভ วิทยานิพนธ์ 学位論文 论文 학위논문
+ineditum: i-pabotuar inedito inédit inédito julkaisematon kiadatlan
+ineditum: neobjavljeno nepublicēts nepublikováno nepublikuota
+ineditum: niepublikowane opublicerad tidak-diterbitkan unpublished
+ineditum: unveröffentlicht upubliceret yayımlanmamış αδημοσίευτο
+ineditum: неопубликовано непубликувано לא-פורסם غير-منشور منتشرنشده
+ineditum: अप्रकाशित অপ্রকাশিত ไม่ตีพิมพ์ 未刊行 未发表 미출판
+data: adathalmaz aineisto conjunto-de-dados conjunto-de-datos dataset
+data: datasæt datensatz datová-sada datu-kopa duomenų-rinkinys
+data: jeu-de-données skup-podataka veri-kümesi zbiór-danych
+data: σύνολο-δεδομένων набор-данных מערך-נתונים مجموعة-بيانات
+data: مجموعه-داده डेटासेट ডেটাসেট ชุดข้อมูล データセット 数据集 데이터셋
+programma: logiciel ohjelmisto oprogramowanie perangkat-lunak programa
+programma: programinė-įranga programmatūra softuer software szoftver
+programma: yazılım λογισμικό программа софтуер תוכנה برمجية نرم‌افزار
+programma: सॉफ़्टवेयर সফটওয়্যার ซอฟต์แวร์ ソフトウェア 软件 소프트웨어
+liber-multiplex: multivolume-book mvbook
+pars-libri: in-book inbook
+liber-in-libro: book-in-book bookinbook
+supplementum-libri: suppbook supplemental-book-material
+collectio-multiplex: multivolume-collection mvcollection
+supplementum-collectionis: suppcollection
+acta-multiplex: multivolume-proceedings mvproceedings
+supplementum-periodici: suppperiodical
+thesaurus: diccionario dictionary dictionnaire enciclopedia
+thesaurus: enciklopedija enciklopédia encyclopedia encyclopédie
+thesaurus: encyklopedia enzyklopädie reference sanakirja szótár
+thesaurus: słownik tietosanakirja vārdnīca wörterbuch εγκυκλοπαίδεια
+thesaurus: λεξικό словарь энциклопедия אנציקלופדיה מילון دانشنامه
+thesaurus: قاموس موسوعة विश्वकोश शब्दकोश พจนานุกรม สารานุกรม 百科事典 百科全书
+thesaurus: 词典 辞典 백과사전 사전
+thesaurus-multiplex: multivolume-reference mvreference
+pars-thesauri: inreference reference-entry
+complexus: entry-set set
+xdata:
+artificium: artwork dzieło-sztuki konstverk kunstwerk meno-kūrinys
+artificium: mākslas-darbs műalkotás obra-de-arte opera-d'arte
+artificium: sanat-eseri taideteos umělecké-dílo œuvre-d'art
+artificium: έργο-τέχνης произведение-искусства יצירת-אמנות اثر-هنری
+artificium: عمل-فني कलाकृति งานศิลปะ 美術品 艺术品 예술작품
+audio: audio-recording aufnahme enregistrement grabación hangfelvétel
+audio: nagranie ses-kaydı zvuková-nahrávka äänite ηχογράφηση
+audio: аудиозапись הקלטה تسجيل-صوتي صوت ऑडियो เสียง 音声 音频 오디오
+pellicula: film film-id film-pl film-tr filma filmas filme movie
+pellicula: pellicola película фильм фільм סרט فيلم فیلم
+pellicula: फ़िल्म চলচ্চিত্র ภาพยนตร์ 映画 电影 영화
+video: vaizdo-įrašas video-fi video-recording videó vidéo vídeo wideo
+video: βίντεο видео וידאו فيديو ویدیو वीडियो วิดีโอ 動画 视频 비디오
+musica: glazba hudba music musiikki musik musik-dk musik-id musique
+musica: muziek muzika muzikë muzyka música müzik mūzika zene μουσική
+musica: музика музыка מוזיקה موسيقى موسیقی संगीत সংগীত ดนตรี 音乐 音楽 음악
+spectaculum: aufführung előadás-perf esitys espectáculo föreställning
+spectaculum: gösteri izrāde performance pertunjukan przedstawienie
+spectaculum: představení spectacle spektaklis spettacolo παράσταση
+spectaculum: спектакль הופעה اجرا عرض प्रदर्शन การแสดง 公演 演出 공연
+epistula: brev brief carta dopis kirje laiškas letter lettera lettre
+epistula: letër levél list mektup pismo surat vēstule επιστολή лист
+epistula: писмо письмо מכתב رسالة نامه पत्र চিঠি จดหมาย 信 手紙 편지
+recensio: anmeldelse arvostelu critique inceleme recensie recension
+recensio: recensione recenze recenzija recenzija-lt recenzija-lv
+recensio: recenzió recenzja reseña review rezension ulasan κριτική
+recensio: рецензия рецензия-bg рецензія ביקורת مراجعة نقد समीक्षा
+recensio: পর্যালোচনা บทวิจารณ์ 书评 書評 서평
+norma: estándar norm norma-cs norma-pl normativa norme standar
+norma: standard standard-hr standardi standart standartas standarts
+norma: szabvány πρότυπο стандарт стандарт-bg תקן استاندارد معيار मानक
+norma: মানদণ্ড มาตรฐาน 标准 規格 표준
+lex: gesetz lag laki legge legislation ley ligj likums loi lov luật
+lex: törvény undang-undang ustawa yasa zakon zákon įstatymas νόμος
+lex: закон закон-bg חוק قانون قانون-fa कानून আইন กฎหมาย 法令 法律 법률
+iudicium: court-decision içtihat judikát jurisdiction jurisprudence
+iudicium: jurisprudencia oikeuskäytäntö orzeczenie urteil ítélet
+iudicium: πράξη-δικαστηρίου судебное-решение 判例 판례
+iuridicum: document-juridique documento-legal legal legal-document
+iuridicum: rechtsdokument юридический-документ 法律文件 法的文書 법률문서
+scholia: comentario commentaire commentary commento komentaras
+scholia: komentarz komentář komentārs kommentaari kommentar kommentár
+scholia: şerh σχόλια комментарий פירוש تعليق تفسیر भाष्य อรรถกถา 注释书
+scholia: 註解 주해
+imago: afbeelding attēls bild bild-sv billede gambar görüntü hình-ảnh
+imago: image image-fr imagem imagen imazh immagine kuva kép obraz
+imago: obrázek picture slika vaizdas εικόνα зображення изображение
+imago: изображение-bg תמונה تصویر صورة छवि ছবি ภาพ 图像 画像 이미지
+%==@
+
+@==% campi
+auctor: auteur author authors autor autore autorius autors forfatter
+auctor: författare penulis szerző tekijä tác-giả yazar συγγραφέας
+auctor: автор автори מחבר مؤلف نویسنده लेखक লেখক ผู้แต่ง 作者 著者 저자
+editor: biên-tập editore editors editör herausgeber penyunting
+editor: redacteur redaktor redaktorius redaktors szerkesztő toimittaja
+editor: urednik éditeur επιμελητής редактор עורך محرر ویراستار संपादक
+editor: সম্পাদক บรรณาธิการ 編者 编者 편집자
+interpres: dịch-giả fordító kääntäjä oversætter penerjemah prevoditelj
+interpres: përkthyes překladatel traducteur traductor tradutore
+interpres: translator tulkotājs tłumacz vertaler vertėjas çevirmen
+interpres: översättare übersetzer μεταφραστής переводчик перекладач
+interpres: преводач מתרגם مترجم अनुवादक অনুবাদক ผู้แปล 訳者 译者 번역자
+titulus: başlık cím judul naslov nosaukums název otsikko pavadinimas
+titulus: titel title titolo titre titull tiêu-đề tytuł título τίτλος
+titulus: заглавие назва название כותרת عنوان शीर्षक শিরোনাম ชื่อเรื่อง
+titulus: 标题 題名 제목
+subtitulus: alaotsikko alcím alt-başlık apakšvirsraksts nëntitull
+subtitulus: ondertitel paantraštė podnaslov podtitul podtytuł
+subtitulus: sottotitolo sous-titre subjudul subtitle subtítulo
+subtitulus: undertitel untertitel υπότιτλος подзаглавие подзаголовок
+subtitulus: підзаголовок כותרת-משנה زیرعنوان عنوان-فرعي उपशीर्षक
+subtitulus: উপশিরোনাম ชื่อรอง 副标题 副題 부제
+ephemeris: dergi folyóiratcím journal journaltitle jurnal lehti
+ephemeris: revista revistë revue rivista tijdschrift tạp-chí časopis
+ephemeris: žurnalas žurnāls περιοδικό журнал списание часопис
+ephemeris: כתב-עת-שם مجلة مجله পত্রিকা 期刊名 雑誌名 학술지
+titulus-libri: boektitel booktitle buchtitel grāmatas-nosaukums
+titulus-libri: judul-buku kirjan-otsikko kitap-başlığı
+titulus-libri: knygos-pavadinimas könyvcím naslov-knjige název-knihy
+titulus-libri: titolo-del-libro titre-du-livre titull-libri
+titulus-libri: tytuł-książki título-del-libro τίτλος-βιβλίου
+titulus-libri: заглавие-на-книга назва-книги название-книги כותרת-הספר
+titulus-libri: عنوان-الكتاب عنوان-کتاب पुस्तक-शीर्षक বইয়ের-শিরোনাম
+titulus-libri: ชื่อหนังสือ 书名 書名 책제목
+annus: anno année ano año gads godina jaar jahr metai năm rok tahun
+annus: vit vuosi year yıl år év έτος год година рік שנה سال سنة वर्ष
+annus: বছর ปี 年 年份 연도
+datum: data date dato datum datums datë dátum fecha ngày päivämäärä
+datum: tanggal tarih ημερομηνία датa дата תאריך تاريخ تاریخ दिनांक
+datum: তারিখ วันที่ 日付 日期 날짜
+volumen: band bind cilt deel jilid kötet nide svazek svezak sējums tom
+volumen: tomas tome tập volume volym vëllim τόμος том כרך جلد مجلد खंड
+volumen: খণ্ড เล่ม 卷 巻 권
+numerus: broj nomor number numer numeris numero nummer numurs numéro
+numerus: número sayı szám số číslo αριθμός брой номер מספר شماره عدد
+numerus: अंक সংখ্যা ฉบับ 号 期 호
+paginae: faqe halaman lappuses oldalak pages pagine puslapiai páginas
+paginae: sayfalar seiten sider sidor sivut stranice strany strony
+paginae: trang σελίδες сторінки страници страницы עמודים صفحات पृष्ठ
+paginae: পৃষ্ঠা หน้า ページ 页码 쪽
+editio: auflage baskı botim edición edisi editie edition edizione
+editio: edição izdanje izdevums kiadás leidimas painos udgave upplaga
+editio: vydání wydanie édition έκδοση видання издание מהדורה طبعة
+editio: ویرایش संस्करण সংস্করণ ฉบับพิมพ์ ấn-bản 版 版本 판
+series: collana dizi edice reeks reihe sarja seri seria serie serija
+series: sorozat série sērija σειρά серия серія סדרה سلسلة श्रृंखला
+series: সিরিজ ชุด シリーズ 丛书
+officina: botues casa-editrice editora editorial forlag förlag izdavač
+officina: izdevniecība kiadó kustantaja leidykla nakladatelství
+officina: nhà-xuất-bản penerbit publisher uitgeverij verlag
+officina: wydawnictwo yayınevi εκδότης видавництво издателство
+officina: издательство הוצאה ناشر प्रकाशक প্রকাশক สำนักพิมพ์ 出版社 출판사
+locus: address hely lieu local location lugar luogo miejsce mjesto
+locus: místo ort paikka plaats sted tempat vend vieta yer τόπος место
+locus: място місце מקום مكان مکان स्थान স্থান สถานที่ 地点 場所 장소
+institutum: instelling instituce institucija institucion institución
+institutum: instituição institusi institut institution institūcija
+institutum: instytucja intézmény istituzione kurum laitos school
+institutum: ίδρυμα институция установа учреждение מוסד مؤسسة نهاد
+institutum: संस्था প্রতিষ্ঠান สถาบัน 机构 機関 기관
+capitulum: bab bölüm capitolo capítulo chapitre chapter chương fejezet
+capitulum: hoofdstuk kapitel kapitola kapitull luku nodaļa poglavlje
+capitulum: rozdział skyrius κεφάλαιο глава розділ פרק فصل अध्याय
+capitulum: অধ্যায় บท 章 장
+genus: jenis lloj loại soort tipas tipo tips typ type tyyppi típus tür
+genus: vrsta τύπος вид тип סוג نوع प्रकार ধরন ประเภท 種類 类型 유형
+lingua: bahasa dil gjuhë idioma jazyk jezik język kalba kieli language
+lingua: langue linguaggio língua ngôn-ngữ nyelv sprache sprog språk
+lingua: taal valoda γλώσσα език мова язык שפה زبان لغة भाषा ভাষা ภาษา
+lingua: 言語 语言 언어
+nota: anmerkung anteckning catatan ghi-chú huomautus megjegyzés
+nota: napomena not nota notas note notitie pastaba piezīme poznámka
+nota: shënim uwaga σημείωση бележка примечание примітка הערה ملاحظة
+nota: टिप्पणी মন্তব্য หมายเหตุ 注記 注释 주석
+summarium: abstract abstrak abstrakt kivonat kopsavilkums resumen
+summarium: resumo riassunto résumé samenvatting sammanfattning
+summarium: santrauka sažetak streszczenie tiivistelmä tóm-tắt
+summarium: zusammenfassung özet περίληψη аннотация анотація резюме
+summarium: תקציר ملخص چکیده सारांश সারসংক্ষেপ บทคัดย่อ 摘要 要旨 초록
+doi:
+url:
+isbn:
+issn:
+titulus-operis: main-title maintitle
+subtitulus-operis: mainsubtitle
+additamentum-tituli: titleaddon
+additamentum-tituli-operis: maintitleaddon
+additamentum-tituli-libri: booktitleaddon
+subtitulus-libri: booksubtitle
+titulus-brevis: short-title shorttitle
+titulus-originis: original-title originaltitel origtitle
+titulus-originis: titre-original título-original оригинальное-название
+titulus-fasciculi: issuetitle
+subtitulus-fasciculi: issuesubtitle
+subtitulus-ephemeridis: journalsubtitle
+auctor-libri: book-author bookauthor
+annotator: annotateur annotatore annotátor kommentator-anm аннотатор
+annotator: 注释者 주석자
+commentator: commentateur commentatore komentátor комментатор 評注者 논평자
+praefatio: előszó esipuhe foreword forord förord kata-pengantar
+praefatio: lời-tựa parathënie pratarmė predgovor preface prefacio
+praefatio: prefazione priekšvārds przedmowa préface předmluva
+praefatio: voorwoord vorwort önsöz πρόλογος передмова предговор
+praefatio: предисловие פתח-דבר مقدمة प्राक्कथन ভূমিকা คำนำ 前言 序文 서문
+postfatio: afterword doslov epílogo jälkisanat nachwort postface
+postfatio: postfazione posłowie sonsöz utószó επίμετρο послесловие
+postfatio: אחרית-דבר あとがき 后记 후기
+introductio: bevezetés einleitung giriş giới-thiệu hyrje ievads
+introductio: indledning inledning inleiding introducción introduction
+introductio: introduzione johdanto pendahuluan uvod wstęp úvod įvadas
+introductio: εισαγωγή введение вступ увод מבוא مقدمة-intro परिचय
+introductio: ভূমিকা-intro บทนำ 导言 序論 서론
+possessor: birtokos držitel détenteur haltija holder inhaber posiadacz
+possessor: sahip titular κάτοχος патентообладатель 持有人 特許権者 특허권자
+societas: kuruluş organisaatio organisasi organisatie organisation
+societas: organizace organizacija organizacija-lt organización
+societas: organizacja organization organizatë organizzazione
+societas: organizācija szervezet οργανισμός организация организация-bg
+societas: організація ארגון سازمان منظمة संगठन সংস্থা องค์กร 組織 组织 조직
+titulus-eventus: event-title eventtitle
+datum-eventus: event-date eventdate
+sedes: helyszín lieu-de-l'événement mekan miejsce-wydarzenia
+sedes: místo-konání sede tapahtumapaikka venue veranstaltungsort χώρος
+sedes: место-проведения 会场 会場 개최지
+fasciculus: fascicolo fascicule fascículo füzet-issue heft issue
+fasciculus: numero-fi sayı-fasikül zeszyt číslo-vydání τεύχος выпуск
+fasciculus: גיליון 号数 期号 발행호
+mensis: ay bulan hónap kuukausi maand mes mese miesiąc mjesec mois
+mensis: monat month muaj månad måned mês mēnesis mėnuo měsíc tháng
+mensis: μήνας месец месяц місяць חודש شهر ماه महीना মাস เดือน 月 月份 월
+datum-originis: date-originale fecha-original origdate original-date
+datum-originis: originaldatum
+lingua-originis: idioma-original langue-originale original-language
+lingua-originis: originalsprache origlanguage язык-оригинала 原語 原语言 원어
+locus-originis: original-location origlocation
+officina-originis: original-publisher origpublisher
+status-editionis: publication-state pubstate
+pars: bagian część dalis daļa del dio kısım osa part parte partie phần
+pars: pjesë rész teil část μέρος частина часть חלק جزء भाग অংশ ส่วน 部
+pars: 部分 부
+volumina: bände kötetek tomes tomos volumes volumes-pt τόμοι тома
+volumina: томове 全巻 卷数
+summa-paginarum: pagetotal páginas-totales total-pages
+paginatio: paginación pagination paginierung σελιδοποίηση пагинация
+paginatio-libri: bookpagination
+versio: fassung sürüm versi versie versie-lv versija versio-fi version
+versio: versione versión verze verzija verzió wersja έκδοση-v версия
+versio: версія גרסה إصدار ورژن संस्करण-v เวอร์ชัน バージョン 版本号 버전
+addendum: addenda apéndice-add
+annotatio: adnotacja anmerkung-ann annotaatio annotatie annotation
+annotatio: annotazione anotace anotación σχολιασμός аннотация-note
+bibliotheca: biblioteca bibliotek biblioteka bibliotekë bibliotheek
+bibliotheca: bibliothek bibliothèque bibliotēka kirjasto knihovna
+bibliotheca: knjižnica könyvtár kütüphane library perpustakaan
+bibliotheca: βιβλιοθήκη библиотека библиотека-bg бібліотека ספרייה
+bibliotheca: مكتبة کتابخانه पुस्तकालय গ্রন্থাগার ห้องสมุด 図書館 图书馆 도서관
+modus: forma-de-publicación how-published howpublished
+claves: anahtar-kelimeler atslēgvārdi avainsanat fjalë-kyçe kata-kunci
+claves: keywords ključne-riječi klíčová-slova kulcsszavak mots-clés
+claves: nyckelord nøgleord palabras-clave palavras-chave parole-chiave
+claves: raktažodžiai schlagwörter słowa-kluczowe trefwoorden từ-khóa
+claves: λέξεις-κλειδιά ключевые-слова ключови-думи ключові-слова
+claves: מילות-מפתח كلمات-مفتاحية کلیدواژه कीवर्ड মূলশব্দ คำสำคัญ キーワード
+claves: 关键词 키워드
+sigla: shorthand
+eid:
+eprint:
+langid:
+genus-eprint: eprint-type eprinttype
+classis-eprint: eprint-class eprintclass
+datum-url: url-date urldate
+isan:
+ismn:
+isrn:
+iswc:
+%==@

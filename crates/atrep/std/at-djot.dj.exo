@@ -1,0 +1,84 @@
+@@@!atrep-exo
+@=at-djot=>dj
+
+@@/ Djot export for the at-djot syntax mapper. The canonical
+@@/ subset is a fixed point of export then import.
+
+@%
+\ \\
+_ \_
+* \*
+` \`
+%@
+
+@-> *document
+@(grammata)
+>-@
+
+@-> *paragraph
+@(grammata)
+
+>-@
+
+@-> *solo #
+# @(grammata)
+>-@
+
+@-> *solo ##
+## @(grammata)
+>-@
+
+@-> *solo ###
+### @(grammata)
+>-@
+
+@-> *solo ####
+#### @(grammata)
+>-@
+
+@-> *solo #####
+##### @(grammata)
+>-@
+
+@-> *solo ######
+###### @(grammata)
+>-@
+
+@-> _
+_@(grammata)_
+>-@
+
+@-> *
+*@(grammata)*
+>-@
+
+@-> >
+> @(grammata:> )
+>-@
+
+@-> -
+- @(grammata)
+>-@
+
+@-> .
+@(taxis). @(grammata)
+>-@
+
+@-> *verbatim
+```@[@(genoses)]@
+@((content))
+```
+
+>-@
+
+@-> *verbatim-inline
+`@((content))`
+>-@
+
+@-> *media
+![](@((param)))
+>-@
+
+@-> *onym-anchor
+{#@(onym)}
+>-@

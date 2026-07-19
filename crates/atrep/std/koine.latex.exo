@@ -1,0 +1,283 @@
+@@@!atrep-exo
+@=koine=>latex
+
+@@/ LaTeX exomorphosis for koine, the common dialect - the base
+@@/ rule surface genre dialektoi inherit through the lineage.
+@@/ Rules emit the shared semantic macro layer (\lt...); the
+@@/ atrep-koine class is a plain, quiet implementation that a
+@@/ derived dialektos's class replaces wholesale (the derived
+@@/ *document rule names it), while the rules inherit.
+
+@-> *document
+\documentclass{atrep-koine}
+\begin{document}
+@(grammata)
+\end{document}
+>-@
+
+@-> *paragraph
+@(grammata)
+
+>-@
+
+@-> *solo =
+\lttitle{@(grammata)}
+>-@
+
+@-> =
+\lttitle{@(grammata)}
+>-@
+
+@-> *solo =_
+\ltsubtitle{@(grammata)}
+>-@
+
+@-> *solo =:
+\ltauthor{@(grammata)}
+>-@
+
+@-> =:
+\ltauthor{@(grammata)}
+>-@
+
+@-> *solo =;
+\lteditor{@(grammata)}
+>-@
+
+@-> #
+\lthead{section}{@(lemma)}@[\ltlabel{@(onym)}]@
+@(grammata)
+>-@
+
+@-> ##
+\lthead{subsection}{@(lemma)}@[\ltlabel{@(onym)}]@
+@(grammata)
+>-@
+
+@-> ###
+\lthead{subsubsection}{@(lemma)}@[\ltlabel{@(onym)}]@
+@(grammata)
+>-@
+
+@-> #_
+\ltrunin{@(grammata)}
+>-@
+
+@-> *solo **
+\ltbreak{@(grammata)}
+>-@
+
+@-> **
+\ltbreak{@(grammata)}
+>-@
+
+@-> /
+\ltem{@(grammata)}
+>-@
+
+@-> *
+\ltstrong{@(grammata)}
+>-@
+
+@-> */
+\ltstrongem{@(grammata)}
+>-@
+
+@-> ,
+\ltannot{@(genoses)}{@(grammata)}
+>-@
+
+@-> ""
+\ltq{@(grammata)}
+>-@
+
+@-> "
+\begin{ltquote}
+@(grammata)@[
+\ltquotehypo{@(hypograph)}]@
+\end{ltquote}
+>-@
+
+@-> --
+\begin{ltitemize}
+@(grammata)
+\end{ltitemize}
+>-@
+
+@-> -
+\ltitem @(grammata)
+>-@
+
+@-> ..
+\begin{ltenumerate}
+@(grammata)
+\end{ltenumerate}
+>-@
+
+@-> .-
+\ltitem @(grammata)
+>-@
+
+@-> ::;
+\begin{ltdescription}
+@(grammata)
+\end{ltdescription}
+>-@
+
+@-> ::
+\ltitemdef{@(lemma)} @(grammata)
+>-@
+
+@-> ;
+@(grammata)
+>-@
+
+@-> ^
+\ltnotetext{@(grammata)}
+>-@
+
+@-> *deixis ^
+\ltnotemark{}
+>-@
+
+@-> >
+\ltref{@(param)}
+>-@
+
+@-> ><
+\lturl{@((grammata))}
+>-@
+
+@-> *verbatim
+\begin{verbatim}
+@((content))
+\end{verbatim}
+>-@
+
+@-> *verbatim-inline
+\texttt{@(content)}
+>-@
+
+@-> *diaphane
+@(grammata)
+>-@
+
+@-> *diaphane-inline
+@(grammata)
+>-@
+
+@-> *milestone
+\ltmilestone{@(value)}{@(genoses)}
+>-@
+
+@-> *onym-anchor
+\ltlabel{@(onym)}
+>-@
+
+@-> *englossis
+\bibliographystyle{plain}
+\bibliography{\jobname}
+>-@
+
+@-> *media
+\ltmedia{@((param))}
+>-@
+
+@-> *stichoi
+\begin{ltverse}
+@(grammata)
+\end{ltverse}
+>-@
+
+@-> *strophe
+@(grammata)
+\ltstanza
+>-@
+
+@-> *stichos
+@(grammata)\ltnl
+>-@
+
+@=* atrep-koine.cls END-OF-CLASS
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesClass{atrep-koine}[2026/07/13 v0.1 koine common-dialect presentation]
+
+% The quiet default: A4 article, Liberation Serif, the koine
+% semantic layer implemented plainly. Genre classes replace
+% this file and implement the same layer in their register.
+
+\DeclareOption*{\PassOptionsToClass{\CurrentOption}{article}}
+\ProcessOptions\relax
+\LoadClass[11pt]{article}
+
+\RequirePackage{fontspec}
+\setmainfont{Liberation Serif}
+\setmonofont{Liberation Mono}[Scale=MatchLowercase]
+\RequirePackage[a4paper,margin=28mm]{geometry}
+\RequirePackage{graphicx}
+\RequirePackage{url}
+
+% ---- front matter ----
+\def\lt@title{}
+\newcommand\lttitle[1]{\gdef\lt@title{#1}%
+  {\par\addvspace{1.6\baselineskip}\centering{\LARGE #1}\par}\addvspace{0.6\baselineskip}}
+\newcommand\ltsubtitle[1]{{\centering\large\itshape #1\par}\addvspace{0.4\baselineskip}}
+\newcommand\ltauthor[1]{{\centering #1\par}\addvspace{0.3\baselineskip}}
+\newcommand\lteditor[1]{{\centering\small #1\par}\addvspace{1\baselineskip}}
+
+% ---- headings ----
+\newcommand\lthead[2]{%
+  \ifcsname lt@h@#1\endcsname
+    \csname lt@h@#1\endcsname{#2}%
+  \else
+    \par\medskip\noindent\textbf{#2}\par\nobreak
+  \fi}
+\@namedef{lt@h@section}#1{\par\addvspace{1.2\baselineskip}%
+  {\noindent\large\bfseries #1\par}\addvspace{0.5\baselineskip}\@afterindentfalse\@afterheading}
+\@namedef{lt@h@subsection}#1{\par\addvspace{1\baselineskip}%
+  {\noindent\bfseries #1\par}\addvspace{0.4\baselineskip}\@afterindentfalse\@afterheading}
+\@namedef{lt@h@subsubsection}#1{\par\addvspace{0.8\baselineskip}%
+  {\noindent\itshape #1\par}\addvspace{0.3\baselineskip}\@afterindentfalse\@afterheading}
+\newcommand\ltrunin[1]{\textbf{#1}}
+\newcommand\ltbreak[1]{\par\addvspace{0.8\baselineskip}{\centering #1\par}\addvspace{0.8\baselineskip}}
+\newcommand\ltlabel[1]{\label{#1}}
+
+% ---- inline ----
+\newcommand\ltem[1]{\emph{#1}}
+\newcommand\ltstrong[1]{\textbf{#1}}
+\newcommand\ltstrongem[1]{\textbf{\emph{#1}}}
+\newcommand\ltannot[2]{#2}
+\newcommand\ltq[1]{`#1'}
+
+% ---- lists ----
+\newenvironment{ltitemize}{\itemize}{\enditemize}
+\newenvironment{ltenumerate}{\enumerate}{\endenumerate}
+\newenvironment{ltdescription}{\description}{\enddescription}
+\newcommand\ltitem{\item}
+\newcommand\ltitemdef[1]{\item[#1]}
+
+% ---- quotations ----
+\newenvironment{ltquote}{\quote}{\endquote}
+\newcommand\ltquotehypo[1]{\begin{flushright}--- #1\end{flushright}}
+
+% ---- notes ----
+\newcounter{lt@notetext}
+\newcommand\ltnotemark{\footnotemark{}}
+\newcommand\ltnotetext[1]{\stepcounter{lt@notetext}%
+  \footnotetext[\value{lt@notetext}]{#1}}
+
+% ---- verse (the core stichoi form) ----
+\newenvironment{ltverse}{\par\begingroup\leftskip=2em\parindent=0pt
+  \def\ltnl{\par}\everypar{\hangindent=1em\hangafter=1}}
+  {\par\endgroup}
+\newcommand\ltnl{\\\relax}
+\newcommand\ltstanza{\par\addvspace{0.5\baselineskip}}
+
+% ---- references ----
+\newcommand\ltref[1]{\ref{#1}}
+\newcommand\lturl[1]{\url{#1}}
+\newcommand\ltmilestone[2]{}
+\newcommand\ltmedia[1]{\includegraphics[width=0.7\linewidth]{#1}}
+
+\endinput
+END-OF-CLASS

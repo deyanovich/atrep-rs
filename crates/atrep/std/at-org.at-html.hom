@@ -1,0 +1,15 @@
+@@@!atrep-hom
+@=at-org=>at-html
+
+@@/ Org's emphasis family narrows: underline and strike become
+@@/ classed spans, description terms extract into strong lines,
+@@/ tables ride the verse sim, links and footnote bodies
+@@/ dissolve (their deixes go with them).
+
+@:: * !
+@:: _ , .underline
+@:: + , .strike
+@:: | ~ .table
+@<# :: !
+@<< ><
+@<< ^

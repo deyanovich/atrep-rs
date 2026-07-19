@@ -1,0 +1,205 @@
+@@@!atrep
+
+@@/ at-usfm: a syntax mapper for scripture in the USFM model,
+@@/ which USX serializes as XML and OSIS closely parallels -
+@@/ one dialektos, three export surfaces (usfm, usx, osis).
+@@/ Built on the genos-grouped pattern: form sims carry
+@@/ structure, USFM marker names ride vocabulary genoses, and
+@@/ the book identity is a vocabulary-bound lemma (the USFM
+@@/ book codes, with common English names as aliases - other
+@@/ languages extend the alias rows). Verses are milestones
+@@/ (monosims): scripture text and paragraphs flow across
+@@/ verse boundaries, the classic overlapping hierarchy.
+@@/ Poetry lines wrap in per-line q-level phrases so indent
+@@/ levels survive the round trip.
+
+@=== book
+@# lemma=books
+grammata
+#@
+@"book division; the lemma is the USFM book code"@
+===@
+
+@=== chapter
+@##(n)
+@"chapter milestone; marks a position in the flow like verses"@
+===@
+
+@=== verse
+@|(n)
+@"verse milestone; text flows across verse boundaries"@
+===@
+
+@=== block
+@_ grammata _@
+@% markers
+@"typed one-line block (headings, titles, speakers, refs)"@
+===@
+
+@=== poetry
+@~
+stichos
+~@
+@"poetry block; each line wraps in a q-level phrase"@
+===@
+
+@=== phrase
+@, grammata ,@
+@% chars
+@"character-level span; the genos is the USFM marker"@
+===@
+
+@=== note
+@^ grammata ^@
+@% notes
+@"footnote/endnote/cross-reference, inline at its anchor"@
+===@
+
+@==% books
+gen: genesis
+exo: exodus exod
+lev: leviticus
+num: numbers
+deu: deuteronomy deut
+jos: joshua josh
+jdg: judges judg
+rut: ruth
+1sa: 1-samuel first-samuel 1sam
+2sa: 2-samuel second-samuel 2sam
+1ki: 1-kings first-kings 1kgs
+2ki: 2-kings second-kings 2kgs
+1ch: 1-chronicles first-chronicles 1chr
+2ch: 2-chronicles second-chronicles 2chr
+ezr: ezra
+neh: nehemiah
+est: esther esth
+job:
+psa: psalms psalm psalter ps
+pro: proverbs prov
+ecc: ecclesiastes qoheleth eccl
+sng: song-of-songs song-of-solomon canticles song
+isa: isaiah
+jer: jeremiah
+lam: lamentations
+ezk: ezekiel ezek
+dan: daniel
+hos: hosea
+jol: joel
+amo: amos
+oba: obadiah obad
+jon: jonah
+mic: micah
+nam: nahum nah
+hab: habakkuk
+zep: zephaniah zeph
+hag: haggai
+zec: zechariah zech
+mal: malachi
+mat: matthew matt
+mrk: mark
+luk: luke
+jhn: john
+act: acts acts-of-the-apostles
+rom: romans
+1co: 1-corinthians first-corinthians 1cor
+2co: 2-corinthians second-corinthians 2cor
+gal: galatians
+eph: ephesians
+php: philippians phil
+col: colossians
+1th: 1-thessalonians 1thess
+2th: 2-thessalonians 2thess
+1ti: 1-timothy 1tim
+2ti: 2-timothy 2tim
+tit: titus titus
+phm: philemon phlm
+heb: hebrews
+jas: james
+1pe: 1-peter 1pet
+2pe: 2-peter 2pet
+1jn: 1-john 1john
+2jn: 2-john 2john
+3jn: 3-john 3john
+jud: jude
+rev: revelation apocalypse
+tob: tobit
+jdt: judith
+esg: greek-esther esther-greek esthgr
+wis: wisdom wisdom-of-solomon
+sir: sirach ecclesiasticus ben-sira
+bar: baruch
+lje: letter-of-jeremiah epistle-of-jeremiah epjer
+s3y: song-of-the-three-young-men prayer-of-azariah prazar
+sus: susanna
+bel: bel-and-the-dragon
+1ma: 1-maccabees first-maccabees 1macc
+2ma: 2-maccabees second-maccabees 2macc
+3ma: 3-maccabees third-maccabees 3macc
+4ma: 4-maccabees fourth-maccabees 4macc
+1es: 1-esdras first-esdras 1esd
+2es: 2-esdras second-esdras 2esd
+man: prayer-of-manasseh manasses prman
+ps2: psalm-151 addps
+oda: odes odae
+pss: psalms-of-solomon
+dag: greek-daniel daniel-greek dangr
+%==@
+
+@==% markers
+h:
+toc1:
+toc2:
+toc3:
+mt1: mt
+mt2:
+mt3:
+ms1: ms
+ms2:
+mr:
+s1: s
+s2:
+s3:
+r:
+d:
+sp:
+qa:
+ip:
+is1: is
+pc:
+m:
+mi:
+pi1: pi
+nb:
+po:
+lit:
+li1: li
+ili1: ili
+cl:
+cp:
+%==@
+
+@==% chars
+wj:
+nd:
+add:
+em:
+bd:
+it:
+sc:
+no:
+qs:
+qt:
+tl:
+k:
+w:
+sig:
+bk:
+fr:
+xo:
+%==@
+
+@==% notes
+f: footnote
+fe: endnote
+x: crossreference cross-reference
+%==@

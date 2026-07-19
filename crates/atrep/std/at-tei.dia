@@ -1,0 +1,239 @@
+@@@!atrep
+
+@@/ at-tei: a syntax mapper for TEI P5, built on the
+@@/ bibliogramma pattern scaled up - a small set of form sims
+@@/ with the TEI element or type identity carried in
+@@/ vocabulary-bound genoses (TEI's own names, lowercased to
+@@/ the genos grammar; the tei exo restores camelCase). Terms
+@@/ outside the vocabularies pass through, so uncommon
+@@/ elements ride as free genoses rather than failing.
+@@/ Convention: a document is a teiheader block (fields)
+@@/ followed by a text block. The reverse morphism into
+@@/ litogramma awaits genos-dispatched morphism rules
+@@/ (spec follow-up); litogramma INTO at-tei works today via
+@@/ renames with genoses.
+
+@=== division
+@#[(taxis)] [lemma]
+grammata
+#@
+@% divisions
+@"nested division (div/front/back families); head is the lemma"@
+===@
+
+@=== verse
+@~ [lemma]
+stichos
+~@ [hypograph]
+@"line group (lg); the hypograph is an attribution"@
+===@
+
+@=== speech
+@: [lemma]
+grammata
+:@
+@"drama speech (sp); the speaker is the lemma"@
+===@
+
+@=== stage-direction
+@:( grammata ):@
+@"inline stage direction"@
+===@
+
+@=== block
+@_[(taxis)] [lemma]
+grammata
+_@ [hypograph]
+@% blocks
+@"generic block element; genos names it, bibl rides hypograph"@
+===@
+
+@=== phrase
+@, grammata ,@
+@% phrases
+@"generic inline element; the genos names it (emph, said, ...)"@
+===@
+
+@=== note
+@^
+grammata
+^@
+@% notes
+@"note body (deixis callouts mark anchors); genos is the place"@
+===@
+
+@=== list
+@--
+grammata
+--@
+@% lists
+@"list element; the genos is the type"@
+===@
+
+@=== item
+@- [lemma]
+grammata
+-@
+@"list item; a gloss label rides the lemma"@
+===@
+
+@=== table
+@+[(taxis)] [lemma]
+stichos
++@
+@"table; one row per stichos, cells pipe-separated"@
+===@
+
+@=== figure
+@<[(taxis)] [lemma]
+grammata
+<@
+@"figure; grammata holds the enmedia, the head is the lemma"@
+===@
+
+@=== link
+@>< grammata ><@
+@"external pointer (ref/ptr with a remote target)"@
+===@
+
+@=== ref
+@>(target)
+@"internal pointer to an onymized element"@
+===@
+
+@=== milestone
+@|(n)
+@% milestones
+@"empty milestone element (lb, pb, cb); the genos names it"@
+===@
+
+@=== field
+@= lemma=fields
+grammata
+=@
+@"header field inside the teiheader block; the lemma names it"@
+===@
+
+@==% divisions
+front:
+back:
+book:
+part:
+chapter:
+section:
+subsection:
+act:
+scene:
+dedication:
+preface:
+foreword:
+afterword:
+appendix:
+colophon:
+prologue:
+epilogue:
+index:
+glossary:
+bibliography:
+%==@
+
+@==% phrases
+emph:
+hi:
+foreign:
+term:
+mentioned:
+socalled:
+said:
+q:
+persname:
+placename:
+orgname:
+name:
+rs:
+date:
+time:
+num:
+measure:
+title:
+gloss:
+distinct:
+abbr:
+expan:
+sic:
+corr:
+reg:
+orig:
+add:
+del:
+unclear:
+supplied:
+seg:
+code:
+formula:
+%==@
+
+@==% blocks
+teiheader:
+text:
+quote:
+cit:
+epigraph:
+argument:
+stage:
+postscript:
+salute:
+signed:
+opener:
+closer:
+trailer:
+dateline:
+byline:
+address:
+floatingtext:
+formula:
+%==@
+
+@==% fields
+title:
+author:
+editor:
+translator:
+publisher:
+pubplace:
+date:
+idno:
+extent:
+edition:
+series:
+language:
+source:
+funder:
+sponsor:
+licence:
+note:
+%==@
+
+@==% notes
+foot:
+end:
+margin:
+inline:
+gloss:
+editorial:
+%==@
+
+@==% milestones
+lb:
+pb:
+cb:
+milestone:
+%==@
+
+@==% lists
+ordered:
+bulleted:
+simple:
+gloss:
+castlist:
+%==@

@@ -1,0 +1,535 @@
+@@@!atrep-exo
+@=at-tei=>tei
+
+@@/ TEI P5 export for the at-tei syntax mapper. Genos variants
+@@/ restore the camelCase element names; the flat fileDesc in
+@@/ the header is schema-loose (strict titleStmt grouping is a
+@@/ follow-up). Unknown genoses fall back to seg/ab with a type
+@@/ attribute, so free genoses survive the trip.
+
+@%
+& &amp;
+< &lt;
+> &gt;
+%@
+
+@-> *document
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xmlns="http://www.tei-c.org/ns/1.0">
+@(grammata)
+</TEI>
+>-@
+
+@-> *paragraph
+<p>@(grammata)</p>
+>-@
+
+@-> _.teiheader
+<teiHeader>
+<fileDesc>
+@(grammata)
+</fileDesc>
+</teiHeader>
+>-@
+
+@-> _.text
+<text>
+<body>
+@(grammata)
+</body>
+</text>
+>-@
+
+@-> #
+<div@[ xml:id="@(onym)"]@@[ type="@(genoses)"]@@[ n="@(taxis)"]@>
+@[<head>@(lemma)</head>
+]@@(grammata)
+</div>
+>-@
+
+@-> #.front
+<front>
+@[<head>@(lemma)</head>
+]@@(grammata)
+</front>
+>-@
+
+@-> #.back
+<back>
+@[<head>@(lemma)</head>
+]@@(grammata)
+</back>
+>-@
+
+@-> _.quote
+<quote@[ xml:id="@(onym)"]@>
+@[<head>@(lemma)</head>
+]@@(grammata)@[
+<bibl>@(hypograph)</bibl>]@
+</quote>
+>-@
+
+@-> _.cit
+<cit@[ xml:id="@(onym)"]@>
+@[<head>@(lemma)</head>
+]@@(grammata)@[
+<bibl>@(hypograph)</bibl>]@
+</cit>
+>-@
+
+@-> _.epigraph
+<epigraph@[ xml:id="@(onym)"]@>
+@[<head>@(lemma)</head>
+]@@(grammata)@[
+<bibl>@(hypograph)</bibl>]@
+</epigraph>
+>-@
+
+@-> _.argument
+<argument@[ xml:id="@(onym)"]@>
+@[<head>@(lemma)</head>
+]@@(grammata)@[
+<bibl>@(hypograph)</bibl>]@
+</argument>
+>-@
+
+@-> _.stage
+<stage@[ xml:id="@(onym)"]@>
+@[<head>@(lemma)</head>
+]@@(grammata)@[
+<bibl>@(hypograph)</bibl>]@
+</stage>
+>-@
+
+@-> _.postscript
+<postscript@[ xml:id="@(onym)"]@>
+@[<head>@(lemma)</head>
+]@@(grammata)@[
+<bibl>@(hypograph)</bibl>]@
+</postscript>
+>-@
+
+@-> _.salute
+<salute@[ xml:id="@(onym)"]@>
+@[<head>@(lemma)</head>
+]@@(grammata)@[
+<bibl>@(hypograph)</bibl>]@
+</salute>
+>-@
+
+@-> _.signed
+<signed@[ xml:id="@(onym)"]@>
+@[<head>@(lemma)</head>
+]@@(grammata)@[
+<bibl>@(hypograph)</bibl>]@
+</signed>
+>-@
+
+@-> _.opener
+<opener@[ xml:id="@(onym)"]@>
+@[<head>@(lemma)</head>
+]@@(grammata)@[
+<bibl>@(hypograph)</bibl>]@
+</opener>
+>-@
+
+@-> _.closer
+<closer@[ xml:id="@(onym)"]@>
+@[<head>@(lemma)</head>
+]@@(grammata)@[
+<bibl>@(hypograph)</bibl>]@
+</closer>
+>-@
+
+@-> _.trailer
+<trailer@[ xml:id="@(onym)"]@>
+@[<head>@(lemma)</head>
+]@@(grammata)@[
+<bibl>@(hypograph)</bibl>]@
+</trailer>
+>-@
+
+@-> _.dateline
+<dateline@[ xml:id="@(onym)"]@>
+@[<head>@(lemma)</head>
+]@@(grammata)@[
+<bibl>@(hypograph)</bibl>]@
+</dateline>
+>-@
+
+@-> _.byline
+<byline@[ xml:id="@(onym)"]@>
+@[<head>@(lemma)</head>
+]@@(grammata)@[
+<bibl>@(hypograph)</bibl>]@
+</byline>
+>-@
+
+@-> _.address
+<address@[ xml:id="@(onym)"]@>
+@[<head>@(lemma)</head>
+]@@(grammata)@[
+<bibl>@(hypograph)</bibl>]@
+</address>
+>-@
+
+@-> _.floatingtext
+<floatingText@[ xml:id="@(onym)"]@>
+@[<head>@(lemma)</head>
+]@@(grammata)@[
+<bibl>@(hypograph)</bibl>]@
+</floatingText>
+>-@
+
+@-> _.formula
+<formula@[ xml:id="@(onym)"]@>
+@[<head>@(lemma)</head>
+]@@(grammata)@[
+<bibl>@(hypograph)</bibl>]@
+</formula>
+>-@
+
+@-> _
+<ab@[ type="@(genoses)"]@@[ xml:id="@(onym)"]@>
+@[<head>@(lemma)</head>
+]@@(grammata)@[
+<bibl>@(hypograph)</bibl>]@
+</ab>
+>-@
+
+@-> ,.emph
+<emph>@(grammata)</emph>
+>-@
+
+@-> ,.hi
+<hi>@(grammata)</hi>
+>-@
+
+@-> ,.foreign
+<foreign>@(grammata)</foreign>
+>-@
+
+@-> ,.term
+<term>@(grammata)</term>
+>-@
+
+@-> ,.mentioned
+<mentioned>@(grammata)</mentioned>
+>-@
+
+@-> ,.socalled
+<soCalled>@(grammata)</soCalled>
+>-@
+
+@-> ,.said
+<said>@(grammata)</said>
+>-@
+
+@-> ,.q
+<q>@(grammata)</q>
+>-@
+
+@-> ,.persname
+<persName>@(grammata)</persName>
+>-@
+
+@-> ,.placename
+<placeName>@(grammata)</placeName>
+>-@
+
+@-> ,.orgname
+<orgName>@(grammata)</orgName>
+>-@
+
+@-> ,.name
+<name>@(grammata)</name>
+>-@
+
+@-> ,.rs
+<rs>@(grammata)</rs>
+>-@
+
+@-> ,.date
+<date>@(grammata)</date>
+>-@
+
+@-> ,.time
+<time>@(grammata)</time>
+>-@
+
+@-> ,.num
+<num>@(grammata)</num>
+>-@
+
+@-> ,.measure
+<measure>@(grammata)</measure>
+>-@
+
+@-> ,.title
+<title>@(grammata)</title>
+>-@
+
+@-> ,.gloss
+<gloss>@(grammata)</gloss>
+>-@
+
+@-> ,.distinct
+<distinct>@(grammata)</distinct>
+>-@
+
+@-> ,.abbr
+<abbr>@(grammata)</abbr>
+>-@
+
+@-> ,.expan
+<expan>@(grammata)</expan>
+>-@
+
+@-> ,.sic
+<sic>@(grammata)</sic>
+>-@
+
+@-> ,.corr
+<corr>@(grammata)</corr>
+>-@
+
+@-> ,.reg
+<reg>@(grammata)</reg>
+>-@
+
+@-> ,.orig
+<orig>@(grammata)</orig>
+>-@
+
+@-> ,.add
+<add>@(grammata)</add>
+>-@
+
+@-> ,.del
+<del>@(grammata)</del>
+>-@
+
+@-> ,.unclear
+<unclear>@(grammata)</unclear>
+>-@
+
+@-> ,.supplied
+<supplied>@(grammata)</supplied>
+>-@
+
+@-> ,.seg
+<seg>@(grammata)</seg>
+>-@
+
+@-> ,.code
+<code>@(grammata)</code>
+>-@
+
+@-> ,.formula
+<formula>@(grammata)</formula>
+>-@
+
+@-> ,
+<seg@[ type="@(genoses)"]@>@(grammata)</seg>
+>-@
+
+@-> ~
+<lg@[ xml:id="@(onym)"]@>
+@[<head>@(lemma)</head>
+]@@(grammata)@[
+<bibl>@(hypograph)</bibl>]@
+</lg>
+>-@
+
+@-> *strophe
+<lg type="strophe">
+@(grammata)
+</lg>
+>-@
+
+@-> *stichos
+<l>@(grammata)</l>
+>-@
+
+@-> :
+<sp>
+@[<speaker>@(lemma)</speaker>
+]@@(grammata)
+</sp>
+>-@
+
+@-> :(
+<stage>@(grammata)</stage>
+>-@
+
+@-> ^
+<note@[ xml:id="@(onym)"]@@[ place="@(genoses)"]@>
+@(grammata)
+</note>
+>-@
+
+@-> *deixis ^
+<ptr target="#@(onym)"/>
+>-@
+
+@-> --
+<list@[ type="@(genoses)"]@>
+@(grammata)
+</list>
+>-@
+
+@-> --.castlist
+<castList>
+@(grammata)
+</castList>
+>-@
+
+@-> -
+<item>@[<label>@(lemma)</label> ]@@(grammata)</item>
+>-@
+
+@-> +
+<table@[ xml:id="@(onym)"]@>
+@[<head>@(lemma)</head>
+]@@(grammata)
+</table>
+>-@
+
+@-> *row + |
+<row>@(cells)</row>
+>-@
+
+@-> *cell +
+<cell>@(grammata)</cell>
+>-@
+
+@-> <
+<figure@[ xml:id="@(onym)"]@>
+@(grammata)@[
+<head>@(lemma)</head>]@
+</figure>
+>-@
+
+@-> ><
+<ref target="@((grammata))"/>
+>-@
+
+@-> >
+<ptr target="#@(param)"/>
+>-@
+
+@-> |.lb
+<lb/>
+>-@
+
+@-> |.pb
+<pb@[ n="@(param)"]@/>
+>-@
+
+@-> |.cb
+<cb/>
+>-@
+
+@-> |.milestone
+<milestone@[ n="@(param)"]@/>
+>-@
+
+@-> |
+<milestone@[ n="@(param)"]@/>
+>-@
+
+@-> =(title)
+<title>@(grammata)</title>
+>-@
+
+@-> =(author)
+<author>@(grammata)</author>
+>-@
+
+@-> =(editor)
+<editor>@(grammata)</editor>
+>-@
+
+@-> =(translator)
+<translator>@(grammata)</translator>
+>-@
+
+@-> =(publisher)
+<publisher>@(grammata)</publisher>
+>-@
+
+@-> =(pubplace)
+<pubPlace>@(grammata)</pubPlace>
+>-@
+
+@-> =(date)
+<date>@(grammata)</date>
+>-@
+
+@-> =(idno)
+<idno>@(grammata)</idno>
+>-@
+
+@-> =(extent)
+<extent>@(grammata)</extent>
+>-@
+
+@-> =(edition)
+<edition>@(grammata)</edition>
+>-@
+
+@-> =(series)
+<series>@(grammata)</series>
+>-@
+
+@-> =(language)
+<language>@(grammata)</language>
+>-@
+
+@-> =(source)
+<source>@(grammata)</source>
+>-@
+
+@-> =(funder)
+<funder>@(grammata)</funder>
+>-@
+
+@-> =(sponsor)
+<sponsor>@(grammata)</sponsor>
+>-@
+
+@-> =(licence)
+<licence>@(grammata)</licence>
+>-@
+
+@-> =(note)
+<note>@(grammata)</note>
+>-@
+
+@-> =
+<note type="@(lemma)">@(grammata)</note>
+>-@
+
+@-> *verbatim
+<code@[ lang="@(genoses)"]@>@(content)</code>
+>-@
+
+@-> *verbatim-inline
+<code>@(content)</code>
+>-@
+
+@-> *media
+<graphic url="@((param))"/>
+>-@
+
+@-> *onym-anchor
+<anchor xml:id="@(onym)"/>
+>-@
+
+@-> *diaphane
+@(grammata)
+>-@
+
+@-> *diaphane-inline
+@(grammata)
+>-@

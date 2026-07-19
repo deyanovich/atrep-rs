@@ -1,0 +1,527 @@
+//! `atrep` — command-line tool of the pilot implementation.
+
+use std::path::PathBuf;
+use std::process::ExitCode;
+
+use clap::{Parser, Subcommand};
+
+#[derive(Parser)]
+#[command(
+    name = "atrep",
+    version,
+    about = "Atrep pilot toolchain (spec draft v0.10)"
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Parse and validate a document or dialektos definition.
+    Check {
+        /// Path to an .atd/.atk document or .lektos/.dia definition.
+        file: PathBuf,
+    },
+    /// Canonicalize a deltos (.atd) into a kanon (.atk), or a
+    /// dialektos definition (.dia) into its canonical .lektos.
+    Kanonizo {
+        /// Path to the .atd (or .dia) source.
+        file: PathBuf,
+        /// Output path (defaults to the input with extension .atk,
+        /// or .lektos for a definition).
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Remote-fetch timeout, in seconds.
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
+        /// Remote-fetch retries after a failed attempt.
+        #[arg(long, default_value_t = 2)]
+        retries: u32,
+    },
+    /// Export a kanon to an external format via its .exo rules.
+    Exo {
+        /// Path to the .atd or .atk file (.atd is kanonized first).
+        file: PathBuf,
+        /// Target format identifier (e.g. md, html).
+        target: String,
+        /// Output path (defaults to the input with the target as
+        /// its extension).
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Named exo variant (<dialektos>.<target>.<variant>.exo,
+        /// overlaid on the base exomorphosis).
+        #[arg(long)]
+        variant: Option<String>,
+    },
+    /// Collate witness kanons against a base witness: weave on a
+    /// milestone scheme and derive an apparatus criticus of
+    /// manuscript-notes anchored in the base text.
+    Collate {
+        /// Witness .atk files.
+        files: Vec<PathBuf>,
+        /// The milestone scheme to align on (e.g. stephanus).
+        #[arg(long)]
+        scheme: String,
+        /// Comma-separated witness identifiers, one per file.
+        #[arg(long = "as", value_delimiter = ',')]
+        ids: Vec<String>,
+        /// The witness whose text carries the apparatus.
+        #[arg(long)]
+        base: String,
+        /// Output path for the .atd with the apparatus.
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// Weave two or more witness kanons of one dialektos along a
+    /// shared milestone scheme into the zygoma (spec v0.12).
+    Zygo {
+        /// Witness .atk files, primary first.
+        files: Vec<PathBuf>,
+        /// The milestone scheme to align on (e.g. stephanus).
+        #[arg(long)]
+        scheme: String,
+        /// Comma-separated witness identifiers, one per file.
+        #[arg(long = "as", value_delimiter = ',')]
+        ids: Vec<String>,
+        /// Output path for the woven .atd.
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Subdivide oversized segments: recursively halve any
+        /// coordinate whose largest witness slice exceeds this
+        /// many characters, cutting every witness at the sentence
+        /// boundary nearest its midpoint (continuation slices
+        /// carry no milestone).
+        #[arg(long)]
+        split: Option<usize>,
+    },
+    /// Insert quasi-milestones at statistical midpoints so no
+    /// segment exceeds --max-segment characters in any file: the
+    /// in-file counterpart of zygo --split. Cuts land at the
+    /// sentence boundary nearest each witness's midpoint and are
+    /// named by the opening coordinate plus a binary path
+    /// (17a|1, then 17a|0.1 / 17a|1.1), each carrying the quasi
+    /// genos; the files stay milestone-aligned and re-emit in
+    /// canonical form, in place.
+    Quasialign {
+        /// Files sharing a milestone scheme (.atd or .atk),
+        /// rewritten in place.
+        files: Vec<PathBuf>,
+        /// Ceiling on segment size, in text characters.
+        #[arg(long)]
+        max_segment: usize,
+        /// Witness namespace prepended to every inserted cut's
+        /// coordinate (e.g. litogram:) unless the parent already
+        /// carries it — positional cuts are witness-specific.
+        #[arg(long)]
+        cut_prefix: Option<String>,
+        /// The milestone scheme to segment on; inferred when the
+        /// files carry exactly one.
+        #[arg(long)]
+        scheme: Option<String>,
+        /// Witness genos prefix (e.g. zyg-grc): in files carrying
+        /// several witnesses as genos-tagged paradiaphanes, drive
+        /// the alignment by this witness's stream alone and
+        /// insert the cuts inside it.
+        #[arg(long)]
+        prefix: Option<String>,
+    },
+    /// Import an external format as an atrep document: Markdown
+    /// into at-markdown, HTML into at-html (by file extension).
+    Endo {
+        /// Path to the .md or .html file.
+        file: PathBuf,
+        /// Versification scheme for scripture core milestones
+        /// (usfm/usx/osis inputs), e.g. protestant.
+        #[arg(long)]
+        milestone_scheme: Option<String>,
+        /// Output path (defaults to the input with extension .atd).
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Map a kanon to another dialektos via a .hom/.iso morphism
+    /// (or an embedding derived from the dialektos lineage).
+    Morph {
+        /// Path to the .atd or .atk file (.atd is kanonized first).
+        file: PathBuf,
+        /// Target dialektos identifier.
+        target: String,
+        /// Named morphism variant (<a>.<b>.<variant>.hom); direct
+        /// only, no route composition.
+        #[arg(long)]
+        variant: Option<String>,
+        /// Output path (defaults to <stem>.<target>.atk).
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Compose morphisms along a chain of dialektoi into a
+    /// single .hom file (each adjacent pair resolves directly
+    /// or transitively).
+    Compose {
+        /// Dialektos identifiers, source to target (2 or more).
+        #[arg(num_args = 2.., required = true)]
+        chain: Vec<String>,
+        /// Output path (defaults to <first>.<last>.hom).
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Compute the litos ID of a kanon (.atk).
+    Litos {
+        /// Path to the .atk file (media resolved relative to it).
+        file: PathBuf,
+        /// Also write the .atk.litos file next to the input.
+        #[arg(long)]
+        save_litos_file: bool,
+    },
+}
+
+fn main() -> ExitCode {
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("atrep: error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> atrep::Result<()> {
+    let cli = Cli::parse();
+    match cli.command {
+        Command::Check { file } => {
+            atrep::check_any(&file)?;
+            println!("{}: OK", file.display());
+        }
+        Command::Kanonizo {
+            file,
+            output,
+            timeout,
+            retries,
+        } => {
+            let source = std::fs::read_to_string(&file)?;
+            if atrep::is_definition_source(&source) {
+                let result = atrep::kanonizo::kanonizo_definition_file(&file)?;
+                let out = output.unwrap_or_else(|| file.with_extension("lektos"));
+                std::fs::write(&out, &result.kanon)?;
+                println!("{}", out.display());
+            } else {
+                let opts = atrep::kanonizo::KanonizoOptions {
+                    fetch: atrep::fetch::FetchConfig {
+                        timeout: std::time::Duration::from_secs(timeout),
+                        retries,
+                        ..Default::default()
+                    },
+                };
+                let fetcher = atrep::fetch::HttpFetcher::new(&opts.fetch);
+                let result = atrep::kanonizo::kanonizo_file_with(&file, &fetcher, &opts)?;
+                let out = output.unwrap_or_else(|| file.with_extension("atk"));
+                atrep::kanonizo::write_outputs(&result, &out)?;
+                println!("{}", out.display());
+                if !result.media.is_empty() {
+                    println!("{}", out.with_extension("atk.tar.gz").display());
+                }
+            }
+        }
+        Command::Exo {
+            file,
+            target,
+            output,
+            variant,
+        } => {
+            let doc = if file.extension().is_some_and(|e| e == "atk") {
+                atrep::check_file(&file)?
+            } else {
+                atrep::kanonizo::kanonizo_file(&file)?.document
+            };
+            let dir = file
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .to_path_buf();
+            let exo = atrep::exo::resolve_exo_variant(
+                &dir,
+                &doc.dialect_id,
+                &target,
+                variant.as_deref(),
+            )?;
+            let (rendered, aux) = atrep::exo::render_with_aux(&doc, &exo, &dir)?;
+            let out = output.unwrap_or_else(|| file.with_extension(&target));
+            std::fs::write(&out, rendered)?;
+            println!("{}", out.display());
+            // Associated exos produce companion files (e.g. the
+            // .bib beside a LaTeX export).
+            for (dialect, aux_target, content) in aux {
+                let aux_out = if dialect == "*asset" {
+                    // An asset carries its own filename.
+                    match out.parent() {
+                        Some(dir) => dir.join(&aux_target),
+                        None => std::path::PathBuf::from(&aux_target),
+                    }
+                } else {
+                    out.with_extension(&aux_target)
+                };
+                std::fs::write(&aux_out, content)?;
+                println!("{}", aux_out.display());
+            }
+        }
+        Command::Collate {
+            files,
+            scheme,
+            ids,
+            base,
+            output,
+        } => {
+            if files.len() != ids.len() {
+                return Err(atrep::error::Error::new(
+                    atrep::error::ErrorKind::Syntax(format!(
+                        "{} files but {} ids (--as takes one id per file)",
+                        files.len(),
+                        ids.len()
+                    )),
+                ));
+            }
+            let mut witnesses = Vec::new();
+            for (file, id) in files.iter().zip(&ids) {
+                let doc = atrep::check_file(file)?;
+                witnesses.push((id.clone(), doc));
+            }
+            let collated = atrep::zygosis::collation(&witnesses, &scheme, &base)?;
+            std::fs::write(&output, atrep::dendron::serialize(&collated))?;
+            println!("{}", output.display());
+        }
+        Command::Zygo {
+            files,
+            scheme,
+            ids,
+            output,
+            split,
+        } => {
+            if files.len() != ids.len() {
+                return Err(atrep::error::Error::new(
+                    atrep::error::ErrorKind::Syntax(format!(
+                        "{} files but {} ids (--as takes one id per file)",
+                        files.len(),
+                        ids.len()
+                    )),
+                ));
+            }
+            let mut witnesses = Vec::new();
+            for (file, id) in files.iter().zip(&ids) {
+                let doc = atrep::check_file(file)?;
+                witnesses.push((id.clone(), doc));
+            }
+            let zygoma = atrep::zygosis::zygosis_split(&witnesses, &scheme, split)?;
+            std::fs::write(&output, atrep::dendron::serialize(&zygoma))?;
+            println!("{}", output.display());
+        }
+        Command::Quasialign {
+            files,
+            max_segment,
+            scheme,
+            prefix,
+            cut_prefix,
+        } => {
+            let mut docs = Vec::new();
+            for file in &files {
+                docs.push(atrep::check_file(file)?);
+            }
+            let scheme = match scheme {
+                Some(s) => s,
+                None => {
+                    let mut schemes = std::collections::BTreeSet::new();
+                    for doc in &docs {
+                        collect_schemes(&doc.blocks, &mut schemes);
+                    }
+                    match schemes.len() {
+                        1 => schemes.into_iter().next().unwrap(),
+                        0 => {
+                            return Err(atrep::error::Error::new(
+                                atrep::error::ErrorKind::Syntax(
+                                    "no milestones found; nothing to quasialign".into(),
+                                ),
+                            ));
+                        }
+                        _ => {
+                            return Err(atrep::error::Error::new(
+                                atrep::error::ErrorKind::Syntax(format!(
+                                    "several milestone schemes present ({}); pick one with --scheme",
+                                    schemes.into_iter().collect::<Vec<_>>().join(", ")
+                                )),
+                            ));
+                        }
+                    }
+                }
+            };
+            let report = atrep::zygosis::quasialign(
+                &mut docs,
+                &scheme,
+                max_segment,
+                prefix.as_deref(),
+                cut_prefix.as_deref(),
+            )?;
+            for ((file, doc), n) in files.iter().zip(&docs).zip(&report.inserted) {
+                std::fs::write(file, atrep::dendron::serialize(doc))?;
+                println!("{}: {n} quasi-milestone(s) inserted", file.display());
+            }
+            for coord in &report.skipped {
+                eprintln!("atrep: `{coord}` already carries quasi cuts; left untouched");
+            }
+        }
+        Command::Endo {
+            file,
+            milestone_scheme,
+            output,
+        } => {
+            let source = std::fs::read_to_string(&file)?;
+            let ext = file
+                .extension()
+                .map(|e| e.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if ext == "atr" {
+                // Atramento is text-to-text: the litogramma deltos
+                // is written directly, preserving the passthrough
+                // property byte for byte.
+                let lit = atrep::atramento::atramento_to_litogramma(&source)?;
+                let out = output.unwrap_or_else(|| file.with_extension("atd"));
+                std::fs::write(&out, lit)?;
+                println!("{}", out.display());
+                return Ok(());
+            }
+            let doc = match ext.as_str() {
+                "html" | "htm" => atrep::endo::html_to_document(&source)?,
+                "rst" => atrep::endo::rst_to_document(&source)?,
+                "org" => atrep::endo::org_to_document(&source)?,
+                "dj" | "djot" => atrep::endo::djot_to_document(&source)?,
+                "dbk" | "docbook" => atrep::endo::docbook_to_document(&source)?,
+                "bib" => atrep::endo::bibtex_to_document(&source)?,
+                "jats" => atrep::endo::jats_to_document(&source)?,
+                "usfm" | "sfm" => atrep::endo::usfm_to_document(&source)?,
+                "tanzil" => atrep::endo::tanzil_to_document(
+                    &source,
+                    milestone_scheme.as_deref().unwrap_or("kufan"),
+                )?,
+                "usx" => atrep::endo::usx_to_document(&source)?,
+                "osis" => atrep::endo::osis_to_document(&source)?,
+                "xml" | "tei" => atrep::endo::tei_to_document(&source)?,
+                _ => atrep::endo::markdown_to_document(&source)?,
+            };
+            let mut doc = doc;
+            if let Some(scheme) = &milestone_scheme {
+                atrep::endo::usfm_apply_scheme(&mut doc, scheme);
+            }
+            let out = output.unwrap_or_else(|| file.with_extension("atd"));
+            std::fs::write(&out, atrep::dendron::serialize(&doc))?;
+            println!("{}", out.display());
+        }
+        Command::Morph {
+            file,
+            target,
+            variant,
+            output,
+        } => {
+            let doc = if file.extension().is_some_and(|e| e == "atk") {
+                atrep::check_file(&file)?
+            } else {
+                atrep::kanonizo::kanonizo_file(&file)?.document
+            };
+            let dir = file
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .to_path_buf();
+            let route = match &variant {
+                Some(v) => vec![atrep::morph::resolve_morph_variant(
+                    &dir,
+                    &doc.dialect_id,
+                    &target,
+                    Some(v),
+                )?],
+                None => atrep::morph::resolve_route(&dir, &doc.dialect_id, &target)?,
+            };
+            if route.len() > 1 {
+                let hops: Vec<&str> = std::iter::once(route[0].source.as_str())
+                    .chain(route.iter().map(|m| m.target.as_str()))
+                    .collect();
+                eprintln!("atrep: fusing {}", hops.join(" => "));
+            }
+            let out_doc = atrep::morph::apply_route(&doc, &route)?;
+            let out = output.unwrap_or_else(|| file.with_extension(format!("{target}.atk")));
+            std::fs::write(&out, atrep::dendron::serialize(&out_doc))?;
+            println!("{}", out.display());
+        }
+        Command::Compose { chain, output } => {
+            let dir = std::path::PathBuf::from(".");
+            let mut route: Vec<atrep::morph::Morph> = Vec::new();
+            for pair in chain.windows(2) {
+                route.extend(atrep::morph::resolve_route(&dir, &pair[0], &pair[1])?);
+            }
+            let mut fused = route[0].clone();
+            for next in &route[1..] {
+                fused = atrep::morph::compose(&fused, next)?;
+            }
+            let hops: Vec<&str> = std::iter::once(route[0].source.as_str())
+                .chain(route.iter().map(|m| m.target.as_str()))
+                .collect();
+            eprintln!("atrep: composed {}", hops.join(" => "));
+            let out = output
+                .unwrap_or_else(|| PathBuf::from(format!("{}.{}.hom", fused.source, fused.target)));
+            std::fs::write(&out, atrep::morph::serialize_hom(&fused))?;
+            println!("{}", out.display());
+        }
+        Command::Litos {
+            file,
+            save_litos_file,
+        } => {
+            let doc = atrep::check_file(&file)?;
+            let dir = file
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .to_path_buf();
+            let lookup = atrep::litosis::media_from_dir(&dir);
+            let resolve = |id: &str| atrep::dialektos::resolve(&dir, id).ok();
+            let result = atrep::litosis::litosis_with(&doc, &lookup, &resolve)?;
+            if save_litos_file {
+                let litos_path = PathBuf::from(format!("{}.litos", file.display()));
+                std::fs::write(&litos_path, &result.litos)?;
+            }
+            println!("{}", result.litos_id);
+        }
+    }
+    Ok(())
+}
+
+/// Collect every milestone scheme in the blocks, for
+/// quasialign's single-scheme inference.
+fn collect_schemes(
+    blocks: &[atrep::dendron::Block],
+    out: &mut std::collections::BTreeSet<String>,
+) {
+    use atrep::dendron::{Block, Inline};
+    fn inlines(v: &[Inline], out: &mut std::collections::BTreeSet<String>) {
+        for inline in v {
+            match inline {
+                Inline::Milestone { scheme, .. } => {
+                    out.insert(scheme.clone());
+                }
+                Inline::Endo { content, .. } | Inline::EndoDiaphane { content, .. } => {
+                    inlines(content, out)
+                }
+                _ => {}
+            }
+        }
+    }
+    for block in blocks {
+        match block {
+            Block::Paragraph(v) => inlines(v, out),
+            Block::Para { children, .. } | Block::ParaDiaphane { children, .. } => {
+                collect_schemes(children, out)
+            }
+            Block::Stichoi { strophes, .. } => {
+                for strophe in strophes {
+                    for line in &strophe.0 {
+                        inlines(line, out);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}

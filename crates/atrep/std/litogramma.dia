@@ -1,0 +1,257 @@
+@@@!atrep
+
+@@@/
+Litogramma — strict canonical literary markup, defined as a
+dialektos of atrep (Atreptos Platform Specification v0.10).
+
+This is the working dialect definition (.dia). The canonical
+litogramma.lektos is produced by kanonizo once tooling exists.
+
+Provisional items are marked with references to
+atrep-feedback.md (F1..F9): parts of this dialect depend on
+spec v0.10 gaps tracked there. Tentative symbol allocations
+are marked TENTATIVE (see HISTORY.md section 2).
+/@@@
+
+@@@/
+======================================================================
+Top matter
+======================================================================
+/@@@
+
+@@::koine
+@@::at-prosa
+@@::at-poesia
+@@::at-drama
+
+@@@/
+======================================================================
+Document structure
+Headings are enclosing para-simmeres: the section's content is
+the grammata. Numbered variants carry an explicit taxis; the
+old trailing-period convention is retired.
+======================================================================
+/@@@
+
+@@@/
+======================================================================
+Inline formatting
+======================================================================
+/@@@
+
+@=== math
+@$ grammata $@
+@"inline math (LaTeX-style content)"@
+===@
+
+@=== math-block
+@$$[(taxis)]
+grammata
+$$@
+@"display math; taxis present iff the equation is numbered"@
+===@
+
+@@@/
+Verbatim: no dialect sims. Litogramma inherits the core
+enlexis forms (inline and block verbatim), with code-language
+tags expressed as genoses on the enlexis episim.
+/@@@
+
+@@@/
+======================================================================
+Lists
+The old single-line collapse exception is retired: items and
+definitions are uniformly para-simmeres.
+======================================================================
+/@@@
+
+@@@/
+======================================================================
+Verse
+PROVISIONAL: depends on F1 (stichoi declarability — the
+stichos/strophe keywords below are proposed, not yet in spec
+v0.10) and F2 (stichoi whitespace preservation in kanonizo).
+======================================================================
+/@@@
+
+@@@/
+======================================================================
+Drama
+======================================================================
+/@@@
+
+@@@/
+======================================================================
+Notes
+Each note family is a single para-simmere definition; the callout
+is a deixis (@^(onym) and kin) - the core pointing-reference form
+adopted with spec v0.10.1 from feedback F5, so callout and body
+share the symbol by construction, with no second definition.
+Inline note forms are atramento sugar, not canonical. Canonical
+placement (all definitions at document end: footnotes, then
+chapter endnotes, then endnotes) is a validation constraint, not
+a transform. Deixes and their targets' onyms survive litosis with
+fresh autonumbering (F4 resolved for callouts).
+======================================================================
+/@@@
+
+@=== manuscript-note
+@^!
+grammata
+!^@
+@"manuscript note definition; onymized on the episim"@
+@""
+Critical-edition apparatus or editorial-process annotation;
+not part of the Text itself.
+""@
+===@
+
+@@@/
+======================================================================
+Asides
+The insertion point is a deixis (@|(onym)); the former
+aside-point sim is retired with F5's resolution.
+======================================================================
+/@@@
+
+@@@/
+======================================================================
+Quotations
+======================================================================
+/@@@
+
+@@@/
+======================================================================
+Figures and tables
+======================================================================
+/@@@
+
+@=== figure
+@<[(taxis)] [lemma]
+grammata
+<@
+@"figure; grammata is an enmedia inclusion plus the caption"@
+@""
+Bracket matching disabled (episim is the same left angle).
+Media files are bundled and hashed by kanonizo; the old res/
+directory and ampersand-onym linkage are retired.
+""@
+===@
+
+@=== table
+@+[(taxis)] [lemma]
+stichos
++@ [hypograph]
+@"table (PROVISIONAL: F1; row/cell model TENTATIVE)"@
+@""
+Stichoi grammata: one row per stichos, cells separated by
+pipes, a dash-run stichos separating a header row. The
+hypograph is the caption. Multi-paragraph cells are not
+supported.
+""@
+===@
+
+@@@/
+======================================================================
+Semantic containers
+Named containers carry hash-significant semantics and are
+therefore sims, not genoses. Ad-hoc kinds use the generic
+container with a genos.
+======================================================================
+/@@@
+
+@=== container
+@_[(taxis)] [lemma]
+grammata
+_@
+@"generic semantic container; kind given by a genos"@
+===@
+
+@=== theorema
+@_=[(taxis)] [lemma]
+grammata
+=_@
+@"theorem container"@
+===@
+
+@=== propositio
+@_-[(taxis)] [lemma]
+grammata
+-_@
+@"proposition container"@
+===@
+
+@=== lemma
+@_:[(taxis)] [lemma]
+grammata
+:_@
+@"lemma container (the mathematical statement kind)"@
+===@
+
+@=== demonstratio
+@_/[(taxis)] [lemma]
+grammata
+/_@
+@"proof container"@
+===@
+
+@@@/
+======================================================================
+References and index
+Callout-style references are monosims (F4 applies). The old
+curly-brace and delimiter-family pointer syntax is retired.
+======================================================================
+/@@@
+
+@=== milestone
+@|-(n)
+@"edition milestone (Stephanus page etc.); genoses name unit and scheme; renders marginally"@
+===@
+
+@=== heading-ref
+@>>(onym)
+@"reference to the closest enclosing heading of an onym"@
+@""
+An explicit level prefix restricts the heading level, colon-
+separated inside the parameter.
+""@
+===@
+
+@=== page-ref
+@>>>(onym)
+@"page-number reference"@
+===@
+
+@=== line-ref
+@>>>>(onym)
+@"line-number reference (critical editions)"@
+===@
+
+@=== cite
+@>[(key)
+@"bibliographic citation (TENTATIVE symbol; F7 for keys)"@
+@""
+The parameter is a citation key resolved against bibliogramma
+entries (the atrep-based, BibTeX-isomorphic reference
+extension defined beside this dialektos): an entry whose lemma
+equals the key, embedded in the document as a bibliogramma
+englossis block or carried alongside it. Exports pair through
+associated exos - the LaTeX exo routes embedded bibliogramma
+content into the companion .bib.
+""@
+===@
+
+@=== standards-ref
+@>: grammata :>@
+@"standards reference, rendered as-is (ISO, GOST, case law)"@
+@""
+A citation-like reference so universally recognized in context
+that it needs no bibliography entry.
+""@
+===@
+
+@@@/
+Deferred sims (pending upstream feedback, see atrep-feedback.md):
+ref-with-text and component extraction (F9), hidden-href link
+plus URL-definition block (F9).
+/@@@

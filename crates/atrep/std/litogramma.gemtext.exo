@@ -1,0 +1,405 @@
+@@@!atrep-exo
+@=litogramma=>gemtext
+
+@@/ Gemtext export: the maximal-loss surface. Three heading
+@@/ levels (deeper levels cap at ###), no inline formatting
+@@/ (everything dissolves to plain text), links as bare
+@@/ targets, verse and tables as preformatted lines, notes
+@@/ inlined as bracketed asides after their paragraphs. The
+@@/ motivating specimen for loss-graded routing: compare this
+@@/ path's losses with the HTML path's.
+
+@-> *document
+@(grammata)
+>-@
+
+@-> *paragraph
+@(grammata)
+
+>-@
+
+@-> *solo =
+# @(grammata)
+>-@
+
+@-> =
+@(grammata)
+>-@
+
+@-> *solo =_
+## @(grammata)
+>-@
+
+@-> =_
+@(grammata)
+>-@
+
+@-> *solo =:
+@(grammata)
+>-@
+
+@-> =:
+@(grammata)
+>-@
+
+@-> *solo =;
+edited by @(grammata)
+>-@
+
+@-> =;
+edited by @(grammata)
+>-@
+
+@-> ="
+@(grammata)
+>-@
+
+@-> *solo =#=
+>-@
+
+@-> ==
+# @(lemma)
+@(grammata)
+>-@
+
+@-> ===
+## @(lemma)
+@(grammata)
+>-@
+
+@-> #
+### @(lemma)
+@(grammata)
+>-@
+
+@-> ##
+### @(lemma)
+@(grammata)
+>-@
+
+@-> ###
+### @(lemma)
+@(grammata)
+>-@
+
+@-> ####
+### @(lemma)
+@(grammata)
+>-@
+
+@-> #_
+@(grammata)
+>-@
+
+@-> .
+@(grammata)
+>-@
+
+@-> *solo **
+@(grammata)
+>-@
+
+@-> **
+@(grammata)
+>-@
+
+@-> /
+@(grammata)
+>-@
+
+@-> *
+@(grammata)
+>-@
+
+@-> */
+@(grammata)
+>-@
+
+@-> ,
+@(grammata)
+>-@
+
+@-> $
+@(grammata)
+>-@
+
+@-> $$
+```
+@((grammata))
+```
+
+>-@
+
+@-> --
+@(grammata)
+>-@
+
+@-> -
+* @(grammata)
+>-@
+
+@-> ..
+@(grammata)
+>-@
+
+@-> .-
+* @(grammata)
+>-@
+
+@-> ::;
+@(grammata)
+>-@
+
+@-> ::
+* @(lemma): @(grammata)
+>-@
+
+@-> ;
+@(grammata)
+>-@
+
+@-> ~
+```
+@((grammata))
+```
+
+>-@
+
+@-> *stichoi
+```
+@((grammata))
+```
+
+>-@
+
+@-> *strophe
+@(grammata)
+>-@
+
+@-> *stichos
+@(grammata)
+>-@
+
+@-> :=
+## @(lemma)
+@(grammata)
+>-@
+
+@-> :#
+### @(lemma)
+@(grammata)
+>-@
+
+@-> :
+@(lemma):
+@(grammata)
+>-@
+
+@-> :~
+@(lemma):
+```
+@((grammata))
+```
+
+>-@
+
+@-> :!
+@(grammata)
+>-@
+
+@-> :!!
+@(lemma)
+@(grammata)
+>-@
+
+@-> :(
+(@(grammata))
+>-@
+
+@-> :[
+(@(grammata))
+
+>-@
+
+@-> :-
+@(grammata)
+>-@
+
+@-> :_
+@(grammata)
+>-@
+
+@-> :.
+@(grammata)
+>-@
+
+@-> *solo :.
+@(grammata)
+
+>-@
+
+@-> ^
+[note: @(grammata)]
+
+>-@
+
+@-> *deixis ^
+[^]
+>-@
+
+@-> ^^
+[note: @(grammata)]
+
+>-@
+
+@-> *deixis ^^
+[^]
+>-@
+
+@-> ^^^
+[note: @(grammata)]
+
+>-@
+
+@-> *deixis ^^^
+[^]
+>-@
+
+@-> ^!
+[note: @(grammata)]
+
+>-@
+
+@-> *deixis ^!
+[^]
+>-@
+
+@-> |
+[aside: @(grammata)]
+
+>-@
+
+@-> *deixis |
+[*]
+>-@
+
+@-> "
+> @(grammata:> )
+
+>-@
+
+@-> ""
+"@(grammata)"
+>-@
+
+@-> "/
+> @(grammata:> )
+
+>-@
+
+@-> -/
+@(grammata)
+>-@
+
+@-> *solo -/
+@(grammata)
+
+>-@
+
+@-> <
+@(grammata)@[
+@(lemma)]@
+
+>-@
+
+@-> +
+```
+@((grammata))
+```
+
+>-@
+
+@-> _
+@(grammata)
+>-@
+
+@-> _=
+@(grammata)
+>-@
+
+@-> _-
+@(grammata)
+>-@
+
+@-> _:
+@(grammata)
+>-@
+
+@-> _/
+@(grammata)
+>-@
+
+@-> >
+>-@
+
+@-> >>
+>-@
+
+@-> >>>
+>-@
+
+@-> >>>>
+>-@
+
+@-> >[
+>-@
+
+@-> ><
+=> @(grammata)
+>-@
+
+@-> >:
+@(grammata)
+>-@
+
+@-> %
+@(grammata)
+>-@
+
+@-> %%
+>-@
+
+@-> *verbatim
+```@[@(genoses)]@
+@((content))
+```
+
+>-@
+
+@-> *verbatim-inline
+@((content))
+>-@
+
+@-> *diaphane
+@(grammata)
+>-@
+
+@-> *diaphane-inline
+@(grammata)
+>-@
+
+@-> *media
+=> @((param))
+>-@
+
+@-> *milestone
+>-@
+
+@-> |-
+>-@
+
+@-> *solo |-
+>-@
+
+@-> *onym-anchor
+>-@

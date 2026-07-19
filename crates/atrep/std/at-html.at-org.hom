@@ -1,0 +1,14 @@
+@@@!atrep-hom
+@=at-html=>at-org
+
+@@/ Lossy return: strong renames onto org's star emphasis,
+@@/ spans and divisions dissolve, list containers unwrap (items
+@@/ are containerless in at-org), and the verse sim maps
+@@/ implicitly with its components dropped (at-org's verse is
+@@/ bare).
+
+@:: ! *
+@<< ,
+@<< _
+@<< --
+@<< ..

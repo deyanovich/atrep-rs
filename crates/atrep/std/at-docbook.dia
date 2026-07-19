@@ -1,0 +1,75 @@
+@@@!atrep
+
+@@/ at-docbook: a syntax mapper for a useful subset of DocBook.
+@@/ The first *nested* std dialektos: one uniform section sim
+@@/ contains its own subsections, so structure-preserving
+@@/ morphisms to and from other nested dialektoi (litogramma)
+@@/ need no flattening. Code maps to the core enlexis forms
+@@/ (programlisting language as a genos); footnotes are inline
+@@/ in DocBook and ride the deixis machinery.
+
+@=== section
+@# lemma
+grammata
+#@
+@"section at any depth (title is the lemma); sections nest"@
+===@
+
+@=== emphasis
+@/ grammata /@
+@"emphasis element"@
+===@
+
+@=== strong
+@* grammata *@
+@"emphasis role=strong/bold"@
+===@
+
+@=== blockquote
+@>
+grammata
+>@
+@"blockquote element"@
+===@
+
+@=== note
+@!
+grammata
+!@
+@"note admonition"@
+===@
+
+@=== warning
+@!!
+grammata
+!!@
+@"warning admonition"@
+===@
+
+@=== unordered-list
+@--
+grammata
+--@
+@"itemizedlist element"@
+===@
+
+@=== ordered-list
+@..
+grammata
+..@
+@"orderedlist element"@
+===@
+
+@=== list-item
+@-
+grammata
+-@
+@"listitem element"@
+===@
+
+@=== footnote
+@^
+grammata
+^@
+@"footnote body; the callout deixis marks the anchor"@
+===@

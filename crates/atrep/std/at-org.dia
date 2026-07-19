@@ -1,0 +1,108 @@
+@@@!atrep
+
+@@/ at-org: a syntax mapper for a useful subset of Org-mode.
+@@/ Flat headings (stars), org's emphasis family (bold, italic,
+@@/ underline, strike), items and definition items, quote and
+@@/ verse blocks, pipe tables as stichoi rows, footnotes riding
+@@/ the deixis machinery, and line-form links. Code (src,
+@@/ example, inline =verbatim=/~code~) maps to the core enlexis
+@@/ forms with the language as a genos.
+
+@=== heading-1
+@# grammata #@
+@"top-level heading (one star); flat, does not nest content"@
+===@
+
+@=== heading-2
+@## grammata ##@
+@"second-level heading (two stars)"@
+===@
+
+@=== heading-3
+@### grammata ###@
+@"third-level heading (three stars)"@
+===@
+
+@=== heading-4
+@#### grammata ####@
+@"fourth-level heading (four stars)"@
+===@
+
+@=== heading-5
+@##### grammata #####@
+@"fifth-level heading (five stars)"@
+===@
+
+@=== emphasis
+@/ grammata /@
+@"italic emphasis (/slashes/)"@
+===@
+
+@=== strong
+@* grammata *@
+@"bold emphasis (*stars*)"@
+===@
+
+@=== underline
+@_ grammata _@
+@"underlined run (_underscores_)"@
+===@
+
+@=== strike
+@+ grammata +@
+@"struck-through run (+pluses+)"@
+===@
+
+@=== link
+@>< grammata ><@
+@"hyperlink target ([[...]]); the grammata is the target"@
+===@
+
+@=== blockquote
+@>
+grammata
+>@
+@"quote block (#+BEGIN_QUOTE)"@
+===@
+
+@=== verse
+@~
+stichos
+~@
+@"verse block (#+BEGIN_VERSE); line breaks significant"@
+===@
+
+@=== table
+@|
+stichos
+|@
+@"pipe table; one row per stichos (cell model pending)"@
+===@
+
+@=== unordered-item
+@-
+grammata
+-@
+@"bullet list item (- marker); items form flat runs"@
+===@
+
+@=== ordered-item
+@.(taxis)
+grammata
+.@
+@"enumerated list item (N. marker); items form flat runs"@
+===@
+
+@=== definition-item
+@:: lemma
+grammata
+::@
+@"description list item (- term :: text); the lemma is the term"@
+===@
+
+@=== footnote
+@^
+grammata
+^@
+@"footnote definition ([fn:name]); deixis callouts reference it"@
+===@

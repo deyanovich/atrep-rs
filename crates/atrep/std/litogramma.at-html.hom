@@ -1,0 +1,89 @@
+@@@!atrep-hom
+@=litogramma=>at-html
+
+@@/ Semantic representation: litogramma's typed sims survive as
+@@/ genos-classed generic containers wherever HTML has no
+@@/ element, so a stylesheet can recover the distinctions. The
+@@/ nesting flattens (extract) and goes one way: rebuilding
+@@/ litogramma structure from flat headings awaits group rules.
+
+@@/ Front matter.
+@:: = #
+@:: =_ , .subtitle
+@:: =: , .author
+@:: =; , .editor
+@:: =" _ .abstract
+@-- =#=
+
+@@/ Structure: nested sections dissolve into flat headings.
+@<# == #
+@<# === ##
+@<# # ###
+@<# ## ####
+@<# ### #####
+@<# #### ######
+@:: #_ !
+@:: . , .ordinal
+@-- **
+
+@@/ Inline. Emphasis and annotation map implicitly.
+@:: * !
+@:: */ !
+@:: $ , .math
+@<< $$
+
+@@/ Lists. Unordered forms map implicitly.
+@:: .- .
+@<< ::;
+@<# :: !
+@<< ;
+
+@@/ Drama. Verse and verse-dialogue ride at-html's verse sim.
+@:: :~ ~ .dialogue
+@<# := ##
+@<# :# ###
+@<# : !
+@:: :! !
+@<# :!! !
+@:: :( /
+@:: :[ _ .stage-direction
+@:: :- , .dialogue-line
+@:: :_ , .dialogue-tag
+@:: :. , .pause
+
+@@/ Notes dissolve into running text; their deixes go with them.
+@<< ^
+@<< ^^
+@<< ^^^
+@<< ^!
+@:: | _ .aside
+
+@@/ Quotations. The blockquote attribution drops at this hop
+@@/ (at-html's blockquote is bare; lossy rename).
+@:: " >
+@:: "" , .quotation
+@<< "/
+@:: -/ , .date
+
+@@/ Figures and tables.
+@<# < !
+@:: + ~ .table
+
+@@/ Containers.
+@<# _ !
+@<# _= !
+@<# _- !
+@<# _: !
+@<# _/ !
+
+@@/ Apparatus: references have no anchor machinery in at-html.
+@-- >
+@-- >>
+@-- >>>
+@-- >>>>
+@-- >[
+@:: >: , .standards-ref
+@<< ><
+@<< %
+@-- %%
+@-- |-

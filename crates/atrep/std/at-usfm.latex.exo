@@ -1,0 +1,520 @@
+@@@!atrep-exo
+@=at-usfm=>latex
+
+@@/ LaTeX export for scripture: the rules emit a semantic macro
+@@/ layer (one macro per construct, genoses interpolated as
+@@/ arguments), and the atrep-bible document class carried in
+@@/ the asset section compiles it into a two-column dense Bible
+@@/ layout. Every presentation decision lives in the class;
+@@/ vocabulary growth never touches these rules (an unknown
+@@/ marker or character genos falls through the class's
+@@/ dispatch to a visible fallback).
+
+@%
+\ \textbackslash{}
+{ \{
+} \}
+$ \$
+& \&
+# \#
+_ \_
+% \%
+~ \textasciitilde{}
+^ \textasciicircum{}
+%@
+
+@-> *document
+\documentclass{atrep-bible}
+\begin{document}
+\atmaketitle
+@(grammata)
+\end{document}
+>-@
+
+@-> #
+\atbook{@(lemma)}
+@(grammata)
+>-@
+
+@-> *paragraph
+\atp @(grammata)
+
+>-@
+
+@-> *solo ##
+\atchapter{@(param)}
+>-@
+
+@-> |
+\atverse{@(param)}
+>-@
+
+@-> *solo _
+\atmarker{@(genoses)}{@(grammata)}
+>-@
+
+@-> ~
+\begin{atpoetry}
+@(grammata)
+\end{atpoetry}
+>-@
+
+@-> *strophe
+@(grammata)
+\atstrophe
+>-@
+
+@-> *stichos
+@(grammata)
+>-@
+
+@-> ,.q1
+\atq{1}{@(grammata)}
+>-@
+
+@-> ,.q2
+\atq{2}{@(grammata)}
+>-@
+
+@-> ,.q3
+\atq{3}{@(grammata)}
+>-@
+
+@-> ,.fr
+\atref{@(grammata)}
+>-@
+
+@-> ,.xo
+\atref{@(grammata)}
+>-@
+
+@-> ,
+\atchar{@(genoses)}{@(grammata)}
+>-@
+
+@-> ^
+\atnote{@(genoses)}{@(grammata)}
+>-@
+
+@-> *verbatim
+\begin{ttfamily}
+@(content)
+\end{ttfamily}
+>-@
+
+@-> *verbatim-inline
+\texttt{@(content)}
+>-@
+
+@-> *media
+\atfig{@((param))}
+>-@
+
+@-> *onym-anchor
+\label{@(onym)}
+>-@
+
+@=* atrep-bible.cls END-OF-CLASS
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesClass{atrep-bible}[2026/07/12 v0.2 Scripture layout for the at-usfm dialektos]
+
+% The presentation companion of the at-usfm latex exomorphosis.
+% The exo emits a semantic macro layer (\atbook, \atchapter,
+% \atverse, \atmarker{<usfm marker>}, \atchar{<usfm char>},
+% \atnote, \atq); this class compiles it into a two-column
+% dense Bible layout. Marker and character dispatch goes
+% through \csname tables, so vocabulary growth needs only a
+% definition here -- unknown names fall through to a visible
+% plain rendering, never an error.
+%
+% Options: redletter (words of Jesus in red), 9pt (denser
+% setting; default 10pt), a5paper (the classic hand-Bible
+% format, 148x210 with 13mm margins; implies 9pt).
+
+\newif\ifat@redletter
+\newif\ifat@ninepoint
+\newif\ifat@afive
+\DeclareOption{redletter}{\at@redlettertrue}
+\DeclareOption{9pt}{\at@ninepointtrue}
+\DeclareOption{a5paper}{\at@afivetrue\at@ninepointtrue}
+\DeclareOption*{\PassOptionsToClass{\CurrentOption}{book}}
+\ProcessOptions\relax
+\LoadClass[10pt,twoside,twocolumn]{book}
+
+\ifat@ninepoint
+  \renewcommand\normalsize{\@setfontsize\normalsize{9}{10.6}}
+  \renewcommand\small{\@setfontsize\small{8.2}{9.6}}
+  \renewcommand\footnotesize{\@setfontsize\footnotesize{7.2}{8.4}}
+  \renewcommand\scriptsize{\@setfontsize\scriptsize{6.2}{7.2}}
+  \renewcommand\large{\@setfontsize\large{10.5}{12.2}}
+  \renewcommand\Large{\@setfontsize\Large{12.5}{14.5}}
+  \renewcommand\LARGE{\@setfontsize\LARGE{15}{17.5}}
+  \renewcommand\huge{\@setfontsize\huge{18}{21}}
+  \normalsize
+\fi
+
+\RequirePackage{iftex}
+\ifpdftex
+  \RequirePackage[T1]{fontenc}
+  \RequirePackage{tgpagella}
+\else
+  \RequirePackage{fontspec}
+  \setmainfont{texgyrepagella}[
+    Extension = .otf,
+    UprightFont = *-regular,
+    BoldFont = *-bold,
+    ItalicFont = *-italic,
+    BoldItalicFont = *-bolditalic]
+\fi
+% Hebrew and polytonic Greek runs (footnote etymologies):
+% Pagella has neither Hebrew nor Greek Extended; switch to a
+% covering serif per script under XeTeX, with right-to-left
+% direction for Hebrew.
+\ifxetex
+  \IfFontExistsTF{Liberation Serif}{%
+    \newfontfamily\at@scriptfont{Liberation Serif}[Scale=MatchLowercase]%
+    \TeXXeTstate=1
+    % Raw interchar classes, one per script (both Greek blocks
+    % share one class, so basic/polytonic crossings are no
+    % boundary). Stateless font switches: a run ending at a
+    % macro-argument boundary must not leave an open group.
+    \newXeTeXintercharclass\at@hebclass
+    \count@="0590
+    \loop
+      \XeTeXcharclass\count@=\at@hebclass
+      \advance\count@ 1
+    \ifnum\count@<"0600 \repeat
+    \newXeTeXintercharclass\at@grkclass
+    \count@="0370
+    \loop
+      \XeTeXcharclass\count@=\at@grkclass
+      \advance\count@ 1
+    \ifnum\count@<"0400 \repeat
+    \count@="1F00
+    \loop
+      \XeTeXcharclass\count@=\at@grkclass
+      \advance\count@ 1
+    \ifnum\count@<"2000 \repeat
+    \XeTeXinterchartoks 0 \at@hebclass = {\at@scriptfont\beginR}
+    \XeTeXinterchartoks 4095 \at@hebclass = {\at@scriptfont\beginR}
+    \XeTeXinterchartoks \at@hebclass 0 = {\endR\rmfamily}
+    \XeTeXinterchartoks \at@hebclass 4095 = {\endR\rmfamily}
+    \XeTeXinterchartoks 0 \at@grkclass = {\at@scriptfont}
+    \XeTeXinterchartoks 4095 \at@grkclass = {\at@scriptfont}
+    \XeTeXinterchartoks \at@grkclass 0 = {\rmfamily}
+    \XeTeXinterchartoks \at@grkclass 4095 = {\rmfamily}
+    \XeTeXinterchartokenstate=1
+  }{}
+\fi
+\RequirePackage{microtype}
+\RequirePackage{lettrine}
+\ifat@afive
+  \RequirePackage[paperwidth=148mm,paperheight=210mm,top=13mm,bottom=14mm,inner=14mm,outer=12mm,columnsep=4mm]{geometry}
+\else
+  \RequirePackage[a4paper,top=20mm,bottom=22mm,inner=16mm,outer=14mm,columnsep=6mm]{geometry}
+\fi
+\ifat@redletter
+  \RequirePackage{xcolor}
+  \definecolor{at@red}{rgb}{0.72,0.11,0.11}
+\fi
+\RequirePackage[hidelinks]{hyperref}
+
+% Dense setting: narrow columns need slack.
+\setlength\parindent{1em}
+\setlength\parskip{0pt}
+\tolerance=2500
+\emergencystretch=1.6em
+\hbadness=2500
+
+% ---- Running heads ---------------------------------------------
+% Every verse (and chapter) sets both mark components to
+% "BOOK c:v". \rightmark is then the first reference on the
+% page, \leftmark the last: the classic corner references --
+% first on the verso's outer edge, last on the recto's.
+\def\at@runninghead{}
+\def\at@chapnum{}
+\newcommand\at@setmark[1]{%
+  \ifx\at@runninghead\@empty\else
+    \markboth{\at@runninghead\ #1}{\at@runninghead\ #1}%
+  \fi}
+\def\at@headfont{\small\scshape}
+\def\ps@atbible{%
+  \def\@oddhead{{\at@headfont\makebox[0pt][l]{}\hfil
+    \normalfont\small\thepage\hfil\makebox[0pt][r]{\at@headfont\leftmark}}}%
+  \def\@evenhead{{\at@headfont\makebox[0pt][l]{\at@headfont\rightmark}\hfil
+    \normalfont\small\thepage\hfil\makebox[0pt][r]{}}}%
+  \def\@oddfoot{}\def\@evenfoot{}}
+\pagestyle{atbible}
+
+% ---- Title page and contents -----------------------------------
+% The kanon carries no collection-level metadata; the title is a
+% presentation default, renewable before \atmaketitle. The
+% contents page appears when the document holds more than one
+% book (the count rides the .aux, so it needs two runs -- as
+% the contents page itself does).
+\newcommand\atbibletitle{The Holy Bible}
+\newcommand\atbiblesubtitle{}
+% Logical page parity must track physical parity, or duplexed
+% versos get recto margins: front matter runs in roman from the
+% title leaf, and the arabic restart lands on a true recto via
+% \at@cleartorecto.
+\newcommand\at@cleartorecto{\clearpage
+  \ifodd\c@page\else\thispagestyle{empty}\hbox{}\clearpage\fi}
+\newcommand\atmaketitle{%
+  \pagenumbering{roman}%
+  \onecolumn
+  \thispagestyle{empty}%
+  \begingroup
+  \centering
+  \vspace*{0.28\textheight}
+  {\fontsize{32}{38}\selectfont\scshape\atbibletitle\par}
+  \vspace{1.5\baselineskip}
+  \ifx\atbiblesubtitle\@empty\else
+    {\Large\itshape\atbiblesubtitle\par}
+  \fi
+  \vspace*{\fill}
+  \endgroup
+  \clearpage
+  \twocolumn
+  \ifat@wantcontents
+    {\centering\Large\scshape Contents\par}
+    \addvspace{1\baselineskip}
+    \@starttoc{toc}%
+  \else
+    \at@opentoc
+  \fi
+  \at@cleartorecto
+  \pagenumbering{arabic}}
+% The contents page prints when the previous run counted more
+% than one book. The toc write stream must open on every run
+% regardless (otherwise the entries are only written on runs
+% that also print, and the bootstrap needs three passes).
+\newif\ifat@wantcontents
+\AtBeginDocument{%
+  \ifcsname at@bookstotal\endcsname
+    \ifnum\at@bookstotal>1 \at@wantcontentstrue \fi
+  \fi}
+\newcommand\at@opentoc{%
+  \if@filesw
+    \expandafter\newwrite\csname tf@toc\endcsname
+    \immediate\openout\csname tf@toc\endcsname \jobname.toc\relax
+  \fi}
+\AtEndDocument{\immediate\write\@auxout{%
+  \string\gdef\string\at@bookstotal{\arabic{at@book}}}}
+
+% ---- Books -----------------------------------------------------
+% Each book after the first opens at the top of a fresh column.
+\newcounter{at@book}
+\newif\ifat@tocentry
+\newcommand\atbook[1]{%
+  \par
+  \ifnum\value{at@book}>0 \newpage\fi
+  \stepcounter{at@book}%
+  \gdef\at@runninghead{}%
+  \gdef\at@chapterlabel{}%
+  \gdef\at@pendingchapter{}%
+  \gdef\at@chapnum{}%
+  \global\at@tocentryfalse}
+\newcommand\at@tocline[1]{%
+  \ifat@tocentry\else
+    \global\at@tocentrytrue
+    \addcontentsline{toc}{section}{#1}%
+  \fi}
+
+% ---- Marker dispatch -------------------------------------------
+% In label mode (\cl declared) a pending chapter heading
+% flushes before any content marker, so a superscription lands
+% under "PSALM 6", not above it. In drop-number mode the
+% number keeps deferring through headings into the first
+% paragraph (the print convention).
+\newcommand\atmarker[2]{%
+  \ifcsname at@nochap@#1\endcsname\else
+    \ifx\at@chapterlabel\@empty\else
+      \ifx\at@pendingchapter\@empty\else\at@placechapter@display\fi
+    \fi
+  \fi
+  \ifcsname at@m@#1\endcsname
+    \csname at@m@#1\endcsname{#2}%
+  \else
+    \at@m@unknown{#1}{#2}%
+  \fi}
+\@namedef{at@nochap@h}{}
+\@namedef{at@nochap@toc1}{}
+\@namedef{at@nochap@toc2}{}
+\@namedef{at@nochap@toc3}{}
+\@namedef{at@nochap@cl}{}
+\@namedef{at@nochap@cp}{}
+\newcommand\at@m@unknown[2]{\par{\small\itshape #2\par}}
+\newcommand\at@heading[1]{#1\par\nobreak\@afterindentfalse\@afterheading}
+
+% Identification and front matter. The running head comes from
+% the h marker; books without one (OSIS sources without short
+% titles) fall back to the main title. The contents entry
+% prefers toc1, falling back to mt1.
+\@namedef{at@m@h}#1{\gdef\at@runninghead{\MakeUppercase{#1}}%
+  \markboth{\at@runninghead}{\at@runninghead}}
+\@namedef{at@m@toc1}#1{\at@tocline{#1}}
+\@namedef{at@m@toc2}#1{}
+\@namedef{at@m@toc3}#1{}
+
+% Titles.
+\@namedef{at@m@mt1}#1{\par\addvspace{1.2\baselineskip}%
+  \ifx\at@runninghead\@empty
+    \gdef\at@runninghead{\MakeUppercase{#1}}%
+    \markboth{\at@runninghead}{\at@runninghead}%
+  \fi
+  \at@tocline{#1}%
+  {\centering\at@heading{{\LARGE\scshape #1}}}\addvspace{0.9\baselineskip}}
+\@namedef{at@m@mt2}#1{\par{\centering\at@heading{{\normalsize\itshape #1}}}\addvspace{2pt}}
+\@namedef{at@m@mt3}#1{\par{\centering\at@heading{{\normalsize\itshape #1}}}\addvspace{2pt}}
+\@namedef{at@m@ms1}#1{\par\addvspace{1\baselineskip}%
+  {\centering\at@heading{{\large\scshape #1}}}\addvspace{0.5\baselineskip}}
+\@namedef{at@m@ms2}#1{\par\addvspace{0.7\baselineskip}%
+  {\centering\at@heading{{\normalsize\scshape #1}}}\addvspace{0.4\baselineskip}}
+\@namedef{at@m@mr}#1{\par{\centering\at@heading{{\footnotesize(#1)}}}\addvspace{0.3\baselineskip}}
+
+% Section headings and references.
+\@namedef{at@m@s1}#1{\par\addvspace{0.8\baselineskip}%
+  {\centering\at@heading{{\small\bfseries #1}}}\addvspace{0.25\baselineskip}}
+\@namedef{at@m@s2}#1{\par\addvspace{0.6\baselineskip}%
+  {\centering\at@heading{{\small\itshape\bfseries #1}}}\addvspace{0.2\baselineskip}}
+\@namedef{at@m@s3}#1{\par\addvspace{0.5\baselineskip}%
+  {\centering\at@heading{{\small\itshape #1}}}\addvspace{0.2\baselineskip}}
+\@namedef{at@m@r}#1{\par{\centering\at@heading{{\footnotesize(#1)}}}\addvspace{2pt}}
+
+% Superscriptions, speakers, acrostic headings, labels.
+\@namedef{at@m@d}#1{\par{\at@heading{{\footnotesize\itshape #1}}}\addvspace{2pt}}
+\@namedef{at@m@sp}#1{\par\addvspace{2pt}{\at@heading{{\small\itshape #1}}}}
+\@namedef{at@m@qa}#1{\par\addvspace{0.4\baselineskip}%
+  {\centering\at@heading{{\small\scshape #1}}}\addvspace{2pt}}
+\@namedef{at@m@cl}#1{\gdef\at@chapterlabel{#1}}
+\@namedef{at@m@cp}#1{}
+
+% Paragraph-class markers (typed paragraphs).
+\@namedef{at@m@m}#1{\par\noindent #1\par}
+\@namedef{at@m@mi}#1{\par{\leftskip=1em\noindent #1\par}}
+\@namedef{at@m@pi1}#1{\par{\leftskip=1em #1\par}}
+\@namedef{at@m@pc}#1{\par{\centering #1\par}}
+\@namedef{at@m@nb}#1{\par\noindent #1\par}
+\@namedef{at@m@po}#1{\par #1\par}
+\@namedef{at@m@ip}#1{\par #1\par}
+\@namedef{at@m@is1}#1{\par\addvspace{0.6\baselineskip}%
+  {\centering\at@heading{{\small\bfseries #1}}}\addvspace{0.2\baselineskip}}
+\@namedef{at@m@li1}#1{\par{\leftskip=1.4em\hangindent=1em\noindent #1\par}}
+\@namedef{at@m@ili1}#1{\par{\leftskip=1.4em\hangindent=1em\noindent #1\par}}
+\@namedef{at@m@lit}#1{\par{\centering\itshape #1\par}}
+
+% ---- Chapters and verses ---------------------------------------
+% \c is a milestone; the number is set into the paragraph or
+% poetry that follows (a two-line lettrine drop number, or a
+% centered "LABEL n" heading when the book declared \cl). The
+% first verse number after a chapter number is suppressed.
+\def\at@pendingchapter{}
+\def\at@chapterlabel{}
+\newif\ifat@suppressverse
+\newcounter{at@xnote}
+\renewcommand\LettrineFontHook{\bfseries}
+\def\at@versefont{\fontsize{6.2}{6.2}\selectfont\bfseries}
+
+\newcommand\atchapter[1]{\gdef\at@pendingchapter{#1}\gdef\at@chapnum{#1}}
+
+\newcommand\at@chapterreset{%
+  \setcounter{footnote}{0}\setcounter{at@xnote}{0}%
+  \at@setmark{\at@chapnum}%
+  \gdef\at@pendingchapter{}%
+  \global\at@suppressversetrue}
+
+\newcommand\at@placechapter{%
+  \ifx\at@chapterlabel\@empty
+    % No group here: \lettrine shapes the paragraph via
+    % \parshape, and paragraph parameters are group-local --
+    % closing a group before the paragraph ends would hang the
+    % number into the margin or gutter.
+    \edef\at@dropnum{\at@pendingchapter}%
+    \at@chapterreset
+    \lettrine[lines=2,findent=3pt,nindent=0pt]{\at@dropnum}{}%
+  \else
+    \at@placechapter@display
+    \noindent
+  \fi}
+
+\newcommand\at@placechapter@display{%
+  {\par\addvspace{0.9\baselineskip}\centering
+   \small\scshape
+   \ifx\at@chapterlabel\@empty\else\MakeUppercase{\at@chapterlabel}~\fi
+   \at@pendingchapter\par}%
+  \addvspace{0.35\baselineskip}%
+  \at@chapterreset}
+
+\newcommand\atp{\par
+  \ifx\at@pendingchapter\@empty\else\at@placechapter\fi}
+
+\newcommand\atverse[1]{%
+  \at@setmark{\at@chapnum:#1}%
+  \ifat@suppressverse
+    \global\at@suppressversefalse\ignorespaces
+  \else
+    {\raisebox{0.42ex}{\at@versefont #1}}\kern 0.12em
+  \fi}
+
+% ---- Poetry ----------------------------------------------------
+\newdimen\at@qunit
+\AtBeginDocument{\global\at@qunit=1.1em\relax}
+\newenvironment{atpoetry}{\par\addvspace{0.35\baselineskip}%
+  \ifx\at@pendingchapter\@empty\else\at@placechapter@display\fi}%
+  {\par\addvspace{0.35\baselineskip}}
+\newcommand\atq[2]{\par\noindent\hangindent=2.4em\hangafter=1
+  \hskip\dimexpr #1\at@qunit-\at@qunit\relax #2\par}
+\newcommand\atstrophe{\par\addvspace{0.3\baselineskip}}
+
+% ---- Character dispatch ----------------------------------------
+\newcommand\atchar[2]{%
+  \ifcsname at@c@#1\endcsname
+    \csname at@c@#1\endcsname{#2}%
+  \else
+    #2%
+  \fi}
+\@namedef{at@c@wj}#1{\ifat@redletter{\color{at@red}#1}\else #1\fi}
+\@namedef{at@c@nd}#1{\textsc{#1}}
+\@namedef{at@c@add}#1{\textit{#1}}
+\@namedef{at@c@em}#1{\emph{#1}}
+\@namedef{at@c@it}#1{\textit{#1}}
+\@namedef{at@c@bd}#1{\textbf{#1}}
+\@namedef{at@c@sc}#1{\textsc{#1}}
+\@namedef{at@c@no}#1{\textup{#1}}
+\@namedef{at@c@tl}#1{\textit{#1}}
+\@namedef{at@c@k}#1{\textbf{#1}}
+\@namedef{at@c@sig}#1{\textit{#1}}
+\@namedef{at@c@bk}#1{\textit{#1}}
+\@namedef{at@c@qt}#1{\textit{#1}}
+\@namedef{at@c@qs}#1{\nobreak\hskip 1em plus 1fill\textit{#1}}
+
+% ---- Notes -----------------------------------------------------
+% Translation notes (f/fe) are the numbered series, reset per
+% chapter. Cross-references (x) are a separate symbol series
+% (* dag ddag ...), also per chapter, so the two kinds read as
+% distinct apparatus in the same footnote block.
+\renewcommand\thefootnote{\arabic{footnote}}
+\def\at@xsymbol{\ifcase\value{at@xnote}\or *\or \dag\or \ddag\or
+  \S\or \P\or **\or \dag\dag\or \ddag\ddag\else \S\S\fi}
+\newcommand\atnote[2]{%
+  \ifcsname at@n@#1\endcsname
+    \csname at@n@#1\endcsname{#2}%
+  \else
+    \footnote{#2}%
+  \fi}
+\@namedef{at@n@f}#1{\footnote{#1}}
+\@namedef{at@n@fe}#1{\footnote{#1}}
+\@namedef{at@n@x}#1{\stepcounter{at@xnote}%
+  \textsuperscript{\at@xsymbol}%
+  \begingroup
+  \def\thefootnote{\at@xsymbol}%
+  \footnotetext{#1}%
+  \endgroup}
+\newcommand\atref[1]{\textbf{#1}\enspace}
+
+% ---- Odds and ends ---------------------------------------------
+\newcommand\atfig[1]{\par{\centering\texttt{[#1]}\par}}
+
+\endinput
+END-OF-CLASS

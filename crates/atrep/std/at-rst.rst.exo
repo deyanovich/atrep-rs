@@ -1,0 +1,120 @@
+@@@!atrep-exo
+@=at-rst=>rst
+
+@@/ reStructuredText export for the at-rst syntax mapper. Heading
+@@/ underlines use fixed 56-character adornments (longer than the
+@@/ title is valid RST) in the canonical order = - ~ ^ " '.
+
+@%
+\ \\
+* \*
+` \`
+_ \_
+| \|
+%@
+
+@-> *document
+@(grammata)
+>-@
+
+@-> *paragraph
+@(grammata)
+
+>-@
+
+@-> *solo #
+@(grammata)
+========================================================
+>-@
+
+@-> *solo ##
+@(grammata)
+--------------------------------------------------------
+>-@
+
+@-> *solo ###
+@(grammata)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+>-@
+
+@-> *solo ####
+@(grammata)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+>-@
+
+@-> *solo #####
+@(grammata)
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+>-@
+
+@-> *solo ######
+@(grammata)
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+>-@
+
+@-> *
+*@(grammata)*
+>-@
+
+@-> **
+**@(grammata)**
+>-@
+
+@-> >
+   @(grammata:   )
+>-@
+
+@-> -
+- @(grammata:  )
+>-@
+
+@-> .
+@(taxis). @(grammata:   )
+>-@
+
+@-> ::
+@(lemma)
+   @(grammata:   )
+>-@
+
+@-> :
+:@(lemma): @(grammata:   )
+>-@
+
+@-> !
+.. note::
+
+   @(grammata:   )
+>-@
+
+@-> !!
+.. warning::
+
+   @(grammata:   )
+>-@
+
+@-> ^
+.. [#@(onym)] @(grammata:   )
+>-@
+
+@-> *deixis ^
+[#@(onym)]_
+>-@
+
+@-> *verbatim
+::
+
+   @((content:   ))
+>-@
+
+@-> *verbatim-inline
+``@((content))``
+>-@
+
+@-> *media
+.. image:: @((param))
+
+>-@
+
+@-> *onym-anchor
+>-@

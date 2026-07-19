@@ -1,0 +1,18 @@
+#!/usr/bin/env atrep
+\\\!exempli
+
+\\/ draft note: structure not final
+
+\# Introduction
+Atrep	documents   keep meaning
+and presentation apart.
+See \^(figure-one) for the diagram
+(as sent from me@example.com).
+#\(intro).overview
+
+\=() Pipeline
+\\\\(pipeline.svg)
+\:The processing pipeline.:\
+=\(figure-one).diagram
+
+\\\+(steps.txt)

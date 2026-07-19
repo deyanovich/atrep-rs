@@ -1,0 +1,14 @@
+@@@!atrep-hom
+@=at-html=>at-rst
+
+@@/ The reverse direction: em/strong rename back, list containers
+@@/ and generic wrappers dissolve into their content (at-rst is
+@@/ flat and has no span/division).
+
+@:: / *
+@:: ! **
+@<< --
+@<< ..
+@<< ,
+@<< _
+@-- ~

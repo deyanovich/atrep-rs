@@ -1,0 +1,91 @@
+@@@!atrep
+
+@@/ at-drama: the drama pack - acts, scenes, prose and verse
+@@/ dialogue, dramatis personae, stage directions and their
+@@/ inline kin.
+@@/ Part of the standard library; composes with koine and its
+@@/ sibling packs.
+
+@=== act
+@:=[(taxis)] [lemma]
+grammata
+=:@
+@"drama act"@
+===@
+
+@=== scene
+@:#[(taxis)] [lemma]
+grammata
+#:@
+@"drama scene"@
+===@
+
+@=== dialogue
+@: lemma
+grammata
+:@
+@"drama dialogue; the lemma is the speech prefix"@
+===@
+
+@=== verse-dialogue
+@:~ lemma
+stichos
+~:@
+@"drama dialogue in verse (PROVISIONAL: F1, F2)"@
+===@
+
+@=== dramatis-persona
+@:! grammata !:@
+@"dramatis personae entry, bare (name only), own paragraph"@
+===@
+
+@=== character
+@:!! lemma
+grammata
+!!:@
+@"dramatis personae entry with description (TENTATIVE symbol)"@
+@""
+The lemma is the character name; the grammata is the
+description, possibly multi-paragraph.
+""@
+===@
+
+@=== stage-direction
+@:( grammata ):@
+@"inline stage direction; also the action beat in prose"@
+===@
+
+@=== stage-direction-block
+@:[
+grammata
+]:@
+@"block stage direction"@
+===@
+
+@=== dialogue-line
+@:- grammata -:@
+@"prose-fiction dialogue line, own paragraph"@
+@""
+Semantic marker only; quotation marks or leading em-dashes are
+entered by the author per the language's convention.
+""@
+===@
+
+@=== dialogue-tag
+@:_ grammata _:@
+@"dialogue tag (attribution) within a dialogue line"@
+@""
+Includes trailing punctuation, excludes leading punctuation.
+""@
+@^(:-)
+===@
+
+@=== pause
+@:. grammata .:@
+@"dramatic pause (TENTATIVE symbol)"@
+@""
+Stands alone as a paragraph in drama and prose; canonical
+grammata is a literal ellipsis. Local, unlike the structural
+section-break. Genoses may refine typesetting.
+""@
+===@

@@ -1,0 +1,32 @@
+\\\!atrep
+
+\\/ Base definitions for the lektos tests, written with the
+\\/ alias sigil and deliberately out of canonical name order.
+
+\=== zeta
+\! grammata !\
+\"an exclamation"\
+===\
+
+\=== aside
+\< grammata <\
+\"an aside (bracket matching disabled)"\
+===\
+
+\=== sect
+\#(taxis) [lemma]
+grammata
+#\ [hypograph]
+===\
+
+\=== alpha
+\~ grammata ~\
+\""
+Multi-line long description.
+Second line.
+""\
+===\
+
+\=== link
+\&(param)
+===\

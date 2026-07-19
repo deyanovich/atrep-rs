@@ -1,0 +1,144 @@
+@@@!atrep-exo
+@=at-html=>xhtml
+
+@@/ HTML export for the at-html syntax mapper. The engine-side
+@@/ HTML endomorphosis is its inverse over the canonical subset.
+@@/ Inherited wholesale by at-markdown (minus its exclusions,
+@@/ with emphasis and strong remapped along the aliases).
+
+@%
+& &amp;
+< &lt;
+> &gt;
+%@
+
+@-> *document
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<body>
+@(grammata)
+</body>
+</html>
+>-@
+
+@-> *paragraph
+<p>@(grammata)</p>
+>-@
+
+@-> *solo #
+<h1>@(grammata)</h1>
+>-@
+
+@-> *solo ##
+<h2>@(grammata)</h2>
+>-@
+
+@-> *solo ###
+<h3>@(grammata)</h3>
+>-@
+
+@-> *solo ####
+<h4>@(grammata)</h4>
+>-@
+
+@-> *solo #####
+<h5>@(grammata)</h5>
+>-@
+
+@-> *solo ######
+<h6>@(grammata)</h6>
+>-@
+
+@-> /
+<em>@(grammata)</em>
+>-@
+
+@-> !
+<strong>@(grammata)</strong>
+>-@
+
+@-> ,
+<span@[ class="@(genoses)"]@>@(grammata)</span>
+>-@
+
+@-> >
+<blockquote>
+@(grammata)
+</blockquote>
+>-@
+
+@-> --
+<ul>
+@(grammata)
+</ul>
+>-@
+
+@-> -
+<li>@(grammata)</li>
+>-@
+
+@-> ..
+<ol>
+@(grammata)
+</ol>
+>-@
+
+@-> .
+<li value="@(taxis)">@(grammata)</li>
+>-@
+
+@-> _
+<div@[ id="@(onym)"]@@[ class="@(genoses)"]@>
+@(grammata)
+</div>
+>-@
+
+@-> *deixis _
+<a class="pointer" href="#@(onym)">&#8224;</a>
+>-@
+
+@-> ~
+<div class="verse"@[ data-taxis="@(taxis)"]@>
+@[<p class="verse-title">@(lemma)</p>
+]@@(grammata)
+@[<p class="verse-attribution">@(hypograph)</p>
+]@</div>
+>-@
+
+@-> ~.table
+<div class="table"@[ data-taxis="@(taxis)"]@>
+@[<p class="table-caption">@(lemma)</p>
+]@@(grammata)
+</div>
+>-@
+
+@-> *strophe
+<p class="strophe">
+@(grammata)
+</p>
+>-@
+
+@-> *stichos
+@(grammata)<br/>
+>-@
+
+@-> *verbatim
+<pre><code>@(content)</code></pre>
+>-@
+
+@-> *verbatim.html
+@((content))
+>-@
+
+@-> *verbatim-inline
+<code>@(content)</code>
+>-@
+
+@-> *media
+<img src="@((param))"/>
+>-@
+
+@-> *onym-anchor
+<span id="@(onym)"></span>
+>-@

@@ -1,0 +1,284 @@
+@@@!atrep-exo
+@=at-usfm=>usx
+
+@@/ USX 3 export: paragraphs and typed blocks as para@style,
+@@/ character markers as char@style, chapters and verses as
+@@/ milestones, notes inline at their anchor.
+
+@%
+& &amp;
+< &lt;
+> &gt;
+%@
+
+@-> *document
+<?xml version="1.0" encoding="UTF-8"?>
+<usx version="3.0">
+@(grammata)
+</usx>
+>-@
+
+@-> *paragraph
+<para style="p">@(grammata)</para>
+>-@
+
+@-> #
+<book code="@(lemma)" style="id"/>
+@(grammata)
+>-@
+
+@-> *solo ##
+<chapter number="@(param)" style="c"/>
+>-@
+
+@-> |
+<verse number="@(param)" style="v"/>
+>-@
+
+@-> *solo _.h
+<para style="h">@(grammata)</para>
+>-@
+
+@-> *solo _.toc1
+<para style="toc1">@(grammata)</para>
+>-@
+
+@-> *solo _.toc2
+<para style="toc2">@(grammata)</para>
+>-@
+
+@-> *solo _.toc3
+<para style="toc3">@(grammata)</para>
+>-@
+
+@-> *solo _.mt1
+<para style="mt1">@(grammata)</para>
+>-@
+
+@-> *solo _.mt2
+<para style="mt2">@(grammata)</para>
+>-@
+
+@-> *solo _.mt3
+<para style="mt3">@(grammata)</para>
+>-@
+
+@-> *solo _.ms1
+<para style="ms1">@(grammata)</para>
+>-@
+
+@-> *solo _.ms2
+<para style="ms2">@(grammata)</para>
+>-@
+
+@-> *solo _.mr
+<para style="mr">@(grammata)</para>
+>-@
+
+@-> *solo _.s1
+<para style="s1">@(grammata)</para>
+>-@
+
+@-> *solo _.s2
+<para style="s2">@(grammata)</para>
+>-@
+
+@-> *solo _.s3
+<para style="s3">@(grammata)</para>
+>-@
+
+@-> *solo _.r
+<para style="r">@(grammata)</para>
+>-@
+
+@-> *solo _.d
+<para style="d">@(grammata)</para>
+>-@
+
+@-> *solo _.sp
+<para style="sp">@(grammata)</para>
+>-@
+
+@-> *solo _.qa
+<para style="qa">@(grammata)</para>
+>-@
+
+@-> *solo _.ip
+<para style="ip">@(grammata)</para>
+>-@
+
+@-> *solo _.is1
+<para style="is1">@(grammata)</para>
+>-@
+
+@-> *solo _.pc
+<para style="pc">@(grammata)</para>
+>-@
+
+@-> *solo _.m
+<para style="m">@(grammata)</para>
+>-@
+
+@-> *solo _.mi
+<para style="mi">@(grammata)</para>
+>-@
+
+@-> *solo _.pi1
+<para style="pi1">@(grammata)</para>
+>-@
+
+@-> *solo _.nb
+<para style="nb">@(grammata)</para>
+>-@
+
+@-> *solo _.po
+<para style="po">@(grammata)</para>
+>-@
+
+@-> *solo _.lit
+<para style="lit">@(grammata)</para>
+>-@
+
+@-> *solo _.li1
+<para style="li1">@(grammata)</para>
+>-@
+
+@-> *solo _.ili1
+<para style="ili1">@(grammata)</para>
+>-@
+
+@-> *solo _.cl
+<para style="cl">@(grammata)</para>
+>-@
+
+@-> *solo _.cp
+<para style="cp">@(grammata)</para>
+>-@
+
+@-> *solo _
+<para style="p">@(grammata)</para>
+>-@
+
+@-> ~
+@(grammata)
+>-@
+
+@-> *strophe
+@(grammata)
+<para style="b"/>
+>-@
+
+@-> *stichos
+@(grammata)
+>-@
+
+@-> ,.q1
+<para style="q1">@(grammata)</para>
+>-@
+
+@-> ,.q2
+<para style="q2">@(grammata)</para>
+>-@
+
+@-> ,.q3
+<para style="q3">@(grammata)</para>
+>-@
+
+@-> ,.wj
+<char style="wj">@(grammata)</char>
+>-@
+
+@-> ,.nd
+<char style="nd">@(grammata)</char>
+>-@
+
+@-> ,.add
+<char style="add">@(grammata)</char>
+>-@
+
+@-> ,.em
+<char style="em">@(grammata)</char>
+>-@
+
+@-> ,.bd
+<char style="bd">@(grammata)</char>
+>-@
+
+@-> ,.it
+<char style="it">@(grammata)</char>
+>-@
+
+@-> ,.sc
+<char style="sc">@(grammata)</char>
+>-@
+
+@-> ,.no
+<char style="no">@(grammata)</char>
+>-@
+
+@-> ,.qs
+<char style="qs">@(grammata)</char>
+>-@
+
+@-> ,.qt
+<char style="qt">@(grammata)</char>
+>-@
+
+@-> ,.tl
+<char style="tl">@(grammata)</char>
+>-@
+
+@-> ,.k
+<char style="k">@(grammata)</char>
+>-@
+
+@-> ,.w
+<char style="w">@(grammata)</char>
+>-@
+
+@-> ,.sig
+<char style="sig">@(grammata)</char>
+>-@
+
+@-> ,.bk
+<char style="bk">@(grammata)</char>
+>-@
+
+@-> ,.fr
+<char style="fr">@(grammata)</char>
+>-@
+
+@-> ,.xo
+<char style="xo">@(grammata)</char>
+>-@
+
+@-> ,
+<char style="@(genoses)">@(grammata)</char>
+>-@
+
+@-> ^.fe
+<note style="fe" caller="+">@(grammata)</note>
+>-@
+
+@-> ^.x
+<note style="x" caller="-">@(grammata)</note>
+>-@
+
+@-> ^
+<note style="f" caller="+">@(grammata)</note>
+>-@
+
+@-> *verbatim
+@(content)
+>-@
+
+@-> *verbatim-inline
+@(content)
+>-@
+
+@-> *media
+<figure file="@((param))"/>
+>-@
+
+@-> *onym-anchor
+>-@

@@ -1,0 +1,530 @@
+@@@!atrep-exo
+@=litogramma=>html
+
+@@/ HTML exomorphosis for litogramma, in the atrep-exo format
+@@/ (spec v0.10.1, Metamorphoses chapter). Full coverage of the
+@@/ parseable litogramma.dia inventory; runs on atrep-rs.
+@@/
+@@/ Conventions and known edges:
+@@/ - Top matter (title, subtitle, author, editor) uses *solo
+@@/   rules: standing alone in a paragraph, the element replaces
+@@/   the paragraph wrapper.
+@@/ - Optional components (onym, taxis, lemma, hypograph) are
+@@/   wrapped in conditional sections (@[ ... ]@, spec v0.10.1):
+@@/   absent components leave no empty attributes or elements.
+@@/ - Note bodies are para-simmeres; their callouts are deixes
+@@/   (@^(onym) and kin - core references, F5 resolved), rendered
+@@/   by the *deixis rules. Verse grammata is natively line-structured
+@@/   (the stichos ostensive keyword, F1 adopted in v0.10.1);
+@@/   *strophe/*stichos render its lines, and *stichoi covers the
+@@/   core @@@= form. Stichos whitespace is preserved (F2): style
+@@/   .strophe with `white-space: pre-wrap` so browsers display
+@@/   the authorial indentation the markup carries.
+@@/ - Sectioning: part h1, chapter h2, section h3, subsection h4,
+@@/   subsubsection h5, subsubsubsection h6; the document title
+@@/   is the only other h1.
+
+@%
+& &amp;
+< &lt;
+> &gt;
+%@
+
+@-> *document
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+</head>
+<body>
+<article>
+@(grammata)
+</article>
+</body>
+</html>
+>-@
+
+@-> *paragraph
+<p>@(grammata)</p>
+>-@
+
+@@/ ----- top matter -----
+
+@-> *solo =
+<h1 class="title">@(grammata)</h1>
+>-@
+
+@-> *solo =_
+<p class="subtitle">@(grammata)</p>
+>-@
+
+@-> *solo =:
+<p class="author">@(grammata)</p>
+>-@
+
+@-> *solo =;
+<p class="editor">@(grammata)</p>
+>-@
+
+@-> ="
+<div class="abstract">
+@(grammata)
+</div>
+>-@
+
+@-> *solo =#=
+<nav class="toc" data-depth="@(param)"></nav>
+>-@
+
+@@/ ----- document structure -----
+
+@-> ==
+<section class="part"@[ id="@(onym)"]@@[ data-taxis="@(taxis)"]@>
+<h1>@(lemma)</h1>
+@(grammata)
+</section>
+>-@
+
+@-> ===
+<section class="chapter"@[ id="@(onym)"]@@[ data-taxis="@(taxis)"]@>
+<h2>@(lemma)</h2>
+@(grammata)
+</section>
+>-@
+
+@-> #
+<section@[ id="@(onym)"]@@[ data-taxis="@(taxis)"]@>
+<h3>@(lemma)</h3>
+@(grammata)
+</section>
+>-@
+
+@-> ##
+<section@[ id="@(onym)"]@@[ data-taxis="@(taxis)"]@>
+<h4>@(lemma)</h4>
+@(grammata)
+</section>
+>-@
+
+@-> ###
+<section@[ id="@(onym)"]@@[ data-taxis="@(taxis)"]@>
+<h5>@(lemma)</h5>
+@(grammata)
+</section>
+>-@
+
+@-> ####
+<section@[ id="@(onym)"]@@[ data-taxis="@(taxis)"]@>
+<h6>@(lemma)</h6>
+@(grammata)
+</section>
+>-@
+
+@-> #_
+<strong class="run-in">@(grammata)</strong>
+>-@
+
+@-> .
+<span class="ordinal">@(grammata)</span>
+>-@
+
+@-> *solo **
+<hr class="section-break"/>
+>-@
+
+@-> **
+<span class="section-break">@(grammata)</span>
+>-@
+
+@@/ ----- inline formatting -----
+
+@-> /
+<em>@(grammata)</em>
+>-@
+
+@-> *
+<strong>@(grammata)</strong>
+>-@
+
+@-> */
+<strong><em>@(grammata)</em></strong>
+>-@
+
+@-> ,
+<span class="annotation">@(grammata)</span>
+>-@
+
+@-> $
+<span class="math">@(grammata)</span>
+>-@
+
+@-> $$
+<div class="math-block"@[ data-taxis="@(taxis)"]@>
+@(grammata)
+</div>
+>-@
+
+@@/ ----- lists -----
+
+@-> --
+<ul>
+@(grammata)
+</ul>
+>-@
+
+@-> -
+<li>@(grammata)</li>
+>-@
+
+@-> ..
+<ol>
+@(grammata)
+</ol>
+>-@
+
+@-> .-
+<li value="@(taxis)">@(grammata)</li>
+>-@
+
+@-> ::;
+<dl>
+@(grammata)
+</dl>
+>-@
+
+@-> ::
+<dt>@(lemma)</dt>
+@(grammata)
+>-@
+
+@-> ;
+<dd>@(grammata)</dd>
+>-@
+
+@@/ ----- verse -----
+
+@-> ~
+<div class="verse">
+@[<p class="verse-title">@(lemma)</p>
+]@@(grammata)
+@[<p class="verse-attribution">@(hypograph)</p>
+]@</div>
+>-@
+
+@-> *stichoi
+@(grammata)
+>-@
+
+@-> *strophe
+<p class="strophe">
+@(grammata)
+</p>
+>-@
+
+@-> *stichos
+@(grammata)<br/>
+>-@
+
+@@/ ----- drama -----
+
+@-> :=
+<section class="act"@[ id="@(onym)"]@@[ data-taxis="@(taxis)"]@>
+<h2>@(lemma)</h2>
+@(grammata)
+</section>
+>-@
+
+@-> :#
+<section class="scene"@[ id="@(onym)"]@@[ data-taxis="@(taxis)"]@>
+<h3>@(lemma)</h3>
+@(grammata)
+</section>
+>-@
+
+@-> :
+<div class="dialogue">
+<p class="speaker">@(lemma)</p>
+@(grammata)
+</div>
+>-@
+
+@-> :~
+<div class="dialogue verse-dialogue">
+<p class="speaker">@(lemma)</p>
+@(grammata)
+</div>
+>-@
+
+@-> :!
+<span class="persona">@(grammata)</span>
+>-@
+
+@-> :!!
+<div class="character">
+<p class="speaker">@(lemma)</p>
+@(grammata)
+</div>
+>-@
+
+@-> :(
+<em class="stage-direction">@(grammata)</em>
+>-@
+
+@-> :[
+<div class="stage-direction">
+@(grammata)
+</div>
+>-@
+
+@-> :-
+<span class="dialogue-line">@(grammata)</span>
+>-@
+
+@-> :_
+<span class="dialogue-tag">@(grammata)</span>
+>-@
+
+@-> :.
+<span class="pause">@(grammata)</span>
+>-@
+
+@-> *solo :.
+<p class="pause">@(grammata)</p>
+>-@
+
+@@/ ----- notes and asides -----
+
+@-> ^
+<aside class="footnote"@[ id="@(onym)"]@>
+@(grammata)
+</aside>
+>-@
+
+@-> *deixis ^
+<sup class="footnote-ref"><a href="#@(onym)">&#8224;</a></sup>
+>-@
+
+@-> ^^
+<aside class="chapter-endnote"@[ id="@(onym)"]@>
+@(grammata)
+</aside>
+>-@
+
+@-> *deixis ^^
+<sup class="endnote-ref"><a href="#@(onym)">&#8224;</a></sup>
+>-@
+
+@-> ^^^
+<aside class="endnote"@[ id="@(onym)"]@>
+@(grammata)
+</aside>
+>-@
+
+@-> *deixis ^^^
+<sup class="endnote-ref"><a href="#@(onym)">&#8224;</a></sup>
+>-@
+
+@-> ^!
+<aside class="manuscript-note"@[ id="@(onym)"]@>
+@(grammata)
+</aside>
+>-@
+
+@-> *deixis ^!
+<sup class="manuscript-note-ref"><a href="#@(onym)">&#8225;</a></sup>
+>-@
+
+@-> |
+<aside@[ id="@(onym)"]@>
+@(grammata)
+</aside>
+>-@
+
+@-> *deixis |
+<sup class="aside-point"><a href="#@(onym)">&#8224;</a></sup>
+>-@
+
+@@/ ----- quotations -----
+
+@-> "
+<blockquote>
+@(grammata)
+@[<footer class="attribution">@(hypograph)</footer>
+]@</blockquote>
+>-@
+
+@-> ""
+<q@[ class="@(genoses)"]@>@(grammata)</q>
+>-@
+
+@-> "/
+<blockquote class="epigraph">
+@(grammata)
+@[<footer class="attribution">@(hypograph)</footer>
+]@</blockquote>
+>-@
+
+@-> -/
+<span class="composition-date">@(grammata)</span>
+>-@
+
+@-> *solo -/
+<p class="composition-date">@(grammata)</p>
+>-@
+
+@@/ ----- figures and tables -----
+
+@-> <
+<figure@[ id="@(onym)"]@@[ data-taxis="@(taxis)"]@>
+@(grammata)
+@[<figcaption>@(lemma)</figcaption>
+]@</figure>
+>-@
+
+@-> +
+<table@[ id="@(onym)"]@>
+@[<caption>@(lemma)</caption>
+]@@(grammata)
+</table>
+>-@
+
+@-> *row + |
+<tr>@(cells)</tr>
+>-@
+
+@-> *row + | .header
+<tr>@(cells)</tr>
+>-@
+
+@-> *cell +
+<td>@(grammata)</td>
+>-@
+
+@-> *cell + .header
+<th>@(grammata)</th>
+>-@
+
+@@/ ----- semantic containers -----
+
+@-> _
+<div class="container"@[ data-taxis="@(taxis)"]@>
+@[<p class="container-head">@(lemma)</p>
+]@@(grammata)
+</div>
+>-@
+
+@-> _=
+<div class="theorema"@[ data-taxis="@(taxis)"]@>
+@[<p class="container-head">@(lemma)</p>
+]@@(grammata)
+</div>
+>-@
+
+@-> _-
+<div class="propositio"@[ data-taxis="@(taxis)"]@>
+@[<p class="container-head">@(lemma)</p>
+]@@(grammata)
+</div>
+>-@
+
+@-> _:
+<div class="lemma"@[ data-taxis="@(taxis)"]@>
+@[<p class="container-head">@(lemma)</p>
+]@@(grammata)
+</div>
+>-@
+
+@-> _/
+<div class="demonstratio"@[ data-taxis="@(taxis)"]@>
+@[<p class="container-head">@(lemma)</p>
+]@@(grammata)
+</div>
+>-@
+
+@@/ ----- references and index -----
+
+@-> >
+<a class="ref" href="#@(param)">[@(param)]</a>
+>-@
+
+@-> >>
+<a class="heading-ref" href="#@(param)">[@(param)]</a>
+>-@
+
+@-> >>>
+<span class="page-ref" data-onym="@(param)"></span>
+>-@
+
+@-> >>>>
+<span class="line-ref" data-onym="@(param)"></span>
+>-@
+
+@-> >[
+<cite data-key="@(param)"></cite>
+>-@
+
+@-> ><
+<a href="@(grammata)">@(grammata)</a>
+>-@
+
+@-> >:
+<span class="standards-ref">@(grammata)</span>
+>-@
+
+@-> %
+<span class="index-term">@(grammata)</span>
+>-@
+
+@-> %%
+<span class="index-term" data-term="@(param)"></span>
+>-@
+
+@@/ ----- core structural forms -----
+
+@-> *verbatim
+<pre>@(content)</pre>
+>-@
+
+@-> *verbatim.html
+@((content))
+>-@
+
+@-> *verbatim-inline
+<code>@(content)</code>
+>-@
+
+@-> *diaphane
+<div@[ class="@(genoses)"]@@[ id="@(onym)"]@>
+@(grammata)
+</div>
+>-@
+
+@-> *diaphane-inline
+<span@[ class="@(genoses)"]@@[ id="@(onym)"]@>@(grammata)</span>
+>-@
+
+@-> *media
+<img src="@((param))"/>
+>-@
+
+@-> *milestone
+<span class="milestone" data-scheme="@(scheme)">@(value)</span>
+>-@
+
+@-> |-
+<span class="milestone" data-unit="@(genoses)">@(param)</span>
+>-@
+
+@-> *solo |-
+<span class="milestone" data-unit="@(genoses)">@(param)</span>
+>-@
+
+@-> *onym-anchor
+<span id="@(onym)"></span>
+>-@
+
+@-> *englossis
+<div class="englossis" data-dialect="@(dialect)">
+@(grammata)
+</div>
+>-@

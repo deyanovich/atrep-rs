@@ -1,0 +1,280 @@
+@@@!atrep-exo
+@=at-usfm=>usfm
+
+@@/ USFM export; the inverse of the engine-side importer over
+@@/ the canonical subset (lowercase book codes, mt/s/ms/is
+@@/ normalized to their numbered forms, note references as
+@@/ \fr, note text bare). USFM has no escape mechanism, so
+@@/ the escape table is empty.
+
+@-> *document
+@(grammata)
+>-@
+
+@-> *paragraph
+\p @(grammata)
+>-@
+
+@-> #
+\id @(lemma)
+@(grammata)
+>-@
+
+@-> *solo ##
+\c @(param)
+>-@
+
+@-> |
+\v @(param)
+>-@
+
+@-> *solo _.h
+\h @(grammata)
+>-@
+
+@-> *solo _.toc1
+\toc1 @(grammata)
+>-@
+
+@-> *solo _.toc2
+\toc2 @(grammata)
+>-@
+
+@-> *solo _.toc3
+\toc3 @(grammata)
+>-@
+
+@-> *solo _.mt1
+\mt1 @(grammata)
+>-@
+
+@-> *solo _.mt2
+\mt2 @(grammata)
+>-@
+
+@-> *solo _.mt3
+\mt3 @(grammata)
+>-@
+
+@-> *solo _.ms1
+\ms1 @(grammata)
+>-@
+
+@-> *solo _.ms2
+\ms2 @(grammata)
+>-@
+
+@-> *solo _.mr
+\mr @(grammata)
+>-@
+
+@-> *solo _.s1
+\s1 @(grammata)
+>-@
+
+@-> *solo _.s2
+\s2 @(grammata)
+>-@
+
+@-> *solo _.s3
+\s3 @(grammata)
+>-@
+
+@-> *solo _.r
+\r @(grammata)
+>-@
+
+@-> *solo _.d
+\d @(grammata)
+>-@
+
+@-> *solo _.sp
+\sp @(grammata)
+>-@
+
+@-> *solo _.qa
+\qa @(grammata)
+>-@
+
+@-> *solo _.ip
+\ip @(grammata)
+>-@
+
+@-> *solo _.is1
+\is1 @(grammata)
+>-@
+
+@-> *solo _.pc
+\pc @(grammata)
+>-@
+
+@-> *solo _.m
+\m @(grammata)
+>-@
+
+@-> *solo _.mi
+\mi @(grammata)
+>-@
+
+@-> *solo _.pi1
+\pi1 @(grammata)
+>-@
+
+@-> *solo _.nb
+\nb @(grammata)
+>-@
+
+@-> *solo _.po
+\po @(grammata)
+>-@
+
+@-> *solo _.lit
+\lit @(grammata)
+>-@
+
+@-> *solo _.li1
+\li1 @(grammata)
+>-@
+
+@-> *solo _.ili1
+\ili1 @(grammata)
+>-@
+
+@-> *solo _.cl
+\cl @(grammata)
+>-@
+
+@-> *solo _.cp
+\cp @(grammata)
+>-@
+
+@-> *solo _
+\p @(grammata)
+>-@
+
+@-> ~
+@(grammata)
+>-@
+
+@@/ Strophes join on newline, so the break marker
+@@/ trails each strophe (a final \b before the next
+@@/ block is harmless whitespace).
+@-> *strophe
+@(grammata)
+\b
+>-@
+
+@-> *stichos
+@(grammata)
+>-@
+
+@-> ,.q1
+\q1 @(grammata)
+>-@
+
+@-> ,.q2
+\q2 @(grammata)
+>-@
+
+@-> ,.q3
+\q3 @(grammata)
+>-@
+
+@-> ,.fr
+\fr @(grammata) \ft
+>-@
+
+@-> ,.xo
+\xo @(grammata) \xt
+>-@
+
+@-> ,.wj
+\wj @(grammata)\wj*
+>-@
+
+@-> ,.nd
+\nd @(grammata)\nd*
+>-@
+
+@-> ,.add
+\add @(grammata)\add*
+>-@
+
+@-> ,.em
+\em @(grammata)\em*
+>-@
+
+@-> ,.bd
+\bd @(grammata)\bd*
+>-@
+
+@-> ,.it
+\it @(grammata)\it*
+>-@
+
+@-> ,.sc
+\sc @(grammata)\sc*
+>-@
+
+@-> ,.no
+\no @(grammata)\no*
+>-@
+
+@-> ,.qs
+\qs @(grammata)\qs*
+>-@
+
+@-> ,.qt
+\qt @(grammata)\qt*
+>-@
+
+@-> ,.tl
+\tl @(grammata)\tl*
+>-@
+
+@-> ,.k
+\k @(grammata)\k*
+>-@
+
+@-> ,.w
+\w @(grammata)\w*
+>-@
+
+@-> ,.sig
+\sig @(grammata)\sig*
+>-@
+
+@-> ,.bk
+\bk @(grammata)\bk*
+>-@
+
+@-> ,
+@(grammata)
+>-@
+
+@-> ^.fe
+\fe + @(grammata)\fe*
+>-@
+
+@-> ^.x
+\x - @(grammata)\x*
+>-@
+
+@-> ^
+\f + @(grammata)\f*
+>-@
+
+@-> *verbatim
+@(content)
+>-@
+
+@-> *verbatim-inline
+@(content)
+>-@
+
+@-> *media
+\fig @((param))\fig*
+>-@
+
+@-> *onym-anchor
+>-@

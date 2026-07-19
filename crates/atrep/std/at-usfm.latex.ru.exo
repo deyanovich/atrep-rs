@@ -1,0 +1,263 @@
+@@@!atrep-exo
+@=at-usfm=>latex
+
+@@/ Russian edition: the Synodal print conventions. Verses set
+@@/ one per line with their numbers (the layout hallmark of
+@@/ Russian Bibles), chapters as centered letterspaced
+@@/ headings (the Psalter says psalom), PT Serif with a STIX
+@@/ Two fallback, polyglossia russian. Only the document rule
+@@/ and the class asset differ from the base latex surface;
+@@/ every rendering rule inherits.
+
+@-> *document
+\documentclass{atrep-bible-ru}
+\begin{document}
+\atmaketitle
+@(grammata)
+\end{document}
+>-@
+
+@=* atrep-bible-ru.cls END-OF-CLASS
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesClass{atrep-bible-ru}[2026/07/12 v0.1 Russian Synodal scripture layout for at-usfm]
+
+% The Russian presentation of the at-usfm semantic layer,
+% after the Synodal editions (Moscow Patriarchate / RBO):
+% two dense columns on a 170x240 block, every verse on its
+% own line behind its number, chapters as centered
+% letterspaced GLAVA N headings (PSALOM in the Psalter),
+% PT Serif (STIX Two Text when it is not installed).
+
+\DeclareOption*{\PassOptionsToClass{\CurrentOption}{book}}
+\ProcessOptions\relax
+\LoadClass[10pt,twoside,twocolumn]{book}
+
+\RequirePackage{fontspec}
+\IfFontExistsTF{PT Serif}{%
+  \setmainfont{PT Serif}%
+}{%
+  \setmainfont{STIXTwoText}[
+    Extension = .otf,
+    UprightFont = *-Regular,
+    BoldFont = *-Bold,
+    ItalicFont = *-Italic,
+    BoldItalicFont = *-BoldItalic]%
+}
+\setmonofont{Liberation Mono}[Scale=MatchLowercase]
+\RequirePackage{polyglossia}
+\setmainlanguage{russian}
+\RequirePackage{microtype}
+\RequirePackage[paperwidth=170mm,paperheight=240mm,top=17mm,bottom=19mm,inner=19mm,outer=15mm,columnsep=8mm]{geometry}
+\RequirePackage[hidelinks]{hyperref}
+
+\renewcommand\normalsize{\@setfontsize\normalsize{9.3}{11.4}}
+\renewcommand\small{\@setfontsize\small{8.4}{10.2}}
+\renewcommand\footnotesize{\@setfontsize\footnotesize{7.4}{8.8}}
+\normalsize
+\setlength\parindent{1em}
+\setlength\parskip{0pt}
+\tolerance=2500
+\emergencystretch=1.6em
+\hbadness=2500
+
+\newcommand\at@caps[1]{{\addfontfeatures{LetterSpace=10}\MakeUppercase{#1}}}
+
+% Four-digit folios in the contents need a wider number box
+% than the book-class default.
+\renewcommand\@pnumwidth{2.3em}
+\renewcommand\@tocrmarg{2.8em}
+
+% ---- Running heads: corner references, BOOK c:v ----
+\def\at@runninghead{}
+\def\at@chapnum{}
+\newcommand\at@setmark[1]{%
+  \ifx\at@runninghead\@empty\else
+    \markboth{\at@runninghead\ #1}{\at@runninghead\ #1}%
+  \fi}
+\def\at@headfont{\footnotesize\addfontfeatures{LetterSpace=6}}
+\def\ps@atbible{%
+  \def\@oddhead{{\at@headfont\makebox[0pt][l]{}\hfil
+    \normalfont\small\thepage\hfil\makebox[0pt][r]{\at@headfont\leftmark}}}%
+  \def\@evenhead{{\at@headfont\makebox[0pt][l]{\at@headfont\rightmark}\hfil
+    \normalfont\small\thepage\hfil\makebox[0pt][r]{}}}%
+  \def\@oddfoot{}\def\@evenfoot{}}
+\pagestyle{atbible}
+
+% ---- Title page and contents ----
+\newcommand\atbibletitle{БИБЛИЯ}
+\newcommand\atbiblesubtitle{Синодальный перевод}
+\newcommand\at@cleartorecto{\clearpage
+  \ifodd\c@page\else\thispagestyle{empty}\hbox{}\clearpage\fi}
+\newcommand\atmaketitle{%
+  \pagenumbering{roman}%
+  \onecolumn
+  \thispagestyle{empty}%
+  \begingroup
+  \centering
+  \vspace*{0.28\textheight}
+  {\fontsize{34}{40}\selectfont\at@caps{\atbibletitle}\par}
+  \vspace{1.5\baselineskip}
+  \ifx\atbiblesubtitle\@empty\else
+    {\Large\itshape\atbiblesubtitle\par}
+  \fi
+  \vspace*{\fill}
+  \endgroup
+  \clearpage
+  \twocolumn
+  \ifat@wantcontents
+    {\centering\Large\at@caps{Содержание}\par}
+    \addvspace{1\baselineskip}
+    \@starttoc{toc}%
+  \else
+    \at@opentoc
+  \fi
+  \at@cleartorecto
+  \pagenumbering{arabic}}
+\newif\ifat@wantcontents
+\AtBeginDocument{%
+  \ifcsname at@bookstotal\endcsname
+    \ifnum\at@bookstotal>1 \at@wantcontentstrue \fi
+  \fi}
+\newcommand\at@opentoc{%
+  \if@filesw
+    \expandafter\newwrite\csname tf@toc\endcsname
+    \immediate\openout\csname tf@toc\endcsname \jobname.toc\relax
+  \fi}
+\AtEndDocument{\immediate\write\@auxout{%
+  \string\gdef\string\at@bookstotal{\arabic{at@book}}}}
+
+% ---- Books ----
+% The chapter word: GLAVA everywhere, PSALOM in the Psalter.
+\newcounter{at@book}
+\newif\ifat@tocentry
+\def\at@chapword{Глава}
+\newcommand\atbook[1]{%
+  \par
+  \ifnum\value{at@book}>0 \newpage\fi
+  \stepcounter{at@book}%
+  \gdef\at@runninghead{}%
+  \gdef\at@chapnum{}%
+  \gdef\at@chapword{Глава}%
+  \ifcsname at@cw@#1\endcsname
+    \expandafter\let\expandafter\at@chapword\csname at@cw@#1\endcsname
+  \fi
+  \global\at@tocentryfalse}
+\@namedef{at@cw@psa}{Псалом}
+\newcommand\at@tocline[1]{%
+  \ifat@tocentry\else
+    \global\at@tocentrytrue
+    \addcontentsline{toc}{section}{#1}%
+  \fi}
+
+% ---- Marker dispatch ----
+\newcommand\atmarker[2]{%
+  \ifcsname at@m@#1\endcsname
+    \csname at@m@#1\endcsname{#2}%
+  \else
+    \par{\small\itshape #2\par}%
+  \fi}
+\newcommand\at@heading[1]{#1\par\nobreak\@afterindentfalse\@afterheading}
+\@namedef{at@m@h}#1{\gdef\at@runninghead{\MakeUppercase{#1}}%
+  \markboth{\at@runninghead}{\at@runninghead}}
+\@namedef{at@m@toc1}#1{\at@tocline{#1}}
+\@namedef{at@m@toc2}#1{}
+\@namedef{at@m@toc3}#1{}
+\@namedef{at@m@mt1}#1{\par\addvspace{1.4\baselineskip}%
+  \ifx\at@runninghead\@empty
+    \gdef\at@runninghead{\MakeUppercase{#1}}%
+    \markboth{\at@runninghead}{\at@runninghead}%
+  \fi
+  \at@tocline{#1}%
+  {\centering\at@heading{{\Large\at@caps{#1}}}}\addvspace{1\baselineskip}}
+\@namedef{at@m@mt2}#1{\par{\centering\at@heading{{\normalsize\itshape #1}}}\addvspace{2pt}}
+\@namedef{at@m@ms1}#1{\par\addvspace{1\baselineskip}%
+  {\centering\at@heading{{\large\at@caps{#1}}}}\addvspace{0.5\baselineskip}}
+\@namedef{at@m@s1}#1{\par\addvspace{0.8\baselineskip}%
+  {\centering\at@heading{{\small\bfseries #1}}}\addvspace{0.25\baselineskip}}
+\@namedef{at@m@s2}#1{\par\addvspace{0.6\baselineskip}%
+  {\centering\at@heading{{\small\itshape #1}}}\addvspace{0.2\baselineskip}}
+\@namedef{at@m@r}#1{\par{\centering\at@heading{{\footnotesize(#1)}}}\addvspace{2pt}}
+% The Psalter superscription: italic, part of the text flow.
+\@namedef{at@m@d}#1{\par\addvspace{2pt}{\noindent\itshape #1\par}\addvspace{2pt}}
+\@namedef{at@m@sp}#1{\par\addvspace{2pt}{\at@heading{{\small\itshape #1}}}}
+\@namedef{at@m@cl}#1{\gdef\at@chapword{#1}}
+\@namedef{at@m@cp}#1{}
+\@namedef{at@m@m}#1{\par\noindent #1\par}
+\@namedef{at@m@mi}#1{\par{\leftskip=1em\noindent #1\par}}
+\@namedef{at@m@pc}#1{\par{\centering #1\par}}
+\@namedef{at@m@ip}#1{\par #1\par}
+\@namedef{at@m@nb}#1{\par\noindent #1\par}
+
+% ---- Chapters and verses: the Synodal layout ----
+% A chapter is a centered letterspaced heading; every verse is
+% its own plain paragraph (verse one included): the number
+% follows the ordinary first-line indent and runovers return
+% flush left - the Synodal text-edition convention (hanging
+% numbers belong to reference editions).
+\def\at@versefont{\footnotesize\bfseries}
+\newcommand\atchapter[1]{\gdef\at@chapnum{#1}%
+  \setcounter{footnote}{0}\setcounter{at@xnote}{0}%
+  \at@setmark{#1}%
+  \par\addvspace{1\baselineskip}%
+  {\centering\at@heading{{\small\at@caps{\at@chapword\ #1}}}}%
+  \addvspace{0.4\baselineskip}}
+\newcommand\atverse[1]{%
+  \at@setmark{\at@chapnum:#1}%
+  \par
+  {\at@versefont #1}\kern 0.45em\ignorespaces}
+\newcommand\atp{\par\addvspace{0.3\baselineskip}}
+
+% ---- Poetry ----
+\newdimen\at@qunit
+\AtBeginDocument{\global\at@qunit=1.1em\relax}
+\newenvironment{atpoetry}{\par\addvspace{0.3\baselineskip}}%
+  {\par\addvspace{0.3\baselineskip}}
+\newcommand\atq[2]{\par\noindent\hangindent=2.4em\hangafter=1
+  \hskip\dimexpr #1\at@qunit-\at@qunit\relax #2\par}
+\newcommand\atstrophe{\par\addvspace{0.3\baselineskip}}
+
+% ---- Character dispatch ----
+\newcommand\atchar[2]{%
+  \ifcsname at@c@#1\endcsname
+    \csname at@c@#1\endcsname{#2}%
+  \else
+    #2%
+  \fi}
+\@namedef{at@c@nd}#1{\at@caps{#1}}
+\@namedef{at@c@add}#1{\textit{#1}}
+\@namedef{at@c@em}#1{\emph{#1}}
+\@namedef{at@c@it}#1{\textit{#1}}
+\@namedef{at@c@bd}#1{\textbf{#1}}
+\@namedef{at@c@tl}#1{\textit{#1}}
+\@namedef{at@c@sig}#1{\textit{#1}}
+\@namedef{at@c@bk}#1{«#1»}
+\@namedef{at@c@qt}#1{\textit{#1}}
+\@namedef{at@c@qs}#1{\nobreak\hskip 1em plus 1fill\textit{#1}}
+\@namedef{at@c@wj}#1{#1}
+
+% ---- Notes ----
+\newcounter{at@xnote}
+\renewcommand\thefootnote{\arabic{footnote}}
+\def\at@xsymbol{\ifcase\value{at@xnote}\or *\or \dag\or \ddag\or
+  \S\or \P\else **\fi}
+\newcommand\atnote[2]{%
+  \ifcsname at@n@#1\endcsname
+    \csname at@n@#1\endcsname{#2}%
+  \else
+    \footnote{#2}%
+  \fi}
+\@namedef{at@n@f}#1{\footnote{#1}}
+\@namedef{at@n@fe}#1{\footnote{#1}}
+\@namedef{at@n@x}#1{\stepcounter{at@xnote}%
+  \textsuperscript{\at@xsymbol}%
+  \begingroup
+  \def\thefootnote{\at@xsymbol}%
+  \footnotetext{#1}%
+  \endgroup}
+\newcommand\atref[1]{\textbf{#1}\enspace}
+
+% ---- Odds and ends ----
+\newcommand\atfig[1]{\par{\centering\texttt{[#1]}\par}}
+
+\endinput
+END-OF-CLASS

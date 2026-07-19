@@ -1,0 +1,102 @@
+@@@!atrep
+
+@@/ at-html: a syntax mapper between a useful subset of HTML and
+@@/ atrep. Each sim corresponds to one HTML element; the html
+@@/ exomorphosis and the engine-side HTML endomorphosis are
+@@/ inverses over the canonical subset. Inline and block code map
+@@/ to the core enlexis forms, images to enmedia. Serves as the
+@@/ standard-library base dialektos: at-markdown inherits from it.
+
+@=== blockquote
+@>
+grammata
+>@
+@"block quotation (blockquote element)"@
+===@
+
+@=== division
+@_
+grammata
+_@
+@"generic block container (div element; genoses map to class)"@
+===@
+
+@=== emphasis
+@/ grammata /@
+@"emphasis (em element)"@
+===@
+
+@=== heading-1
+@# grammata #@
+@"level-1 heading (h1 element); flat, does not nest content"@
+===@
+
+@=== heading-2
+@## grammata ##@
+@"level-2 heading (h2 element)"@
+===@
+
+@=== heading-3
+@### grammata ###@
+@"level-3 heading (h3 element)"@
+===@
+
+@=== heading-4
+@#### grammata ####@
+@"level-4 heading (h4 element)"@
+===@
+
+@=== heading-5
+@##### grammata #####@
+@"level-5 heading (h5 element)"@
+===@
+
+@=== heading-6
+@###### grammata ######@
+@"level-6 heading (h6 element)"@
+===@
+
+@=== ordered-item
+@.(taxis)
+grammata
+.@
+@"ordered list item (li element with a value)"@
+===@
+
+@=== ordered-list
+@..
+grammata
+..@
+@"ordered list (ol element)"@
+===@
+
+@=== span
+@, grammata ,@
+@"generic inline container (span element; genoses map to class)"@
+===@
+
+@=== strong
+@! grammata !@
+@"strong emphasis (strong element)"@
+===@
+
+@=== verse
+@~[(taxis)] [lemma]
+stichos
+~@ [hypograph]
+@"line-structured block (verse, or any lined content)"@
+===@
+
+@=== unordered-item
+@-
+grammata
+-@
+@"unordered list item (li element)"@
+===@
+
+@=== unordered-list
+@--
+grammata
+--@
+@"unordered list (ul element)"@
+===@

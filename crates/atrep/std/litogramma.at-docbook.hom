@@ -1,0 +1,85 @@
+@@@!atrep-hom
+@=litogramma=>at-docbook
+
+@@/ Nested to nested: the whole sectioning ladder maps onto
+@@/ DocBook's uniform nesting section with structure preserved
+@@/ (no extract). Level identity dissolves into depth; taxis
+@@/ drops (lossy renames). Front matter dissolves, note
+@@/ families unify onto the footnote, verse and tables drop
+@@/ (no DocBook counterpart in the basic subset).
+
+@@/ Front matter.
+@<< =
+@<< =_
+@<< =:
+@<< =;
+@<< ="
+@-- =#=
+
+@@/ Structure: every level onto the uniform section.
+@:: == #
+@:: === #
+@:: ## #
+@:: ### #
+@:: #### #
+@:: #_ *
+@<< .
+@-- **
+
+@@/ Inline.
+@:: */ *
+@<< ,
+@<< $
+@<< $$
+
+@@/ Lists.
+@:: .- -
+@<< ::;
+@<# :: *
+@<< ;
+
+@@/ Verse and drama.
+@-- ~
+@-- :~
+@<# := *
+@<# :# *
+@<# : *
+@:: :! *
+@<# :!! *
+@:: :( /
+@:: :[ ! .stage
+@<< :-
+@:: :_ /
+@:: :. /
+
+@@/ Notes: every family unifies onto the footnote; asides too.
+@:: ^^ ^
+@:: ^^^ ^
+@:: ^! ^
+@:: | ^
+
+@@/ Quotations.
+@:: " >
+@:: "/ >
+@:: -/ /
+
+@@/ Figures, tables, containers.
+@<< <
+@-- +
+@:: _ ! 
+@:: _= ! .theorema
+@:: _- ! .propositio
+@:: _: ! .lemma
+@:: _/ ! .demonstratio
+
+@@/ Apparatus.
+@-- >
+@-- >>
+@-- >>>
+@-- >>>>
+@-- >[
+@<< ><
+@:: >: *
+@<< %
+@-- %%
+@-- |-

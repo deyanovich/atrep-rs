@@ -1,0 +1,24 @@
+@@@!atrep
+
+@@/ at-markdown: the standard-library Markdown dialektos,
+@@/ realizing the dialektos the spec's inheritance examples treat
+@@/ as hypothetical. Sim symbols mirror Markdown markers. The
+@@/ structure is flat, Markdown-style: headings do not nest
+@@/ content, and list items form flat sibling runs without
+@@/ containers. Inline code and code blocks use the core enlexis
+@@/ forms; images use the core enmedia form.
+@@/
+@@/ Everything is inherited from at-html, the HTML syntax mapper:
+@@/ the shared element semantics come in via full inheritance
+@@/ (excluding the list containers, span, and division - markdown
+@@/ is flat), and emphasis and strong are imported under the
+@@/ markdown markers * and **. The Markdown exomorphosis is this
+@@/ dialektos's own; its HTML rendering is entirely inherited
+@@/ from at-html.html.exo through the lineage (spec: Rule
+@@/ Resolution and Inheritance).
+
+@@::at-html:-:[-- .. , _ / ! ~]
+
+@@::at-html::/ *
+
+@@::at-html::! **

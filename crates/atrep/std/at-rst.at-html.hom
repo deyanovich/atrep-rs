@@ -1,0 +1,17 @@
+@@@!atrep-hom
+@=at-rst=>at-html
+
+@@/ Emphasis and strong rename to the at-html element sims;
+@@/ admonitions become divisions carrying their kind as a genos;
+@@/ definition items extract their term as a strong heading-line;
+@@/ field lists are document metadata with no element - dropped;
+@@/ footnote bodies dissolve (their deixes go with them).
+@@/ Headings, blockquote, and items map by implicit identity.
+
+@:: * /
+@:: ** !
+@:: ! _ .note
+@:: !! _ .warning
+@<# :: !
+@-- :
+@<< ^

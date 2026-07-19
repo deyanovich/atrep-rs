@@ -1,0 +1,28 @@
+@@@!atrep
+
+@@/ at-poesia: the poetry pack - verse blocks (stichoi
+@@/ grammata, strophes, the optional title and attribution)
+@@/ and the composition date poems sign with.
+@@/ Part of the standard library; composes with koine and its
+@@/ sibling packs.
+
+@=== verse
+@~ [lemma]
+stichos
+~@ [hypograph]
+@"verse block"@
+@""
+Stichoi grammata: line breaks are significant, blank lines
+separate strophes, leading spaces are authorial content. The
+lemma is the poem title (omit for untitled poems); the
+hypograph is the composition date or attribution.
+""@
+===@
+
+@=== composition-date
+@-/ grammata /-@
+@"composition date at the end of stories or letters"@
+@""
+Own paragraph. Poems use the verse hypograph instead.
+""@
+===@

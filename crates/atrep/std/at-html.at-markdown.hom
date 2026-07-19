@@ -1,0 +1,16 @@
+@@@!atrep-hom
+@=at-html=>at-markdown
+
+@@/ The lossy direction of the std pair: markdown has no list
+@@/ containers, span, or division, so they dissolve into their
+@@/ content; em and strong rename to the markdown markers. The
+@@/ reverse embedding (at-markdown => at-html) needs no file:
+@@/ it is derived from at-markdown's lineage.
+
+@:: / *
+@:: ! **
+@<< --
+@<< ..
+@<< ,
+@<< _
+@-- ~

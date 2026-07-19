@@ -1,0 +1,646 @@
+@@@!atrep-exo
+@=litogramma=>latex
+@+bibliogramma=>bib
+
+@@/ LaTeX export for litogramma under the semantic-carrier
+@@/ discipline: the rules emit one macro per construct (the
+@@/ \lt... layer), and the atrep-litogramma document class
+@@/ carried in the asset section compiles that layer into
+@@/ typography. Named variants (loeb, loa, pleiade, gost)
+@@/ override only the document rule and the class asset;
+@@/ every rule below is shared. Notes ride the notemark /
+@@/ notetext pair (callout deixis, body block), which assumes
+@@/ bodies follow their callouts in document order (the
+@@/ litogramma convention). The theorem family and tables keep
+@@/ stock LaTeX bodies (any class carries them).
+
+@%
+\ \textbackslash{}
+{ \{
+} \}
+$ \$
+& \&
+# \#
+_ \_
+% \%
+~ \textasciitilde{}
+^ \textasciicircum{}
+%@
+
+@-> *document
+\documentclass{atrep-litogramma}
+\begin{document}
+@(grammata)
+\end{document}
+>-@
+
+@-> *paragraph
+@(grammata)
+
+>-@
+
+@@/ ----- front matter -----
+
+@-> *solo =
+\lttitle{@(grammata)}
+>-@
+
+@-> =
+\lttitle{@(grammata)}
+>-@
+
+@-> *solo =_
+\ltsubtitle{@(grammata)}
+>-@
+
+@-> =_
+\ltsubtitle{@(grammata)}
+>-@
+
+@-> *solo =:
+\ltauthor{@(grammata)}
+>-@
+
+@-> =:
+\ltauthor{@(grammata)}
+>-@
+
+@-> *solo =;
+\lteditor{@(grammata)}
+>-@
+
+@-> =;
+\lteditor{@(grammata)}
+>-@
+
+@-> ="
+\begin{ltabstract}
+@(grammata)
+\end{ltabstract}
+>-@
+
+@-> *solo =#=
+\lttoc{@(param)}
+>-@
+
+@@/ ----- document structure -----
+
+@-> ==
+\lthead{part}{@(lemma)}@[\ltlabel{@(onym)}]@
+@(grammata)
+>-@
+
+@-> ===
+\lthead{chapter}{@(lemma)}@[\ltlabel{@(onym)}]@
+@(grammata)
+>-@
+
+@-> #
+\lthead{section}{@(lemma)}@[\ltlabel{@(onym)}]@
+@(grammata)
+>-@
+
+@-> ##
+\lthead{subsection}{@(lemma)}@[\ltlabel{@(onym)}]@
+@(grammata)
+>-@
+
+@-> ###
+\lthead{subsubsection}{@(lemma)}@[\ltlabel{@(onym)}]@
+@(grammata)
+>-@
+
+@-> ####
+\lthead{subsubsubsection}{@(lemma)}@[\ltlabel{@(onym)}]@
+@(grammata)
+>-@
+
+@-> #_
+\ltrunin{@(grammata)}
+>-@
+
+@-> .
+\ltordinal{@(grammata)}
+>-@
+
+@-> *solo **
+\ltbreak{@(grammata)}
+>-@
+
+@-> **
+\ltbreak{@(grammata)}
+>-@
+
+@@/ ----- inline -----
+
+@-> /
+\ltem{@(grammata)}
+>-@
+
+@-> *
+\ltstrong{@(grammata)}
+>-@
+
+@-> */
+\ltstrongem{@(grammata)}
+>-@
+
+@-> ,
+\ltannot{@(genoses)}{@(grammata)}
+>-@
+
+@-> $
+\(@((grammata))\)
+>-@
+
+@-> $$
+\[
+@((grammata))
+\]
+>-@
+
+@@/ ----- lists -----
+
+@-> --
+\begin{ltitemize}
+@(grammata)
+\end{ltitemize}
+>-@
+
+@-> -
+\ltitem @(grammata)
+>-@
+
+@-> ..
+\begin{ltenumerate}
+@(grammata)
+\end{ltenumerate}
+>-@
+
+@-> .-
+\ltitem @(grammata)
+>-@
+
+@-> ::;
+\begin{ltdescription}
+@(grammata)
+\end{ltdescription}
+>-@
+
+@-> ::
+\ltitemdef{@(lemma)} @(grammata)
+>-@
+
+@-> ;
+@(grammata)
+>-@
+
+@@/ ----- verse -----
+
+@-> ~
+@[\ltlabel{@(onym)}]@@[\ltverselemma{@(lemma)}
+]@\begin{ltverse}
+@(grammata)
+\end{ltverse}@[
+\ltversehypo{@(hypograph)}]@
+>-@
+
+@-> *stichoi
+\begin{ltverse}
+@(grammata)
+\end{ltverse}
+>-@
+
+@-> *strophe
+@(grammata)
+\ltstanza
+>-@
+
+@-> *stichos
+@(grammata)\ltnl
+>-@
+
+@@/ ----- drama -----
+
+@-> :=
+\lthead{act}{@(lemma)}@[\ltlabel{@(onym)}]@
+@(grammata)
+>-@
+
+@-> :#
+\lthead{scene}{@(lemma)}@[\ltlabel{@(onym)}]@
+@(grammata)
+>-@
+
+@-> :
+\begin{ltspeech}{@(lemma)}
+@(grammata)
+\end{ltspeech}
+>-@
+
+@-> :~
+\begin{ltvspeech}{@(lemma)}
+@(grammata)
+\end{ltvspeech}
+>-@
+
+@-> :!
+\ltdramatis{@(grammata)}
+>-@
+
+@-> :!!
+\begin{ltcharblock}{@(lemma)}
+@(grammata)
+\end{ltcharblock}
+>-@
+
+@-> :(
+\ltstage{@(grammata)}
+>-@
+
+@-> :[
+\ltstagepar{@(grammata)}
+>-@
+
+@-> :-
+\ltcue{@(grammata)}
+>-@
+
+@-> :_
+\ltdialtag{@(grammata)}
+>-@
+
+@-> :.
+\ltpause{@(grammata)}
+>-@
+
+@-> *solo :.
+\ltpausepar{@(grammata)}
+>-@
+
+@@/ ----- notes and asides -----
+
+@-> ^
+\ltnotetext{@(grammata)}
+>-@
+
+@-> *deixis ^
+\ltnotemark{}
+>-@
+
+@-> ^^
+\ltendnotetext{@(grammata)}
+>-@
+
+@-> *deixis ^^
+\ltendnotemark{}
+>-@
+
+@-> ^^^
+\ltendnotetext{@(grammata)}
+>-@
+
+@-> *deixis ^^^
+\ltendnotemark{}
+>-@
+
+@-> ^!
+\lteditnotetext{@(grammata)}
+>-@
+
+@-> *deixis ^!
+\lteditnotemark{}
+>-@
+
+@-> |
+\begin{ltaside}
+@(grammata)
+\end{ltaside}
+>-@
+
+@-> *deixis |
+\ltasidemark{}
+>-@
+
+@@/ ----- quotations -----
+
+@-> "
+\begin{ltquote}
+@(grammata)@[
+\ltquotehypo{@(hypograph)}]@
+\end{ltquote}
+>-@
+
+@-> ""
+\ltq{@(grammata)}
+>-@
+
+@-> "/
+\begin{ltepigraph}
+@(grammata)@[
+\ltepihypo{@(hypograph)}]@
+\end{ltepigraph}
+>-@
+
+@-> -/
+\ltcompdate{@(grammata)}
+>-@
+
+@-> *solo -/
+\ltcompdatepar{@(grammata)}
+>-@
+
+@@/ ----- milestones -----
+
+@-> *milestone
+\ltmilestone{@(value)}{@(genoses)}
+>-@
+
+@-> |-
+\ltmilestone{@(param)}{@(genoses)}
+>-@
+
+@-> *solo |-
+\ltmilestone{@(param)}{@(genoses)}
+>-@
+
+@@/ ----- figures, tables, containers (stock bodies) -----
+
+@-> <
+\begin{figure}[htbp]
+\centering
+@(grammata)@[
+\caption{@(lemma)}]@@[\ltlabel{@(onym)}]@
+\end{figure}
+>-@
+
+@-> +
+@[\ltlabel{@(onym)}]@@[\begin{center}\itshape @(lemma)\end{center}
+]@\begin{center}
+\begin{tabular}{llllllll}
+@(grammata)
+\end{tabular}
+\end{center}
+>-@
+
+@-> *row + |
+@(cells)\\
+>-@
+
+@-> *row + | .header
+@(cells)\\
+\hline
+>-@
+
+@-> *cell +
+@(grammata) &
+>-@
+
+@-> *cell + .header
+\textbf{@(grammata)} &
+>-@
+
+@-> _
+\par\medskip@[\ltlabel{@(onym)}]@
+@[\noindent\textbf{@(lemma)}\par\nopagebreak
+]@@(grammata)
+\par\medskip
+>-@
+
+@-> _=
+\par\medskip@[\ltlabel{@(onym)}]@
+\noindent\textbf{Theorema@[ (@(lemma))]@.}\par\nopagebreak
+@(grammata)
+\par\medskip
+>-@
+
+@-> _-
+\par\medskip@[\ltlabel{@(onym)}]@
+\noindent\textbf{Propositio@[ (@(lemma))]@.}\par\nopagebreak
+@(grammata)
+\par\medskip
+>-@
+
+@-> _:
+\par\medskip@[\ltlabel{@(onym)}]@
+\noindent\textbf{Lemma@[ (@(lemma))]@.}\par\nopagebreak
+@(grammata)
+\par\medskip
+>-@
+
+@-> _/
+\par\medskip@[\ltlabel{@(onym)}]@
+\noindent\textbf{Demonstratio@[ (@(lemma))]@.}\par\nopagebreak
+@(grammata)
+\par\medskip
+>-@
+
+@@/ ----- references and index -----
+
+@-> >
+\ltref{@(param)}
+>-@
+
+@-> >>
+\ltref{@(param)}
+>-@
+
+@-> >>>
+\ltpageref{@(param)}
+>-@
+
+@-> >>>>
+\ltref{@(param)}
+>-@
+
+@-> >[
+\ltcite{@(param)}
+>-@
+
+@-> ><
+\lturl{@((grammata))}
+>-@
+
+@-> >:
+\ltstd{@(grammata)}
+>-@
+
+@-> %
+\ltindexed{@(grammata)}
+>-@
+
+@-> %%
+\ltindexhidden{@(param)}
+>-@
+
+@@/ ----- core forms -----
+
+@-> *verbatim
+\begin{verbatim}
+@((content))
+\end{verbatim}
+>-@
+
+@-> *verbatim.latex
+@((content))
+>-@
+
+@-> *verbatim-inline
+\texttt{@(content)}
+>-@
+
+@-> *diaphane
+@(grammata)
+>-@
+
+@-> *diaphane-inline
+@(grammata)
+>-@
+
+@-> *media
+\ltmedia{@((param))}
+>-@
+
+@-> *englossis
+\bibliographystyle{plain}
+\bibliography{\jobname}
+>-@
+
+@-> *onym-anchor
+\ltlabel{@(onym)}
+>-@
+
+@=* atrep-litogramma.cls END-OF-CLASS
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesClass{atrep-litogramma}[2026/07/12 v0.1 default presentation for the litogramma semantic layer]
+
+% The default carrier of the litogramma latex exomorphosis: a
+% plain, well-set book. Series classes (atrep-loeb, atrep-loa,
+% atrep-pleiade, atrep-gost) implement the same \lt... macro
+% layer with their own typography; this one aims for neutral
+% correctness.
+
+\DeclareOption*{\PassOptionsToClass{\CurrentOption}{book}}
+\ProcessOptions\relax
+\LoadClass[11pt,twoside]{book}
+
+\RequirePackage{iftex}
+\ifpdftex
+  \RequirePackage[T1]{fontenc}
+  \RequirePackage{tgpagella}
+\else
+  \RequirePackage{fontspec}
+  \setmainfont{texgyrepagella}[
+    Extension = .otf,
+    UprightFont = *-regular,
+    BoldFont = *-bold,
+    ItalicFont = *-italic,
+    BoldItalicFont = *-bolditalic]
+\fi
+\RequirePackage{microtype}
+\RequirePackage[a4paper,top=25mm,bottom=28mm,inner=28mm,outer=24mm]{geometry}
+\RequirePackage{graphicx}
+\RequirePackage{url}
+
+\emergencystretch=1.5em
+
+% ---- front matter ----
+\newcommand\lttitle[1]{\begin{center}{\Huge #1}\end{center}}
+\newcommand\ltsubtitle[1]{\begin{center}{\Large\itshape #1}\end{center}}
+\newcommand\ltauthor[1]{\begin{center}{\large #1}\end{center}}
+\newcommand\lteditor[1]{\begin{center}#1\end{center}}
+\newenvironment{ltabstract}{\quotation\small}{\endquotation}
+\newcommand\lttoc[1]{\setcounter{tocdepth}{#1}\tableofcontents}
+
+% ---- headings ----
+\newcommand\lthead[2]{%
+  \ifcsname lt@h@#1\endcsname
+    \csname lt@h@#1\endcsname{#2}%
+  \else
+    \par\medskip\noindent\textbf{#2}\par\nobreak
+  \fi}
+\@namedef{lt@h@part}#1{\part*{#1}}
+\@namedef{lt@h@chapter}#1{\chapter*{#1}}
+\@namedef{lt@h@section}#1{\section*{#1}}
+\@namedef{lt@h@subsection}#1{\subsection*{#1}}
+\@namedef{lt@h@subsubsection}#1{\subsubsection*{#1}}
+\@namedef{lt@h@subsubsubsection}#1{\paragraph{#1}}
+\@namedef{lt@h@act}#1{\section*{#1}}
+\@namedef{lt@h@scene}#1{\subsection*{#1}}
+\newcommand\ltlabel[1]{\label{#1}}
+\newcommand\ltrunin[1]{\textbf{#1}}
+\newcommand\ltordinal[1]{\textsc{#1}}
+\newcommand\ltbreak[1]{\par\begin{center}\bigskip #1\bigskip\end{center}}
+
+% ---- inline ----
+\newcommand\ltem[1]{\emph{#1}}
+\newcommand\ltstrong[1]{\textbf{#1}}
+\newcommand\ltstrongem[1]{\textbf{\emph{#1}}}
+\newcommand\ltannot[2]{#2}
+\newcommand\ltq[1]{``#1''}
+
+% ---- lists ----
+\newenvironment{ltitemize}{\itemize}{\enditemize}
+\newenvironment{ltenumerate}{\enumerate}{\endenumerate}
+\newenvironment{ltdescription}{\description}{\enddescription}
+\newcommand\ltitem{\item}
+\newcommand\ltitemdef[1]{\item[#1]}
+
+% ---- verse ----
+\newcommand\ltverselemma[1]{\begin{center}\itshape #1\end{center}}
+\newenvironment{ltverse}{\begin{verse}}{\end{verse}}
+% \relax stops \\ scanning a following [ as its optional
+% argument (verse lines may open with a bracket).
+\newcommand\ltnl{\\\relax}
+\newcommand\ltstanza{\par\medskip}
+\newcommand\ltversehypo[1]{\begin{flushright}\itshape #1\end{flushright}}
+
+% ---- drama ----
+\newenvironment{ltspeech}[1]{\par\noindent\textsc{#1}\quad\ignorespaces}{\par}
+\newenvironment{ltvspeech}[1]{\par\noindent\textsc{#1}\par\nopagebreak\begin{verse}}{\end{verse}}
+\newcommand\ltdramatis[1]{\textsc{#1}}
+\newenvironment{ltcharblock}[1]{\par\noindent\textbf{#1}\par\nopagebreak}{\par}
+\newcommand\ltstage[1]{\textit{(#1)}}
+\newcommand\ltstagepar[1]{\par\begin{center}\itshape #1\end{center}}
+\newcommand\ltcue[1]{#1}
+\newcommand\ltdialtag[1]{\textit{#1}}
+\newcommand\ltpause[1]{\textit{#1}}
+\newcommand\ltpausepar[1]{\par\begin{center}\textit{#1}\end{center}}
+
+% ---- notes ----
+\newcounter{lt@notetext}
+\newcommand\ltnotemark{\footnotemark{}}
+\newcommand\ltnotetext[1]{\stepcounter{lt@notetext}%
+  \footnotetext[\value{lt@notetext}]{#1}}
+\newcommand\ltendnotemark{\footnotemark{}}
+\newcommand\ltendnotetext[1]{\stepcounter{lt@notetext}%
+  \footnotetext[\value{lt@notetext}]{#1}}
+\newcommand\lteditnotemark{\footnotemark{}}
+\newcommand\lteditnotetext[1]{\stepcounter{lt@notetext}%
+  \footnotetext[\value{lt@notetext}]{#1}}
+\newcommand\ltasidemark{\textsuperscript{$\dagger$}}
+\newenvironment{ltaside}{\quotation\small}{\endquotation}
+
+% ---- quotations ----
+\newenvironment{ltquote}{\quote}{\endquote}
+\newcommand\ltquotehypo[1]{\begin{flushright}--- #1\end{flushright}}
+\newenvironment{ltepigraph}{\quote\itshape}{\endquote}
+\newcommand\ltepihypo[1]{\begin{flushright}\upshape #1\end{flushright}}
+\newcommand\ltcompdate[1]{\hfill\textit{#1}}
+\newcommand\ltcompdatepar[1]{\begin{flushright}\textit{#1}\end{flushright}}
+
+% ---- milestones ----
+\newcommand\ltmilestone[2]{\marginpar{\footnotesize #1}}
+
+% ---- references ----
+\newcommand\ltref[1]{\ref{#1}}
+\newcommand\ltpageref[1]{\pageref{#1}}
+\newcommand\ltcite[1]{\cite{#1}}
+\newcommand\lturl[1]{\url{#1}}
+\newcommand\ltstd[1]{\textsc{#1}}
+\newcommand\ltindexed[1]{#1\index{#1}}
+\newcommand\ltindexhidden[1]{\index{#1}}
+\newcommand\ltmedia[1]{\includegraphics[width=0.7\linewidth]{#1}}
+
+\endinput
+END-OF-CLASS

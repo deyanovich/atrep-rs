@@ -1,0 +1,118 @@
+@@@!atrep-exo
+@=at-org=>org
+
+@@/ Org export for the at-org syntax mapper. Org has no escape
+@@/ mechanism, so the escape table is empty; the canonical
+@@/ subset is a fixed point of export then import. Example
+@@/ blocks canonicalize to #+BEGIN_SRC.
+
+@-> *document
+@(grammata)
+>-@
+
+@-> *paragraph
+@(grammata)
+
+>-@
+
+@-> *solo #
+* @(grammata)
+>-@
+
+@-> *solo ##
+** @(grammata)
+>-@
+
+@-> *solo ###
+*** @(grammata)
+>-@
+
+@-> *solo ####
+**** @(grammata)
+>-@
+
+@-> *solo #####
+***** @(grammata)
+>-@
+
+@-> /
+/@(grammata)/
+>-@
+
+@-> *
+*@(grammata)*
+>-@
+
+@-> _
+_@(grammata)_
+>-@
+
+@-> +
++@(grammata)+
+>-@
+
+@-> ><
+[[@(grammata)]]
+>-@
+
+@-> >
+#+BEGIN_QUOTE
+@(grammata)
+#+END_QUOTE
+>-@
+
+@-> ~
+#+BEGIN_VERSE
+@(grammata)
+#+END_VERSE
+>-@
+
+@-> |
+@(grammata)
+>-@
+
+@-> *strophe
+@(grammata)
+>-@
+
+@-> *stichos
+@(grammata)
+>-@
+
+@-> -
+- @(grammata)
+>-@
+
+@-> .
+@(taxis). @(grammata)
+>-@
+
+@-> ::
+- @(lemma) :: @(grammata)
+>-@
+
+@-> ^
+[fn:@(onym)] @(grammata)
+>-@
+
+@-> *deixis ^
+[fn:@(onym)]
+>-@
+
+@-> *verbatim
+#+BEGIN_SRC@[ @(genoses)]@
+@(content)
+#+END_SRC
+>-@
+
+@-> *verbatim-inline
+~@(content)~
+>-@
+
+@-> *media
+[[file:@((param))]]
+>-@
+
+@-> *onym-anchor
+<<@(onym)>>
+>-@

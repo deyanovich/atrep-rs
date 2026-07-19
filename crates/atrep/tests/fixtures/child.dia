@@ -1,0 +1,13 @@
+@@@!atrep
+
+@@/ Inherits everything from base, plus an aliased re-import of
+@@/ zeta (`!` as `?`) to exercise the duplicate-name tie-break.
+
+@@::base
+
+@@::base::! ?
+
+@=== mid
+@- grammata -@
+@"a middle sim"@
+===@

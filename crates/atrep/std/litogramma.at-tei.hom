@@ -1,0 +1,86 @@
+@@@!atrep-hom
+@=litogramma=>at-tei
+
+@@/ Litogramma's TEI export edge: nested to nested (the section
+@@/ ladder maps onto typed divisions with nesting intact), and
+@@/ almost everything else is a rename carrying the TEI element
+@@/ identity as a vocabulary genos. Depth levels three and four
+@@/ collapse onto subsection (lossy); free genoses (theorema
+@@/ family) ride through the at-tei fallbacks. The reverse
+@@/ direction awaits genos-dispatched morphism rules.
+
+@@/ Front matter.
+@:: = , .title
+@:: =_ , .title
+@:: =: , .persname
+@:: =; , .persname
+@:: =" _ .argument
+@-- =#=
+
+@@/ Structure.
+@:: == # .part
+@:: === # .chapter
+@:: # # .section
+@:: ## # .subsection
+@:: ### # .subsection
+@:: #### # .subsection
+@:: #_ , .hi
+@:: . , .num
+@-- **
+
+@@/ Inline.
+@:: / , .emph
+@:: * , .hi
+@:: */ , .emph
+@:: , , .seg
+@:: $ , .formula
+@:: $$ _ .formula
+
+@@/ Lists and definitions.
+@:: -- -- .bulleted
+@:: .. -- .ordered
+@:: .- -
+@:: ::; -- .gloss
+@:: :: -
+@<< ;
+
+@@/ Verse and drama.
+@:: :~ ~
+@:: := # .act
+@:: :# # .scene
+@:: :! , .name
+@:: :!! :
+@:: :[ _ .stage
+@:: :- , .said
+@:: :_ , .seg
+@:: :. , .seg
+
+@@/ Notes and asides.
+@:: ^ ^ .foot
+@:: ^^ ^ .end
+@:: ^^^ ^ .end
+@:: ^! ^ .editorial
+@:: | ^ .margin
+
+@@/ Quotations.
+@:: " _ .quote
+@:: "/ _ .epigraph
+@:: "" , .q
+@:: -/ , .date
+
+@@/ Containers (free genoses ride the fallbacks).
+@:: _ _ .floatingtext
+@:: _= _ .theorema
+@:: _- _ .propositio
+@:: _: _ .lemma-block
+@:: _/ _ .demonstratio
+
+@@/ Apparatus.
+@:: >> >
+@:: >>> >
+@:: >>>> >
+@:: >[ >
+@:: >: , .name
+@:: % , .term
+@-- %%
+@:: |- |

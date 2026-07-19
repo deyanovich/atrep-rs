@@ -1,0 +1,105 @@
+@@@!atrep
+
+@@/ at-rst: a syntax mapper between a useful subset of
+@@/ reStructuredText and atrep. Flat family (no list containers);
+@@/ richer than at-markdown: definition items, field lists,
+@@/ admonitions, and first-class footnotes (deixis callouts).
+@@/ Inline and block literals map to the core enlexis forms,
+@@/ images to enmedia. Connected to at-html by explicit .hom
+@@/ files; everything else composes transitively.
+
+@=== heading-1
+@# grammata #@
+@"level-1 heading (= underline); flat, does not nest content"@
+===@
+
+@=== heading-2
+@## grammata ##@
+@"level-2 heading (- underline)"@
+===@
+
+@=== heading-3
+@### grammata ###@
+@"level-3 heading (~ underline)"@
+===@
+
+@=== heading-4
+@#### grammata ####@
+@"level-4 heading (^ underline)"@
+===@
+
+@=== heading-5
+@##### grammata #####@
+@"level-5 heading (double-quote underline)"@
+===@
+
+@=== heading-6
+@###### grammata ######@
+@"level-6 heading (apostrophe underline)"@
+===@
+
+@=== emphasis
+@* grammata *@
+@"emphasis (*text*)"@
+===@
+
+@=== strong
+@** grammata **@
+@"strong emphasis (**text**)"@
+===@
+
+@=== blockquote
+@>
+grammata
+>@
+@"block quotation (indented block)"@
+===@
+
+@=== unordered-item
+@-
+grammata
+-@
+@"bullet list item (- marker); items form flat runs"@
+===@
+
+@=== ordered-item
+@.(taxis)
+grammata
+.@
+@"enumerated list item (N. marker); items form flat runs"@
+===@
+
+@=== definition-item
+@:: lemma
+grammata
+::@
+@"definition list item; the lemma is the term"@
+===@
+
+@=== field
+@: lemma
+grammata
+:@
+@"field list entry (:Name: value); the lemma is the field name"@
+===@
+
+@=== note
+@!
+grammata
+!@
+@"note admonition (.. note::)"@
+===@
+
+@=== warning
+@!!
+grammata
+!!@
+@"warning admonition (.. warning::)"@
+===@
+
+@=== footnote
+@^
+grammata
+^@
+@"footnote body (.. [#name]); attached by deixis callouts"@
+===@

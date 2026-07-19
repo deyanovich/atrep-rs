@@ -1,0 +1,534 @@
+@@@!atrep-exo
+@=bibliogramma=>bibtex
+
+@@/ classic BibTeX export: the lossy legacy surface. Modern
+@@/ genera collapse (media and legal types to misc, thesis to
+@@/ phdthesis, report to techreport, reference works to book),
+@@/ date narrows onto year, location onto address, issue onto
+@@/ number.
+
+@-> *document
+@(grammata)
+>-@
+
+@-> *paragraph
+@(grammata)
+>-@
+
+@-> &.acta
+\@proceedings{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.acta-multiplex
+\@proceedings{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.artificium
+\@misc{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.audio
+\@misc{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.collectio
+\@book{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.collectio-multiplex
+\@book{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.commentarius
+\@article{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.complexus
+\@misc{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.data
+\@misc{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.diploma
+\@misc{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.dissertatio
+\@phdthesis{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.enchiridion
+\@manual{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.epistula
+\@misc{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.imago
+\@misc{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.ineditum
+\@unpublished{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.interretialis
+\@misc{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.iudicium
+\@misc{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.iuridicum
+\@misc{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.lex
+\@misc{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.libellus
+\@booklet{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.liber
+\@book{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.liber-in-libro
+\@inbook{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.liber-multiplex
+\@book{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.membrum
+\@incollection{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.miscellanea
+\@misc{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.musica
+\@misc{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.norma
+\@misc{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.pars-libri
+\@inbook{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.pars-thesauri
+\@incollection{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.pellicula
+\@misc{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.periodicum
+\@misc{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.programma
+\@misc{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.recensio
+\@article{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.relatio
+\@inproceedings{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.renuntiatio
+\@techreport{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.scholia
+\@book{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.spectaculum
+\@misc{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.supplementum-collectionis
+\@incollection{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.supplementum-libri
+\@inbook{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.supplementum-periodici
+\@misc{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.thesaurus
+\@book{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.thesaurus-multiplex
+\@book{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.video
+\@misc{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &.xdata
+\@misc{@(lemma),
+@(grammata)}
+
+>-@
+
+@-> &
+\@@(genoses){@(lemma),
+@(grammata)}
+
+>-@
+
+@-> :(additamentum-tituli)
+  titleaddon = {@(grammata)},
+>-@
+
+@-> :(additamentum-tituli-libri)
+  booktitleaddon = {@(grammata)},
+>-@
+
+@-> :(additamentum-tituli-operis)
+  maintitleaddon = {@(grammata)},
+>-@
+
+@-> :(annotatio)
+  annotation = {@(grammata)},
+>-@
+
+@-> :(annus)
+  year = {@(grammata)},
+>-@
+
+@-> :(auctor)
+  author = {@(grammata)},
+>-@
+
+@-> :(auctor-libri)
+  bookauthor = {@(grammata)},
+>-@
+
+@-> :(bibliotheca)
+  library = {@(grammata)},
+>-@
+
+@-> :(capitulum)
+  chapter = {@(grammata)},
+>-@
+
+@-> :(classis-eprint)
+  eprintclass = {@(grammata)},
+>-@
+
+@-> :(claves)
+  keywords = {@(grammata)},
+>-@
+
+@-> :(datum)
+  year = {@(grammata)},
+>-@
+
+@-> :(datum-eventus)
+  eventdate = {@(grammata)},
+>-@
+
+@-> :(datum-originis)
+  origdate = {@(grammata)},
+>-@
+
+@-> :(datum-url)
+  note = {@(grammata)},
+>-@
+
+@-> :(editio)
+  edition = {@(grammata)},
+>-@
+
+@-> :(ephemeris)
+  journal = {@(grammata)},
+>-@
+
+@-> :(fasciculus)
+  number = {@(grammata)},
+>-@
+
+@-> :(genus)
+  type = {@(grammata)},
+>-@
+
+@-> :(genus-eprint)
+  eprinttype = {@(grammata)},
+>-@
+
+@-> :(institutum)
+  institution = {@(grammata)},
+>-@
+
+@-> :(interpres)
+  translator = {@(grammata)},
+>-@
+
+@-> :(introductio)
+  introduction = {@(grammata)},
+>-@
+
+@-> :(lingua)
+  language = {@(grammata)},
+>-@
+
+@-> :(lingua-originis)
+  origlanguage = {@(grammata)},
+>-@
+
+@-> :(locus)
+  address = {@(grammata)},
+>-@
+
+@-> :(locus-originis)
+  origlocation = {@(grammata)},
+>-@
+
+@-> :(mensis)
+  month = {@(grammata)},
+>-@
+
+@-> :(modus)
+  howpublished = {@(grammata)},
+>-@
+
+@-> :(nota)
+  note = {@(grammata)},
+>-@
+
+@-> :(numerus)
+  number = {@(grammata)},
+>-@
+
+@-> :(officina)
+  publisher = {@(grammata)},
+>-@
+
+@-> :(officina-originis)
+  origpublisher = {@(grammata)},
+>-@
+
+@-> :(paginae)
+  pages = {@(grammata)},
+>-@
+
+@-> :(paginatio)
+  pagination = {@(grammata)},
+>-@
+
+@-> :(paginatio-libri)
+  bookpagination = {@(grammata)},
+>-@
+
+@-> :(pars)
+  part = {@(grammata)},
+>-@
+
+@-> :(possessor)
+  holder = {@(grammata)},
+>-@
+
+@-> :(postfatio)
+  afterword = {@(grammata)},
+>-@
+
+@-> :(praefatio)
+  foreword = {@(grammata)},
+>-@
+
+@-> :(sedes)
+  address = {@(grammata)},
+>-@
+
+@-> :(sigla)
+  shorthand = {@(grammata)},
+>-@
+
+@-> :(societas)
+  organization = {@(grammata)},
+>-@
+
+@-> :(status-editionis)
+  note = {@(grammata)},
+>-@
+
+@-> :(subtitulus)
+  note = {@(grammata)},
+>-@
+
+@-> :(subtitulus-ephemeridis)
+  journalsubtitle = {@(grammata)},
+>-@
+
+@-> :(subtitulus-fasciculi)
+  issuesubtitle = {@(grammata)},
+>-@
+
+@-> :(subtitulus-libri)
+  booksubtitle = {@(grammata)},
+>-@
+
+@-> :(subtitulus-operis)
+  mainsubtitle = {@(grammata)},
+>-@
+
+@-> :(summa-paginarum)
+  pagetotal = {@(grammata)},
+>-@
+
+@-> :(summarium)
+  abstract = {@(grammata)},
+>-@
+
+@-> :(titulus)
+  title = {@(grammata)},
+>-@
+
+@-> :(titulus-brevis)
+  shorttitle = {@(grammata)},
+>-@
+
+@-> :(titulus-eventus)
+  eventtitle = {@(grammata)},
+>-@
+
+@-> :(titulus-fasciculi)
+  issuetitle = {@(grammata)},
+>-@
+
+@-> :(titulus-libri)
+  booktitle = {@(grammata)},
+>-@
+
+@-> :(titulus-operis)
+  title = {@(grammata)},
+>-@
+
+@-> :(titulus-originis)
+  origtitle = {@(grammata)},
+>-@
+
+@-> :(versio)
+  version = {@(grammata)},
+>-@
+
+@-> :(volumen)
+  volume = {@(grammata)},
+>-@
+
+@-> :(volumina)
+  volumes = {@(grammata)},
+>-@
+
+@-> :
+  @(lemma) = {@(grammata)},
+>-@

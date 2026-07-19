@@ -1,0 +1,100 @@
+@@@!atrep-exo
+@=at-docbook=>docbook
+
+@@/ DocBook 5 export for the at-docbook syntax mapper; the
+@@/ engine-side DocBook endomorphosis is its inverse over the
+@@/ canonical subset.
+
+@%
+& &amp;
+< &lt;
+> &gt;
+%@
+
+@-> *document
+<?xml version="1.0" encoding="UTF-8"?>
+<article xmlns="http://docbook.org/ns/docbook" version="5.0">
+@(grammata)
+</article>
+>-@
+
+@-> *paragraph
+<para>@(grammata)</para>
+>-@
+
+@-> #
+<section@[ xml:id="@(onym)"]@>
+<title>@(lemma)</title>
+@(grammata)
+</section>
+>-@
+
+@-> /
+<emphasis>@(grammata)</emphasis>
+>-@
+
+@-> *
+<emphasis role="strong">@(grammata)</emphasis>
+>-@
+
+@-> >
+<blockquote>
+@(grammata)
+</blockquote>
+>-@
+
+@-> !
+<note>
+@(grammata)
+</note>
+>-@
+
+@-> !!
+<warning>
+@(grammata)
+</warning>
+>-@
+
+@-> --
+<itemizedlist>
+@(grammata)
+</itemizedlist>
+>-@
+
+@-> ..
+<orderedlist>
+@(grammata)
+</orderedlist>
+>-@
+
+@-> -
+<listitem>
+@(grammata)
+</listitem>
+>-@
+
+@-> ^
+<footnote@[ xml:id="@(onym)"]@>
+@(grammata)
+</footnote>
+>-@
+
+@-> *deixis ^
+<footnoteref linkend="@(onym)"/>
+>-@
+
+@-> *verbatim
+<programlisting@[ language="@(genoses)"]@>@(content)</programlisting>
+>-@
+
+@-> *verbatim-inline
+<literal>@(content)</literal>
+>-@
+
+@-> *media
+<mediaobject><imageobject><imagedata fileref="@((param))"/></imageobject></mediaobject>
+>-@
+
+@-> *onym-anchor
+<anchor xml:id="@(onym)"/>
+>-@

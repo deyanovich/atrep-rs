@@ -1,0 +1,239 @@
+@@@!atrep-exo
+@=at-usfm=>osis
+
+@@/ OSIS export (relaxed: chapter and verse milestones carry
+@@/ bare n= numbers rather than full osisIDs - assembling
+@@/ book.chapter.verse identifiers needs positional context a
+@@/ template does not have; a follow-up pass can rewrite them).
+
+@%
+& &amp;
+< &lt;
+> &gt;
+%@
+
+@-> *document
+<?xml version="1.0" encoding="UTF-8"?>
+<osis xmlns="http://www.bibletechnologies.net/2003/OSIS/namespace">
+<osisText>
+@(grammata)
+</osisText>
+</osis>
+>-@
+
+@-> *paragraph
+<p>@(grammata)</p>
+>-@
+
+@-> #
+<div type="book" osisID="@(lemma)">
+@(grammata)
+</div>
+>-@
+
+@-> *solo ##
+<chapter n="@(param)"/>
+>-@
+
+@-> |
+<verse n="@(param)"/>
+>-@
+
+@-> ~
+<lg>
+@(grammata)
+</lg>
+>-@
+
+@-> *strophe
+@(grammata)
+>-@
+
+@-> *stichos
+@(grammata)
+>-@
+
+@-> ,.q1
+<l level="1">@(grammata)</l>
+>-@
+
+@-> ,.q2
+<l level="2">@(grammata)</l>
+>-@
+
+@-> ,.q3
+<l level="3">@(grammata)</l>
+>-@
+
+@-> *solo _.s1
+<title type="sub">@(grammata)</title>
+>-@
+
+@-> *solo _.s2
+<title type="sub">@(grammata)</title>
+>-@
+
+@-> *solo _.s3
+<title type="sub">@(grammata)</title>
+>-@
+
+@-> *solo _.mt1
+<title type="main">@(grammata)</title>
+>-@
+
+@-> *solo _.mt2
+<title type="main">@(grammata)</title>
+>-@
+
+@-> *solo _.mt3
+<title type="main">@(grammata)</title>
+>-@
+
+@-> *solo _.ms1
+<title type="main">@(grammata)</title>
+>-@
+
+@-> *solo _.ms2
+<title type="main">@(grammata)</title>
+>-@
+
+@-> *solo _.d
+<title type="psalm">@(grammata)</title>
+>-@
+
+@-> *solo _.sp
+<speaker>@(grammata)</speaker>
+>-@
+
+@-> *solo _.mr
+<title type="scope">@(grammata)</title>
+>-@
+
+@-> *solo _.r
+<title type="parallel">@(grammata)</title>
+>-@
+
+@-> *solo _.qa
+<title type="acrostic">@(grammata)</title>
+>-@
+
+@@/ The running head and toc lines have no OSIS
+@@/ counterpart and drop.
+@-> *solo _.h
+>-@
+
+@-> *solo _.toc1
+>-@
+
+@-> *solo _.toc2
+>-@
+
+@-> *solo _.toc3
+>-@
+
+@-> *solo _.cl
+<title type="chapterLabel">@(grammata)</title>
+>-@
+
+@@/ The published chapter number is presentation-only.
+@-> *solo _.cp
+>-@
+
+@-> *solo _
+<p>@(grammata)</p>
+>-@
+
+@-> ,.wj
+<q who="Jesus" marker="">@(grammata)</q>
+>-@
+
+@-> ,.nd
+<divineName>@(grammata)</divineName>
+>-@
+
+@-> ,.add
+<transChange type="added">@(grammata)</transChange>
+>-@
+
+@-> ,.em
+<hi type="emphasis">@(grammata)</hi>
+>-@
+
+@-> ,.bd
+<hi type="bold">@(grammata)</hi>
+>-@
+
+@-> ,.it
+<hi type="italic">@(grammata)</hi>
+>-@
+
+@-> ,.no
+<hi type="normal">@(grammata)</hi>
+>-@
+
+@-> ,.sc
+<hi type="small-caps">@(grammata)</hi>
+>-@
+
+@-> ,.qs
+<seg type="selah">@(grammata)</seg>
+>-@
+
+@-> ,.qt
+<seg type="otPassage">@(grammata)</seg>
+>-@
+
+@-> ,.tl
+<foreign>@(grammata)</foreign>
+>-@
+
+@-> ,.k
+<seg type="keyword">@(grammata)</seg>
+>-@
+
+@-> ,.w
+<w>@(grammata)</w>
+>-@
+
+@-> ,.sig
+<signed>@(grammata)</signed>
+>-@
+
+@-> ,.bk
+<name type="x-workTitle">@(grammata)</name>
+>-@
+
+@-> ,.fr
+<reference>@(grammata)</reference>
+>-@
+
+@-> ,.xo
+<reference>@(grammata)</reference>
+>-@
+
+@-> ,
+<seg type="@(genoses)">@(grammata)</seg>
+>-@
+
+@-> ^.x
+<note type="crossReference">@(grammata)</note>
+>-@
+
+@-> ^
+<note type="translation">@(grammata)</note>
+>-@
+
+@-> *verbatim
+@(content)
+>-@
+
+@-> *verbatim-inline
+@(content)
+>-@
+
+@-> *media
+<figure src="@((param))"/>
+>-@
+
+@-> *onym-anchor
+>-@

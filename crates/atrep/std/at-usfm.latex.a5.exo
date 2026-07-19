@@ -1,0 +1,15 @@
+@@@!atrep-exo
+@=at-usfm=>latex
+
+@@/ Hand-Bible format: the classic 148x210 page with 13mm
+@@/ margins and the denser 9pt setting (the a5paper class
+@@/ option implies it). Everything else inherits from the base
+@@/ latex surface.
+
+@-> *document
+\documentclass[a5paper]{atrep-bible}
+\begin{document}
+\atmaketitle
+@(grammata)
+\end{document}
+>-@

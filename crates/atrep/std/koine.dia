@@ -1,0 +1,209 @@
+@@@!atrep
+
+@@/ koine: the common dialect - the shared core of text
+@@/ formatting sims that genre dialektoi (litogramma,
+@@/ lexigramma, ...) inherit and that authors meet everywhere
+@@/ with the same symbols. Extracted from litogramma; ships
+@@/ with atrep as part of the standard library. The scope is
+@@/ deliberately semantic and minimal: front matter, generic
+@@/ section levels, inline formatting, quotations, lists,
+@@/ the plain footnote, and references. Tables and figures are
+@@/ deliberately absent - layout concepts belong to
+@@/ specialized dialektoi; genre structure (parts, chapters,
+@@/ verse, drama, entries, senses) belongs to the heirs.
+
+@=== title
+@= grammata =@
+@"text title"@
+@""
+Required. Must be the first content element of a document,
+standing alone as a paragraph. One per document.
+""@
+===@
+
+@=== subtitle
+@=_ grammata _=@
+@"text subtitle"@
+===@
+
+@=== author
+@=: grammata :=@
+@"author name; one sim per author, each its own paragraph"@
+===@
+
+@=== editor
+@=; grammata ;=@
+@""
+Editor name; one sim per editor. For works that have an editor
+rather than an author (dictionaries, anthologies), or in
+addition to authors when the editorial role is significant
+(critical editions).
+""@
+@"editor name"@
+===@
+
+@=== section
+@#[(taxis)] lemma
+grammata
+#@
+@"section"@
+===@
+
+@=== subsection
+@##[(taxis)] lemma
+grammata
+##@
+@"subsection"@
+@^(#)
+===@
+
+@=== subsubsection
+@###[(taxis)] lemma
+grammata
+###@
+@"subsubsection"@
+@^(##)
+===@
+
+@=== run-in-heading
+@#_ grammata _#@
+@"run-in heading (milepost, outside the ToC hierarchy)"@
+@""
+Endo-simmere that must start a paragraph and must end with a
+punctuation mark; paragraph text follows on the same line.
+""@
+===@
+
+@=== section-break
+@** grammata **@
+@"section break (asterism / dinkus)"@
+@""
+TENTATIVE symbol. Stands alone as a paragraph; canonical
+grammata is the literal three-asterisk asterism. A structural
+separation within a chapter, typeset as a rule or ornament.
+""@
+===@
+
+@=== emphasis
+@/ grammata /@
+@"emphasis (italic)"@
+===@
+
+@=== strong
+@* grammata *@
+@"strong (bold)"@
+===@
+
+@=== strong-emphasis
+@*/ grammata /*@
+@"strong emphasis (bold italic)"@
+===@
+
+@=== annotation
+@, grammata ,@
+@"semantic annotation carrier"@
+@""
+General-purpose inline span whose meaning is given by a genos
+on the episim; a genos is expected, though genoses cannot be
+formally required by a dialect definition.
+""@
+===@
+
+@=== unordered-list
+@--
+grammata
+--@
+@"unordered list; grammata is a sequence of unordered-item"@
+===@
+
+@=== unordered-item
+@-
+grammata
+-@
+@"unordered list item"@
+@^(--)
+===@
+
+@=== ordered-list
+@..
+grammata
+..@
+@""
+Ordered list; grammata is a sequence of ordered-item. Item
+taxes must be consistent (one ordinal category per list) and
+sequential without skips; the list may start at any value.
+""@
+@"ordered list"@
+===@
+
+@=== ordered-item
+@.-(taxis)
+grammata
+-.@
+@"ordered list item"@
+@""
+TENTATIVE symbol (the plain period belongs to the ordinal
+sim).
+""@
+@^(..)
+===@
+
+@=== definition-list
+@::;
+grammata
+;::@
+@"definition list; grammata is a sequence of definition-item"@
+===@
+
+@=== definition-item
+@:: lemma
+grammata
+::@
+@"definition list item; the lemma is the term being defined"@
+@^(::;)
+===@
+
+@=== definition
+@;
+grammata
+;@
+@"a single definition within a definition-item"@
+@^(::)
+===@
+
+@=== footnote
+@^
+grammata
+^@
+@"footnote definition; onymized on the episim, attached by deixis"@
+===@
+
+@=== blockquote
+@"
+grammata
+"@ [hypograph]
+@"block quotation; the hypograph is the attribution"@
+===@
+
+@=== quotation
+@"" grammata ""@
+@"inline quotation; genos-refinable (.said for speech)"@
+@""
+Added after the TEI stress test (tei-coverage.md gap 1): TEI
+q/said in running prose had no litogramma counterpart.
+""@
+===@
+
+@=== ref
+@>(onym)
+@"cross-reference to an onym; renders the target's lemma"@
+===@
+
+@=== link
+@>< grammata ><@
+@"hyperlink; the grammata is the displayed URL"@
+@""
+Hidden-href links (display text distinct from the URL) are
+deferred pending F9.
+""@
+===@

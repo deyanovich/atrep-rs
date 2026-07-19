@@ -1,0 +1,15 @@
+@@@!atrep-exo
+@=at-usfm=>latex
+
+@@/ Red-letter edition: the words of Jesus in red. Only the
+@@/ document rule differs (the class option does the work);
+@@/ every other rule and the atrep-bible class asset inherit
+@@/ from the base latex surface.
+
+@-> *document
+\documentclass[redletter]{atrep-bible}
+\begin{document}
+\atmaketitle
+@(grammata)
+\end{document}
+>-@

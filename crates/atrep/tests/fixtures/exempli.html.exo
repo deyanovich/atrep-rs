@@ -1,0 +1,50 @@
+@@@!atrep-exo
+@=exempli=>html
+
+@%
+& &amp;
+< &lt;
+> &gt;
+%@
+
+@-> *document
+<!doctype html>
+<html>
+<body>
+@(grammata)
+</body>
+</html>
+>-@
+
+@-> *paragraph
+<p>@(grammata)</p>
+>-@
+
+@-> #
+<section class="@(genoses)">
+<h1>@(lemma)</h1>
+@(grammata)
+</section>
+>-@
+
+@-> =
+<figure id="@(onym)" class="@(genoses)">
+@(grammata)
+</figure>
+>-@
+
+@-> :
+<em class="caption">@(grammata)</em>
+>-@
+
+@-> ^
+<a href="#@(param)">[@(param)]</a>
+>-@
+
+@-> *media
+<img src="@(param)"/>
+>-@
+
+@-> *verbatim
+<pre>@(content)</pre>
+>-@

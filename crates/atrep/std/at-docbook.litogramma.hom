@@ -1,0 +1,12 @@
+@@@!atrep-hom
+@=at-docbook=>litogramma
+
+@@/ The first morphism INTO litogramma: DocBook's nesting is
+@@/ already litogramma's shape, so sections rename across with
+@@/ structure intact (every depth becomes a litogramma section;
+@@/ the leveled ladder is not reconstructed). Footnotes carry
+@@/ over with their deixes.
+
+@:: ! _ .note
+@:: !! _ .warning
+@:: > "

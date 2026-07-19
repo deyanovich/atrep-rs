@@ -1,0 +1,25 @@
+@@@!atrep
+
+@=== section
+@# lemma
+grammata
+#@
+@"a titled section"@
+===@
+
+@=== figure
+@=[(taxis)] lemma
+grammata
+=@
+@"a numbered figure"@
+===@
+
+@=== caption
+@: grammata :@
+@"a figure caption"@
+===@
+
+@=== ref
+@^(param)
+@"reference to an anchor, resolving to its taxis"@
+===@

@@ -1,0 +1,69 @@
+@@@!atrep
+
+@@/ at-djot: a syntax mapper for a useful subset of Djot. The
+@@/ sim inventory deliberately mirrors at-markdown one-for-one
+@@/ under djot's own symbols (emphasis _underscores_, strong
+@@/ *stars*), so the pair is connected by a std isomorphism -
+@@/ the graph's first lossless edge. Code maps to the core
+@@/ enlexis forms.
+
+@=== heading-1
+@# grammata #@
+@"level-1 heading; flat, does not nest content"@
+===@
+
+@=== heading-2
+@## grammata ##@
+@"level-2 heading"@
+===@
+
+@=== heading-3
+@### grammata ###@
+@"level-3 heading"@
+===@
+
+@=== heading-4
+@#### grammata ####@
+@"level-4 heading"@
+===@
+
+@=== heading-5
+@##### grammata #####@
+@"level-5 heading"@
+===@
+
+@=== heading-6
+@###### grammata ######@
+@"level-6 heading"@
+===@
+
+@=== emphasis
+@_ grammata _@
+@"emphasis (_underscores_)"@
+===@
+
+@=== strong
+@* grammata *@
+@"strong emphasis (*stars*)"@
+===@
+
+@=== blockquote
+@>
+grammata
+>@
+@"block quotation (> prefix)"@
+===@
+
+@=== unordered-item
+@-
+grammata
+-@
+@"bullet list item (- marker); items form flat runs"@
+===@
+
+@=== ordered-item
+@.(taxis)
+grammata
+.@
+@"enumerated list item (N. marker); items form flat runs"@
+===@
