@@ -1534,7 +1534,11 @@ fn tei_milestone_mono(n: &str, attrs: &[(String, String)]) -> Inline {
     // not a canonical reference: it lives in the perseus:
     // namespace (registry ruling 2026-07-15, perseus:card:N).
     let (scheme, value, genoses) = if scheme == "card" {
-        ("perseus".to_string(), format!("card:{value}"), vec!["card".to_string()])
+        (
+            "perseus".to_string(),
+            format!("card:{value}"),
+            vec!["card".to_string()],
+        )
     } else {
         (scheme, value, genoses)
     };
@@ -3551,26 +3555,19 @@ fn tei_inline_run(
                             let sc = *self_closing;
                             let n2 = name.clone();
                             i += 1;
-                            if !sc
-                                && matches!(toks.get(i), Some(Tok::Close(n)) if *n == n2)
-                            {
+                            if !sc && matches!(toks.get(i), Some(Tok::Close(n)) if *n == n2) {
                                 i += 1;
                             }
                         }
                         Tok::Open {
                             name, self_closing, ..
-                        } if matches!(
-                            name.as_str(),
-                            "item" | "person" | "head" | "label"
-                        ) =>
-                        {
+                        } if matches!(name.as_str(), "item" | "person" | "head" | "label") => {
                             if *self_closing {
                                 i += 1;
                                 continue;
                             }
                             let n2 = name.clone();
-                            let ((content, inner), next) =
-                                tei_inline_run(toks, i + 1, &n2, notes)?;
+                            let ((content, inner), next) = tei_inline_run(toks, i + 1, &n2, notes)?;
                             if !first {
                                 inlines.push(Inline::Text("; ".to_string()));
                             } else if !inlines.is_empty() {
@@ -5369,11 +5366,9 @@ const USFM_HEADINGS: &[&str] = &[
 /// Paragraph-class markers: typed paragraphs that accumulate
 /// verse flow and continuation lines exactly like \p.
 const USFM_PARAGRAPHS: &[&str] = &[
-    "m", "mi", "pi1", "pi2", "pi3", "pc", "nb", "po", "ip", "li1",
-    "tr", "th1", "th2", "th3", "tc1", "tc2", "tc3",
-    "thr1", "thr2", "thr3", "tcr1", "tcr2", "tcr3",
-    "li2", "li3", "li4", "ili1", "ili2", "lh", "lf",
-    // embedded-text paragraph class (USFM 3.0)
+    "m", "mi", "pi1", "pi2", "pi3", "pc", "nb", "po", "ip", "li1", "tr", "th1", "th2", "th3",
+    "tc1", "tc2", "tc3", "thr1", "thr2", "thr3", "tcr1", "tcr2", "tcr3", "li2", "li3", "li4",
+    "ili1", "ili2", "lh", "lf", // embedded-text paragraph class (USFM 3.0)
     "pm", "pmo", "pmc", "pmr", "pr", "cls", "ph1", "ph2", "ipi",
 ];
 
@@ -5474,7 +5469,10 @@ pub fn usfm_to_document(usfm: &str) -> Result<Document> {
         let mut rest = line;
         while let Some(bs) = rest.find('\\') {
             rest = &rest[bs + 1..];
-            let marker: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
+            let marker: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric())
+                .collect();
             rest = &rest[marker.len()..];
             if matches!(marker.as_str(), "f" | "fe" | "x") {
                 if rest.starts_with('*') {
@@ -5886,7 +5884,9 @@ fn usfm_inlines(text: &str) -> Result<Vec<Inline>> {
 /// segment pass through `usfm_inlines` (which unwraps wordlist
 /// markers and keeps the rest as phrases).
 fn usfm_note_inlines(body: &str) -> Result<Vec<Inline>> {
-    const TEXTUAL: &[&str] = &["ft", "xt", "fk", "fq", "fqa", "fl", "xq", "xo", "fr", "xk", "xta"];
+    const TEXTUAL: &[&str] = &[
+        "ft", "xt", "fk", "fq", "fqa", "fl", "xq", "xo", "fr", "xk", "xta",
+    ];
     let mut segments: Vec<(Option<String>, String)> = Vec::new();
     let mut current: Option<String> = None;
     let mut text = String::new();
@@ -5972,6 +5972,48 @@ fn usfm_note_inlines(body: &str) -> Result<Vec<Inline>> {
 /// and its round-trips are unchanged); book divisions and all
 /// other markup stay as-is.
 pub fn usfm_apply_scheme(doc: &mut Document, scheme: &str) {
+    // the bare page/section rename applies only when the doc has
+    // no milestones already carrying the target scheme (else it
+    // would duplicate the resp'd anchors)
+    fn has_scheme_blocks(blocks: &[Block], scheme: &str) -> bool {
+        fn inl(inlines: &[Inline], scheme: &str) -> bool {
+            inlines.iter().any(|i| match i {
+                Inline::Milestone { scheme: ms, .. } => ms == scheme,
+                Inline::Endo { content, .. } | Inline::EndoDiaphane { content, .. } => {
+                    inl(content, scheme)
+                }
+                _ => false,
+            })
+        }
+        blocks.iter().any(|b| match b {
+            Block::Paragraph(inlines) => inl(inlines, scheme),
+            Block::Para {
+                lemma,
+                children,
+                hypograph,
+                ..
+            } => {
+                inl(lemma, scheme) || has_scheme_blocks(children, scheme) || inl(hypograph, scheme)
+            }
+            Block::Stichoi {
+                lemma,
+                strophes,
+                hypograph,
+                ..
+            } => {
+                inl(lemma, scheme)
+                    || strophes
+                        .iter()
+                        .any(|st| st.0.iter().any(|l| inl(l, scheme)))
+                    || inl(hypograph, scheme)
+            }
+            Block::ParaDiaphane { children, .. } | Block::MonadEnglossis { children, .. } => {
+                has_scheme_blocks(children, scheme)
+            }
+            _ => false,
+        })
+    }
+    let rename_bare = !has_scheme_blocks(&doc.blocks, scheme);
     fn inline_text(inlines: &[Inline]) -> String {
         let mut s = String::new();
         for i in inlines {
@@ -5981,9 +6023,24 @@ pub fn usfm_apply_scheme(doc: &mut Document, scheme: &str) {
         }
         s.trim().to_string()
     }
-    fn walk_inlines(inlines: &mut [Inline], scheme: &str, book: &str, chapter: &mut String) {
+    fn walk_inlines(
+        inlines: &mut [Inline],
+        scheme: &str,
+        book: &str,
+        chapter: &mut String,
+        rename_bare: bool,
+    ) {
         for inl in inlines {
             match inl {
+                Inline::Milestone {
+                    scheme: ms, ann, ..
+                } if (ms == "page" || ms == "section") && rename_bare => {
+                    // a bare unit-fallback scheme (TEI with no
+                    // resp'd reference system): adopt the
+                    // requested scheme, the unit rides as genos
+                    ann.genoses = vec![ms.clone()];
+                    *ms = scheme.to_string();
+                }
                 Inline::Monosim { symbol, param, .. } if symbol == "|" => {
                     let value = format!("{book}.{chapter}.{param}");
                     *inl = Inline::Milestone {
@@ -6002,13 +6059,19 @@ pub fn usfm_apply_scheme(doc: &mut Document, scheme: &str) {
                     };
                 }
                 Inline::Endo { content, .. } => {
-                    walk_inlines(content, scheme, book, chapter);
+                    walk_inlines(content, scheme, book, chapter, rename_bare);
                 }
                 _ => {}
             }
         }
     }
-    fn walk_blocks(blocks: &mut [Block], scheme: &str, book: &str, chapter: &mut String) {
+    fn walk_blocks(
+        blocks: &mut [Block],
+        scheme: &str,
+        book: &str,
+        chapter: &mut String,
+        rename_bare: bool,
+    ) {
         for block in blocks {
             match block {
                 Block::Para {
@@ -6019,18 +6082,18 @@ pub fn usfm_apply_scheme(doc: &mut Document, scheme: &str) {
                 } if symbol == "#" => {
                     let code = inline_text(lemma);
                     let mut ch = String::new();
-                    walk_blocks(children, scheme, &code, &mut ch);
+                    walk_blocks(children, scheme, &code, &mut ch, rename_bare);
                 }
                 Block::Para { children, .. } | Block::ParaDiaphane { children, .. } => {
-                    walk_blocks(children, scheme, book, chapter);
+                    walk_blocks(children, scheme, book, chapter, rename_bare);
                 }
                 Block::Paragraph(inlines) => {
-                    walk_inlines(inlines, scheme, book, chapter);
+                    walk_inlines(inlines, scheme, book, chapter, rename_bare);
                 }
                 Block::Stichoi { strophes, .. } => {
                     for strophe in strophes {
                         for line in &mut strophe.0 {
-                            walk_inlines(line, scheme, book, chapter);
+                            walk_inlines(line, scheme, book, chapter, rename_bare);
                         }
                     }
                 }
@@ -6039,7 +6102,7 @@ pub fn usfm_apply_scheme(doc: &mut Document, scheme: &str) {
         }
     }
     let mut ch = String::new();
-    walk_blocks(&mut doc.blocks, scheme, "", &mut ch);
+    walk_blocks(&mut doc.blocks, scheme, "", &mut ch, rename_bare);
 }
 
 fn tanzil_err(msg: String) -> Error {

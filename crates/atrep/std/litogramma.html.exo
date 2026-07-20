@@ -511,14 +511,6 @@
 <span class="milestone" data-scheme="@(scheme)">@(value)</span>
 >-@
 
-@-> |-
-<span class="milestone" data-unit="@(genoses)">@(param)</span>
->-@
-
-@-> *solo |-
-<span class="milestone" data-unit="@(genoses)">@(param)</span>
->-@
-
 @-> *onym-anchor
 <span id="@(onym)"></span>
 >-@

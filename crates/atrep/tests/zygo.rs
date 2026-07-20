@@ -139,8 +139,7 @@ fn quasialign_inserts_binary_path_labels() {
     // resolves from the standard library; the milestone syntax
     // is core.)
     let koine = s.replacen("@@@!litogramma", "@@@!koine", 1);
-    let reparsed =
-        atrep::parser::parse_document(&koine, std::path::Path::new("t.atd")).unwrap();
+    let reparsed = atrep::parser::parse_document(&koine, std::path::Path::new("t.atd")).unwrap();
     assert_eq!(serialize(&reparsed), koine);
 }
 
@@ -219,4 +218,123 @@ fn quasialign_prefix_scopes_to_one_witness() {
     let s = serialize(&docs[0]);
     let eng = s.split(".@@@.zyg-grc").nth(1).unwrap();
     assert!(eng.contains(r#"@("steph:1a|1")"#), "{s}");
+}
+
+fn witness_with(coords_and_texts: &[(&str, &str)]) -> Document {
+    let mut inlines = Vec::new();
+    for (coord, text) in coords_and_texts {
+        inlines.push(milestone(coord));
+        inlines.push(Inline::Text((*text).into()));
+    }
+    Document {
+        dialect_id: "litogramma".into(),
+        dialect_version: None,
+        blocks: vec![Block::Paragraph(inlines)],
+    }
+}
+
+#[test]
+fn zygosis_validates_inputs() {
+    let a = witness("alpha");
+    // Fewer than two witnesses.
+    let err = zygosis(&[("a".into(), a.clone())], "steph");
+    assert!(format!("{}", err.unwrap_err()).contains("at least two"));
+    // One dialektos per weave.
+    let mut b = witness("beta");
+    b.dialect_id = "koine".into();
+    let err = zygosis(&[("a".into(), a.clone()), ("b".into(), b)], "steph");
+    assert!(format!("{}", err.unwrap_err()).contains("one dialektos per weave"));
+    // Duplicate id.
+    let err = zygosis(
+        &[("a".into(), a.clone()), ("a".into(), witness("beta"))],
+        "steph",
+    );
+    assert!(format!("{}", err.unwrap_err()).contains("duplicate witness id"));
+    // The identifier itself must satisfy the genos grammar
+    // (spec v0.12.1): leading digits and capitals are invalid.
+    for bad in ["1a", "B"] {
+        let err = zygosis(
+            &[(bad.to_string(), a.clone()), ("b".into(), witness("beta"))],
+            "steph",
+        );
+        assert!(
+            format!("{}", err.unwrap_err()).contains("not a valid identifier"),
+            "id `{bad}` should be rejected"
+        );
+    }
+}
+
+#[test]
+fn zygosis_alignment_contradiction_errors() {
+    let a = witness_with(&[("1a", "alpha"), ("1b", "beta")]);
+    let b = witness_with(&[("1b", "beta"), ("1a", "alpha")]);
+    let err = zygosis(&[("a".into(), a), ("b".into(), b)], "steph");
+    assert!(format!("{}", err.unwrap_err()).contains("disagree on coordinate order"),);
+}
+
+#[test]
+fn zygosis_merges_disjoint_coordinates_with_proem() {
+    // a carries 1a,1c; b carries 1b,1c: the merge interleaves
+    // 1a,1b,1c. a's pre-milestone content forms its proem.
+    let mut a = witness_with(&[("1a", "A-alpha"), ("1c", "A-gamma")]);
+    a.blocks.insert(
+        0,
+        Block::Paragraph(vec![Inline::Text("Proem text.".into())]),
+    );
+    let b = witness_with(&[("1b", "B-beta"), ("1c", "B-gamma")]);
+    let out = zygosis(&[("a".into(), a), ("b".into(), b)], "steph").unwrap();
+    let s = serialize(&out);
+    // Proem opens the zygoma, inside the witness's diaphane.
+    assert!(s.contains("Proem text."), "{s}");
+    // Merged coordinate order and per-witness diaphane tags.
+    let pos = |needle: &str| {
+        s.find(needle)
+            .unwrap_or_else(|| panic!("missing {needle}: {s}"))
+    };
+    assert!(pos("steph:1a") < pos("steph:1b"), "{s}");
+    assert!(pos("steph:1b") < pos("steph:1c"), "{s}");
+    assert!(s.contains(".zyg-a"), "{s}");
+    assert!(s.contains(".zyg-b"), "{s}");
+    // Both witnesses contribute to the shared 1c segment.
+    assert!(pos("A-gamma") > pos("steph:1c"), "{s}");
+    assert!(pos("B-gamma") > pos("steph:1c"), "{s}");
+    // The zygoma is a valid document: it reparses byte-stably.
+    let reparsed = atrep::parser::parse_document(&s, std::path::Path::new("z.atd")).unwrap();
+    assert_eq!(serialize(&reparsed), s);
+}
+
+#[test]
+fn zygosis_hoists_containers_at_cuts() {
+    // A cut inside an enclosing container hoists: the container
+    // keeps its pre-cut content, the continuation flows at the
+    // cutting level, and the heading is not repeated.
+    let a = Document {
+        dialect_id: "litogramma".into(),
+        dialect_version: None,
+        blocks: vec![Block::Para {
+            symbol: "=".into(),
+            taxis: None,
+            lemma: vec![Inline::Text("Head".into())],
+            children: vec![
+                Block::Paragraph(vec![Inline::Text("Before the cut.".into())]),
+                Block::Paragraph(vec![milestone("1a"), Inline::Text("After the cut.".into())]),
+            ],
+            hypograph: Vec::new(),
+            bracket_matching: true,
+            ann: Annotations::default(),
+        }],
+    };
+    let b = witness_with(&[("1a", "Other.")]);
+    let out = zygosis(&[("a".into(), a), ("b".into(), b)], "steph").unwrap();
+    let s = serialize(&out);
+    // The container survives in the proem with its pre-cut
+    // content; the continuation is not wrapped (the heading
+    // appears exactly once).
+    assert_eq!(s.matches("Head").count(), 1, "{s}");
+    let pos = |needle: &str| {
+        s.find(needle)
+            .unwrap_or_else(|| panic!("missing {needle}: {s}"))
+    };
+    assert!(pos("Before the cut.") < pos("steph:1a"), "{s}");
+    assert!(pos("After the cut.") > pos("steph:1a"), "{s}");
 }

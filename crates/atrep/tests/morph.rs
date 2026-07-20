@@ -185,16 +185,27 @@ fn morph_errors() {
     let err = morph::resolve_morph(&tmp, "aaa", "bbb").unwrap_err();
     assert!(matches!(err.kind, ErrorKind::InvalidMorph(_)));
 
-    // Unmapped sim in the document: a hom that maps nothing for
-    // `+` while the document uses it.
+    // Totality: an explicit hom that accounts for nothing of
+    // `+` dies at resolution, with no documents present.
     std::fs::write(
         tmp.join("ccc.lektos"),
         "@@@!atrep\n\n@=== emphasis\n@/ grammata /@\n===@\n",
     )
     .unwrap();
     std::fs::write(tmp.join("aaa.ccc.hom"), "@@@!atrep-hom\n@=aaa=>ccc\n").unwrap();
-    let doc = kanon_of(&tmp, "@@@!aaa\n\nBoth @/kinds/@ and @+more+@.\n");
-    let m = morph::resolve_morph(&tmp, "aaa", "ccc").unwrap();
+    let err = morph::resolve_morph(&tmp, "aaa", "ccc").unwrap_err();
+    assert!(matches!(err.kind, ErrorKind::MorphIncomplete(s) if s.ends_with("+")));
+
+    // Unmapped sim in the document: derived embeddings are
+    // exempt from totality (partiality is their nature), so the
+    // document-level error arises there.
+    std::fs::write(
+        tmp.join("ddd.lektos"),
+        "@@@!atrep\n\n@@::aaa::[/]\n\n@=== extra\n@+ grammata +@\n===@\n",
+    )
+    .unwrap();
+    let doc = kanon_of(&tmp, "@@@!ddd\n\nBoth @/kinds/@ and @+more+@.\n");
+    let m = morph::resolve_morph(&tmp, "ddd", "aaa").unwrap();
     let err = morph::apply(&doc, &m).unwrap_err();
     assert!(matches!(err.kind, ErrorKind::MorphUnmapped(s) if s == "+"));
 }
@@ -418,10 +429,12 @@ fn coherent_diamond_composes_equal() {
         )
         .unwrap();
     }
+    // Coherence compares normal forms: `@=via` provenance is
+    // metadata, excluded from the equality surface.
     let via = |mid: &str| {
         let f = morph::resolve_morph(&tmp, "dd", mid).unwrap();
         let g = morph::resolve_morph(&tmp, mid, "gg").unwrap();
-        morph::serialize_hom(&morph::compose(&f, &g).unwrap())
+        morph::normal_form(&morph::compose(&f, &g).unwrap())
     };
     let upper = via("ee");
     let lower = via("ff");
@@ -462,4 +475,434 @@ fn round_trip_identity_is_decidable() {
     assert!(morph::compose(&there, &back).unwrap().is_identity());
     // big does not embed in small: strong dissolves on the way.
     assert!(!morph::compose(&back, &there).unwrap().is_identity());
+}
+
+/// Group rules (spec v0.11, eleventh slice): the flat-to-nested
+/// converse of the extracting dissolve. Triggers nest by rule
+/// order, and extracting back recovers the flat document.
+#[test]
+fn group_rules_nest_flat_headings() {
+    let tmp = tmp_dir("morph-group");
+    std::fs::write(
+        tmp.join("flat.lektos"),
+        "@@@!atrep\n\n\
+         @=== h1\n@# grammata #@\n===@\n\n\
+         @=== h2\n@## grammata ##@\n===@\n\n\
+         @=== emphasis\n@/ grammata /@\n===@\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("nested.lektos"),
+        "@@@!atrep\n\n\
+         @=== sect\n@= [lemma]\ngrammata\n=@\n===@\n\n\
+         @=== subsect\n@== [lemma]\ngrammata\n==@\n===@\n\n\
+         @=== emphasis\n@/ grammata /@\n===@\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("flat.nested.hom"),
+        "@@@!atrep-hom\n@=flat=>nested\n\n@># # =\n@># ## ==\n",
+    )
+    .unwrap();
+    let doc = kanon_of(
+        &tmp,
+        "@@@!flat\n\n\
+         @#Intro#@\n\n\
+         Opening @/text/@.\n\n\
+         @##Detail##@\n\n\
+         Deep.\n\n\
+         @#Close#@\n\n\
+         End.\n",
+    );
+    let m = morph::resolve_morph(&tmp, "flat", "nested").unwrap();
+    let out = morph::apply(&doc, &m).unwrap();
+    assert_eq!(
+        dendron::serialize(&out),
+        "@@@!nested\n\
+         \n\
+         @= Intro\n\
+         Opening @/text/@.\n\
+         \n\
+         @== Detail\n\
+         Deep.\n\
+         ==@\n\
+         =@\n\
+         \n\
+         @= Close\n\
+         End.\n\
+         =@\n"
+    );
+
+    // The converse extract recovers the flat document exactly.
+    std::fs::write(
+        tmp.join("nested.flat.hom"),
+        "@@@!atrep-hom\n@=nested=>flat\n\n@<# = #\n@<# == ##\n",
+    )
+    .unwrap();
+    let back = morph::resolve_morph(&tmp, "nested", "flat").unwrap();
+    let round = morph::apply(&out, &back).unwrap();
+    assert_eq!(dendron::serialize(&round), dendron::serialize(&doc));
+}
+
+/// The four group dispositions: wrap keeping the trigger content
+/// as lemma, wrap discarding it, region drop, relabel, and
+/// trigger deletion. Triggers arrive in descending rank so each
+/// region closes before the next opens.
+#[test]
+fn group_dispositions() {
+    let tmp = tmp_dir("morph-group-dispositions");
+    std::fs::write(
+        tmp.join("flat2.lektos"),
+        "@@@!atrep\n\n\
+         @=== h-keep\n@# grammata #@\n===@\n\n\
+         @=== h-anon\n@! grammata !@\n===@\n\n\
+         @=== h-dead\n@% grammata %@\n===@\n\n\
+         @=== h-level\n@~ grammata ~@\n===@\n\n\
+         @=== h-gone\n@^ grammata ^@\n===@\n\n\
+         @=== h-strip\n@_ grammata _@\n===@\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("tgt2.lektos"),
+        "@@@!atrep\n\n\
+         @=== sect\n@= [lemma]\ngrammata\n=@\n===@\n\n\
+         @=== mark\n@~~ grammata ~~@\n===@\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("flat2.tgt2.hom"),
+        "@@@!atrep-hom\n@=flat2=>tgt2\n\n\
+         @># # =\n\
+         @>< ! =\n\
+         @>- %\n\
+         @>: ~ ~~ .level\n\
+         @>: ^\n\
+         @># _\n",
+    )
+    .unwrap();
+    let doc = kanon_of(
+        &tmp,
+        "@@@!flat2\n\n\
+         @_Strip_@\n\n\
+         After-strip.\n\n\
+         @^Bye^@\n\n\
+         Kept-after-delete.\n\n\
+         @~Level~@\n\n\
+         After-relabel.\n\n\
+         @%Dead%@\n\n\
+         Dropped-inside.\n\n\
+         @!NoLemma!@\n\n\
+         In-anon-box.\n\n\
+         @#Titled#@\n\n\
+         In-titled-box.\n",
+    );
+    let m = morph::resolve_morph(&tmp, "flat2", "tgt2").unwrap();
+    let out = morph::apply(&doc, &m).unwrap();
+    assert_eq!(
+        dendron::serialize(&out),
+        "@@@!tgt2\n\
+         \n\
+         Strip\n\
+         \n\
+         After-strip.\n\
+         \n\
+         Kept-after-delete.\n\
+         \n\
+         @~~Level~~@.level\n\
+         \n\
+         After-relabel.\n\
+         \n\
+         @=\n\
+         In-anon-box.\n\
+         =@\n\
+         \n\
+         @= Titled\n\
+         In-titled-box.\n\
+         =@\n"
+    );
+}
+
+/// Group rules are statically validated: hom-only, one rule per
+/// trigger, endo triggers, para wrap targets.
+#[test]
+fn group_static_errors() {
+    let tmp = tmp_dir("morph-group-errors");
+    std::fs::write(
+        tmp.join("ga.lektos"),
+        "@@@!atrep\n\n\
+         @=== heading\n@# grammata #@\n===@\n\n\
+         @=== box\n@+ [lemma]\ngrammata\n+@\n===@\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("gb.lektos"),
+        "@@@!atrep\n\n\
+         @=== sect\n@= [lemma]\ngrammata\n=@\n===@\n\n\
+         @=== heading\n@# grammata #@\n===@\n\n\
+         @=== box\n@+ [lemma]\ngrammata\n+@\n===@\n",
+    )
+    .unwrap();
+    let write_hom = |rules: &str| {
+        std::fs::write(
+            tmp.join("ga.gb.hom"),
+            format!("@@@!atrep-hom\n@=ga=>gb\n\n{rules}"),
+        )
+        .unwrap();
+    };
+    // Group rule in an .iso.
+    std::fs::write(
+        tmp.join("ga.gb.iso"),
+        "@@@!atrep-iso\n@=ga<=>gb\n\n@># # =\n",
+    )
+    .unwrap();
+    let err = morph::resolve_morph(&tmp, "ga", "gb").unwrap_err();
+    assert!(matches!(err.kind, ErrorKind::InvalidMorph(_)));
+    std::fs::remove_file(tmp.join("ga.gb.iso")).unwrap();
+
+    // Duplicate trigger.
+    write_hom("@># # =\n@>- #\n");
+    let err = morph::resolve_morph(&tmp, "ga", "gb").unwrap_err();
+    assert!(matches!(err.kind, ErrorKind::InvalidMorph(_)));
+
+    // Trigger must be an endo-simmere.
+    write_hom("@># + =\n@-- #\n");
+    let err = morph::resolve_morph(&tmp, "ga", "gb").unwrap_err();
+    assert!(matches!(err.kind, ErrorKind::InvalidMorph(_)));
+
+    // Wrap target must be a para-simmere.
+    write_hom("@># # #\n@-- +\n");
+    let err = morph::resolve_morph(&tmp, "ga", "gb").unwrap_err();
+    assert!(matches!(err.kind, ErrorKind::InvalidMorph(_)));
+}
+
+/// Group rules compose: the wrapper chases the second factor's
+/// table; `@=via` records the hops; and the fusion bound rejects
+/// a non-rename first factor before a grouping second, with
+/// staged application covering the route.
+#[test]
+fn group_composition_and_fusion_bound() {
+    let tmp = tmp_dir("morph-group-compose");
+    std::fs::write(
+        tmp.join("flat.lektos"),
+        "@@@!atrep\n\n@=== h1\n@# grammata #@\n===@\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("nested.lektos"),
+        "@@@!atrep\n\n@=== sect\n@= [lemma]\ngrammata\n=@\n===@\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("other.lektos"),
+        "@@@!atrep\n\n@=== chapter\n@~ [lemma]\ngrammata\n~@\n===@\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("flat.nested.hom"),
+        "@@@!atrep-hom\n@=flat=>nested\n\n@># # =\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("nested.other.hom"),
+        "@@@!atrep-hom\n@=nested=>other\n\n@:: = ~\n",
+    )
+    .unwrap();
+    let doc = kanon_of(&tmp, "@@@!flat\n\n@#One#@\n\nAlpha.\n\n@#Two#@\n\nBeta.\n");
+    let f = morph::resolve_morph(&tmp, "flat", "nested").unwrap();
+    let g = morph::resolve_morph(&tmp, "nested", "other").unwrap();
+
+    // Group-then-rename fuses: the wrapper chases.
+    let fg = morph::compose(&f, &g).unwrap();
+    let hom = morph::serialize_hom(&fg);
+    assert!(hom.contains("@># # ~\n"), "normal form was:\n{hom}");
+    assert!(hom.contains("@=via flat=>nested\n"));
+    assert!(hom.contains("@=via nested=>other\n"));
+    let fused = morph::apply(&doc, &fg).unwrap();
+    let staged = morph::apply_route_staged(&doc, &[f.clone(), g.clone()]).unwrap();
+    assert_eq!(dendron::serialize(&fused), dendron::serialize(&staged));
+
+    // The serialized composite round-trips: the via trail parses
+    // and the normal form (via excluded) is stable.
+    std::fs::write(tmp.join("flat.other.hom"), &hom).unwrap();
+    let reloaded = morph::resolve_morph(&tmp, "flat", "other").unwrap();
+    assert_eq!(morph::normal_form(&reloaded), morph::normal_form(&fg));
+    assert_eq!(
+        dendron::serialize(&morph::apply(&doc, &reloaded).unwrap()),
+        dendron::serialize(&fused)
+    );
+    std::fs::remove_file(tmp.join("flat.other.hom")).unwrap();
+
+    // The fusion bound: a dissolving first factor before a
+    // grouping second has no normal form; staged application is
+    // the semantics and apply_route falls back to it.
+    std::fs::write(
+        tmp.join("pre.lektos"),
+        "@@@!atrep\n\n\
+         @=== box\n@+ [lemma]\ngrammata\n+@\n===@\n\n\
+         @=== h1\n@# grammata #@\n===@\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("pre.flat.hom"),
+        "@@@!atrep-hom\n@=pre=>flat\n\n@<< +\n",
+    )
+    .unwrap();
+    let pre = morph::resolve_morph(&tmp, "pre", "flat").unwrap();
+    let err = morph::compose(&pre, &f).unwrap_err();
+    assert!(matches!(err.kind, ErrorKind::InvalidMorph(_)));
+
+    let boxed = kanon_of(
+        &tmp,
+        "@@@!pre\n\n\
+         @+ Box\n\
+         @#Inside#@\n\n\
+         Boxed.\n\
+         +@\n\n\
+         @#Top#@\n\n\
+         Tail.\n",
+    );
+    let route = [pre, f.clone()];
+    let via_route = morph::apply_route(&boxed, &route).unwrap();
+    let staged = morph::apply_route_staged(&boxed, &route).unwrap();
+    assert_eq!(dendron::serialize(&via_route), dendron::serialize(&staged));
+}
+
+/// The v0.11.1 deplain disposition closes the two previously
+/// inexpressible corners: group-then-plain-dissolve and
+/// relabel-then-unwrap both fuse to the operand-less `@>#`.
+#[test]
+fn deplain_closes_the_composition_corners() {
+    let tmp = tmp_dir("morph-deplain");
+    std::fs::write(
+        tmp.join("flat.lektos"),
+        "@@@!atrep\n\n@=== h1\n@# grammata #@\n===@\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("nested.lektos"),
+        "@@@!atrep\n\n@=== sect\n@= [lemma]\ngrammata\n=@\n===@\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("bare.lektos"),
+        "@@@!atrep\n\n@=== emphasis\n@/ grammata /@\n===@\n",
+    )
+    .unwrap();
+    let doc = kanon_of(&tmp, "@@@!flat\n\n@#One#@\n\nAlpha.\n\n@#Two#@\n\nBeta.\n");
+
+    // Group-then-plain-dissolve: the wrapper dissolves with the
+    // trigger content as a plain paragraph.
+    std::fs::write(
+        tmp.join("flat.nested.hom"),
+        "@@@!atrep-hom\n@=flat=>nested\n\n@># # =\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("nested.bare.hom"),
+        "@@@!atrep-hom\n@=nested=>bare\n\n@<# =\n",
+    )
+    .unwrap();
+    let f = morph::resolve_morph(&tmp, "flat", "nested").unwrap();
+    let g = morph::resolve_morph(&tmp, "nested", "bare").unwrap();
+    let fg = morph::compose(&f, &g).unwrap();
+    assert!(
+        morph::serialize_hom(&fg).contains("@># #\n"),
+        "normal form was:\n{}",
+        morph::serialize_hom(&fg)
+    );
+    let fused = morph::apply(&doc, &fg).unwrap();
+    let staged = morph::apply_route_staged(&doc, &[f.clone(), g]).unwrap();
+    assert_eq!(dendron::serialize(&fused), dendron::serialize(&staged));
+    assert_eq!(
+        dendron::serialize(&fused),
+        "@@@!bare\n\nOne\n\nAlpha.\n\nTwo\n\nBeta.\n"
+    );
+
+    // Relabel-then-unwrap: the relabeled heading strips to its
+    // bare content.
+    std::fs::write(
+        tmp.join("mid.lektos"),
+        "@@@!atrep\n\n@=== head\n@! grammata !@\n===@\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("flat.mid.hom"),
+        "@@@!atrep-hom\n@=flat=>mid\n\n@>: # !\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("mid.bare.hom"),
+        "@@@!atrep-hom\n@=mid=>bare\n\n@<< !\n",
+    )
+    .unwrap();
+    let f2 = morph::resolve_morph(&tmp, "flat", "mid").unwrap();
+    let g2 = morph::resolve_morph(&tmp, "mid", "bare").unwrap();
+    let fg2 = morph::compose(&f2, &g2).unwrap();
+    assert!(morph::serialize_hom(&fg2).contains("@># #\n"));
+    let fused2 = morph::apply(&doc, &fg2).unwrap();
+    let staged2 = morph::apply_route_staged(&doc, &[f2, g2]).unwrap();
+    assert_eq!(dendron::serialize(&fused2), dendron::serialize(&staged2));
+    assert_eq!(dendron::serialize(&fused2), dendron::serialize(&fused));
+
+    // The deplain round-trips through its serialized form.
+    std::fs::write(tmp.join("flat.bare.hom"), morph::serialize_hom(&fg)).unwrap();
+    let reloaded = morph::resolve_morph(&tmp, "flat", "bare").unwrap();
+    assert_eq!(
+        dendron::serialize(&morph::apply(&doc, &reloaded).unwrap()),
+        dendron::serialize(&fused)
+    );
+}
+
+/// The shared-rank exclusion (spec v0.11.1): a non-injective
+/// rename into a grouping factor pulls back peer triggers one
+/// rank cannot serialize; compose refuses and the route stages.
+#[test]
+fn shared_rank_pullback_is_refused() {
+    let tmp = tmp_dir("morph-shared-rank");
+    std::fs::write(
+        tmp.join("twoheads.lektos"),
+        "@@@!atrep\n\n\
+         @=== h1\n@# grammata #@\n===@\n\n\
+         @=== h1-alt\n@## grammata ##@\n===@\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("flat.lektos"),
+        "@@@!atrep\n\n@=== h1\n@# grammata #@\n===@\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("nested.lektos"),
+        "@@@!atrep\n\n@=== sect\n@= [lemma]\ngrammata\n=@\n===@\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("twoheads.flat.hom"),
+        "@@@!atrep-hom\n@=twoheads=>flat\n\n@:: ## #\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("flat.nested.hom"),
+        "@@@!atrep-hom\n@=flat=>nested\n\n@># # =\n",
+    )
+    .unwrap();
+    let f = morph::resolve_morph(&tmp, "twoheads", "flat").unwrap();
+    let g = morph::resolve_morph(&tmp, "flat", "nested").unwrap();
+    let err = morph::compose(&f, &g).unwrap_err();
+    assert!(matches!(err.kind, ErrorKind::InvalidMorph(_)));
+
+    // Staged application treats the renamed heads as peers, and
+    // apply_route falls back to it.
+    let doc = kanon_of(
+        &tmp,
+        "@@@!twoheads\n\n@#A#@\n\nAlpha.\n\n@##B##@\n\nBeta.\n",
+    );
+    let route = [f, g];
+    let out = morph::apply_route(&doc, &route).unwrap();
+    let staged = morph::apply_route_staged(&doc, &route).unwrap();
+    assert_eq!(dendron::serialize(&out), dendron::serialize(&staged));
+    assert_eq!(
+        dendron::serialize(&out),
+        "@@@!nested\n\n@= A\nAlpha.\n=@\n\n@= B\nBeta.\n=@\n"
+    );
 }

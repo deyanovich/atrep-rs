@@ -4,15 +4,17 @@ Pilot Rust implementation of the **Atrep** core: parser, Dendron
 (AST), kanonizo (canonicalization), litosis (content hashing),
 metamorphoses (exomorphosis engine; Markdown, HTML, and
 reStructuredText endomorphoses), and morphisms (.hom/.iso with
-transitive route resolution, spec v0.11 draft).
+group rules and transitive route resolution, spec v0.11).
 
 ## Spec reference
 
 This implementation targets the **Atreptos Platform Specification
-Draft v0.10.1**, as published in the `atrep/spec` repository:
+v0.12.1** (the Dialektoi Network and Witnesses & Coordinates
+freezes plus their addenda), as published in the `atrep/spec`
+repository:
 
-- tag: `v0.10.1`
-- commit: `fbbd100`
+- tag: `v0.12.1`
+- commit: `3c72861`
 
 Where behavior is underspecified at that commit, the choices made
 here are documented under "Spec gaps" below, as input for the next
@@ -184,7 +186,7 @@ Implemented:
   definition files. The
   publisher-register exos (Loeb, OCT, Penguin, GOST, …) remain
   in the litogramma repo.
-- Morphisms (spec v0.11 draft, optional conformance class):
+- Morphisms (spec v0.11, optional conformance class):
   `.hom` (directional, possibly lossy) and `.iso` (rename-only,
   bijective, one file serving both directions) in the
   atrep-hom/atrep-iso meta-dialektoi — rename with form-
@@ -214,16 +216,41 @@ Implemented:
   (`at-djot.at-markdown.iso`), so the pair converts losslessly
   both ways, round-trips to the identity morphism, and
   collapses into one equivalence class.
-  Morphisms **compose symbolically**: the rule algebra is three
-  actions (rename, drop, dissolve — with the lemma discarded,
-  emitted plain, or extracted into a heading endo) and is closed
-  under composition, so a route fuses into a single composite
-  morphism applied in one traversal (`apply_route` does this by
-  default; staged application is the reference semantics it must
-  match). `atrep compose a b [c ...]` writes the composite as an
-  ordinary `.hom` file in normal form — rules sorted, implicit
-  identities elided — making morphism equality a byte
-  comparison.
+  The algebra's one sequence-level action is the **group
+  family** (`@>#` / `@><` / `@>-` / `@>:`), the flat-to-nested
+  converse of extract: a solo-heading paragraph triggers a
+  region spanning the following siblings, wrapped into a
+  para-simmere with the trigger content as lemma (or discarded,
+  or the region dropped, or the trigger relabeled/deleted, or —
+  operand-less `@>#`, the v0.11.1 deplain — stripped to a plain
+  paragraph with the region untouched);
+  rules nest by file order, the trigger's onym and genoses
+  transfer to the wrapper, and deixes follow. The
+  group-then-extract round trip recovers the flat document
+  exactly. Morphisms are **statically validated at
+  resolution**, with no documents present: every rule against
+  both dialektoi, plus *totality* — every source sim accounted
+  for by a rule, an implicit identity, or a group trigger, with
+  `@--` marking deliberate drops (derived embeddings stay
+  partial by nature).
+  Morphisms **compose symbolically**: the table algebra is
+  three actions (rename, drop, dissolve — with the lemma
+  discarded, emitted plain, or extracted into a heading endo)
+  and is closed under composition, group dispositions chasing
+  the second factor's table, so a route fuses into a single
+  composite morphism applied in one traversal (`apply_route`
+  does this by default; staged application is the reference
+  semantics it must match). Grouping bounds fusion: a grouping
+  second factor fuses only across a rename-only first factor,
+  and never across a non-injective rename onto a trigger (peer
+  triggers would share a rank the serialized form cannot
+  express; spec v0.11.1) — everywhere else `apply_route` falls
+  back to staged application automatically. `atrep compose a b [c ...]` writes
+  the composite as an ordinary `.hom` file in normal form —
+  group rules in rank order, table rules sorted, implicit
+  identities elided, with `@=via` declarations recording the
+  hops (provenance, excluded from the `normal_form` equality
+  surface) — making morphism equality a byte comparison.
 - Endomorphoses (pilot, engine-side): **atramento**, the
   Markdown-like authoring surface for litogramma (`.atr`,
   text-to-text: a litogramma superset whose sugar — typewriter

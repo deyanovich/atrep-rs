@@ -122,6 +122,58 @@ impl Action {
     }
 }
 
+/// A group rule: the algebra's one sequence-level action, the
+/// flat-to-nested converse of the extracting dissolve (hom-only).
+/// A trigger — a paragraph holding exactly one endo-simmere of
+/// the trigger symbol — opens a region spanning the following
+/// siblings (spec: "Group Rules").
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GroupRule {
+    /// Source endo-sim symbol whose solo occurrences trigger.
+    trigger: String,
+    /// Nesting rank: a trigger closes every open region of equal
+    /// or greater rank. Authored files rank by file order, and
+    /// composition preserves distinct ranks — a pullback that
+    /// would produce peer triggers sharing a rank is refused
+    /// (no normal form; spec v0.11.1), so ranks are unique
+    /// within a morphism and serialization is faithful.
+    rank: usize,
+    disposition: GroupDisposition,
+}
+
+/// Disposition of the wrapper and the trigger's content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GroupDisposition {
+    /// `@># <endo> <sym> [.genos...]` (`lemma: true`) — wrap the
+    /// region, trigger content becomes the lemma; or
+    /// `@>< <endo> <sym> [.genos...]` (`lemma: false`) — wrap
+    /// with the trigger content discarded (recorded loss). The
+    /// trigger's onym and genoses transfer to the wrapper either
+    /// way.
+    Wrap {
+        symbol: String,
+        genoses: Vec<String>,
+        lemma: bool,
+    },
+    /// `@># <endo>` (operand-less) — deplain: the trigger
+    /// re-emits as a plain paragraph of its content, region
+    /// untouched. Onym and genoses are lost with the markup
+    /// (recorded loss); an empty trigger emits nothing.
+    Deplain,
+    /// `@>- <endo>` — the trigger and its entire region drop.
+    DropRegion,
+    /// `@>: <endo> <endo'> [.genos...]` — the degenerate wrap:
+    /// no wrapper; the trigger re-emits as a solo endo of the
+    /// target symbol (solo occurrences only, unlike a rename).
+    Relabel {
+        symbol: String,
+        genoses: Vec<String>,
+    },
+    /// `@>: <endo>` — the trigger paragraph is deleted and the
+    /// region's siblings keep their places.
+    DeleteTrigger,
+}
+
 /// A resolved morphism: the effective symbol map (explicit rules
 /// plus implicit identities) from source to target.
 #[derive(Debug, Clone)]
@@ -129,6 +181,12 @@ pub struct Morph {
     pub source: String,
     pub target: String,
     map: HashMap<String, Action>,
+    /// Group rules, ordered by rank (the grouping stage of the
+    /// normal form).
+    groups: Vec<GroupRule>,
+    /// Provenance hops (`@=via a=>b`) of a serialized composite,
+    /// in application order; empty for authored morphisms.
+    via: Vec<String>,
     source_dial: Dialektos,
     target_dial: Dialektos,
 }
@@ -142,6 +200,7 @@ impl Morph {
     /// identity.
     pub fn is_identity(&self) -> bool {
         self.source == self.target
+            && self.groups.is_empty()
             && self.source_dial.sims.keys().all(|symbol| {
                 matches!(
                     self.map.get(symbol),
@@ -149,6 +208,23 @@ impl Morph {
                         if to == symbol && genoses.is_empty()
                 )
             })
+    }
+
+    /// A pure rename table: no group rules, and every action a
+    /// rename (implicit identities and component-dropping renames
+    /// included). The only first factor a grouping second factor
+    /// fuses across (spec: "Composition").
+    fn is_rename_only(&self) -> bool {
+        self.groups.is_empty()
+            && self
+                .map
+                .values()
+                .all(|a| matches!(a, Action::Rename { .. }))
+    }
+
+    /// The group rule triggered by `symbol`, if any.
+    fn group_for(&self, symbol: &str) -> Option<&GroupRule> {
+        self.groups.iter().find(|g| g.trigger == symbol)
     }
 }
 
@@ -300,6 +376,20 @@ pub fn compose(f: &Morph, g: &Morph) -> Result<Morph> {
             f.source, f.target, g.source, g.target
         ))));
     }
+    // The fusion bound: grouping parses sibling sequences, so it
+    // fuses only across a factor that leaves them undisturbed.
+    // Anything but a pure rename table in `f` can move, create,
+    // or delete `g`'s triggers; the composite has no normal form
+    // and staged application is the semantics (spec:
+    // "Composition").
+    if !g.groups.is_empty() && !f.is_rename_only() {
+        return Err(Error::new(ErrorKind::InvalidMorph(format!(
+            "cannot fuse {}=>{} with {}=>{}: the second factor \
+             groups and the first is not a pure rename table; \
+             apply the route staged",
+            f.source, f.target, g.source, g.target
+        ))));
+    }
     let mut map: HashMap<String, Action> = HashMap::new();
     for (symbol, action) in &f.map {
         let composite = match action {
@@ -357,32 +447,237 @@ pub fn compose(f: &Morph, g: &Morph) -> Result<Morph> {
             map.insert(symbol.clone(), composite);
         }
     }
+
+    // Group rules: at most one side carries them (the fusion
+    // bound above rejects the mixed case). `f`'s chase their
+    // wrapper through `g`'s table, demoting the disposition down
+    // the family; `g`'s pull back through `f`'s renames.
+    let mut groups: Vec<GroupRule> = Vec::new();
+    let genos_concat = |a: &[String], b: &[String]| -> Vec<String> {
+        let mut out = a.to_vec();
+        out.extend(b.iter().cloned());
+        out
+    };
+    let lemma_supported = |symbol: &String| -> bool {
+        !matches!(
+            g.target_dial.sims.get(symbol).map(|d| &d.form),
+            Some(SimForm::Para {
+                lemma: Optionality::Unsupported,
+                ..
+            })
+        )
+    };
+    for rule in &f.groups {
+        let disposition = match &rule.disposition {
+            GroupDisposition::Wrap {
+                symbol,
+                genoses,
+                lemma,
+            } => match g.map.get(symbol) {
+                Some(Action::Rename { to, genoses: more }) => GroupDisposition::Wrap {
+                    symbol: to.clone(),
+                    genoses: genos_concat(genoses, more),
+                    // A component-dropping rename that loses the
+                    // lemma demotes the wrap to lemma-discarding.
+                    lemma: *lemma && lemma_supported(to),
+                },
+                Some(Action::Drop) => GroupDisposition::DropRegion,
+                Some(Action::Dissolve(Lemma::Discard)) => GroupDisposition::DeleteTrigger,
+                Some(Action::Dissolve(Lemma::Heading {
+                    symbol: heading,
+                    genoses: more,
+                })) => {
+                    if *lemma {
+                        GroupDisposition::Relabel {
+                            symbol: heading.clone(),
+                            genoses: genos_concat(genoses, more),
+                        }
+                    } else {
+                        // An absent lemma emits nothing.
+                        GroupDisposition::DeleteTrigger
+                    }
+                }
+                Some(Action::Dissolve(Lemma::Plain)) => {
+                    if *lemma {
+                        // The wrapper dissolves with the trigger
+                        // content as a plain paragraph: deplain.
+                        GroupDisposition::Deplain
+                    } else {
+                        GroupDisposition::DeleteTrigger
+                    }
+                }
+                None => {
+                    return Err(Error::new(ErrorKind::InvalidMorph(format!(
+                        "cannot compose: group wrapper `{symbol}` has no mapping in {}=>{}",
+                        g.source, g.target
+                    ))));
+                }
+            },
+            // Deplain emits core forms only; g passes them
+            // through.
+            GroupDisposition::Deplain => GroupDisposition::Deplain,
+            GroupDisposition::DropRegion => GroupDisposition::DropRegion,
+            GroupDisposition::Relabel { symbol, genoses } => match g.map.get(symbol) {
+                Some(Action::Rename { to, genoses: more }) => GroupDisposition::Relabel {
+                    symbol: to.clone(),
+                    genoses: genos_concat(genoses, more),
+                },
+                // Dropping the solo endo empties its paragraph,
+                // which vanishes with it.
+                Some(Action::Drop) => GroupDisposition::DeleteTrigger,
+                // Unwrapping it strips the markup and leaves the
+                // content as a plain paragraph: deplain.
+                Some(Action::Dissolve(Lemma::Discard)) => GroupDisposition::Deplain,
+                Some(Action::Dissolve(_)) => {
+                    unreachable!("a dissolve of an endo is validated to discard")
+                }
+                None => {
+                    return Err(Error::new(ErrorKind::InvalidMorph(format!(
+                        "cannot compose: relabel target `{symbol}` has no mapping in {}=>{}",
+                        g.source, g.target
+                    ))));
+                }
+            },
+            GroupDisposition::DeleteTrigger => GroupDisposition::DeleteTrigger,
+        };
+        groups.push(GroupRule {
+            trigger: rule.trigger.clone(),
+            rank: rule.rank,
+            disposition,
+        });
+    }
+    for rule in &g.groups {
+        let mut pulled = false;
+        for (symbol, action) in &f.map {
+            let Action::Rename { to, genoses: gen_f } = action else {
+                unreachable!("bounded above to a pure rename table");
+            };
+            if to != &rule.trigger {
+                continue;
+            }
+            // A non-injective rename onto a trigger pulls back
+            // peer triggers sharing one rank — a shape the
+            // serialized normal form cannot express. No normal
+            // form; staged application covers the route.
+            if pulled {
+                return Err(Error::new(ErrorKind::InvalidMorph(format!(
+                    "cannot fuse {}=>{} with {}=>{}: two source sims rename \
+                     onto the group trigger `{}`; apply the route staged",
+                    f.source, f.target, g.source, g.target, rule.trigger
+                ))));
+            }
+            pulled = true;
+            let disposition = match &rule.disposition {
+                GroupDisposition::Wrap {
+                    symbol: wrap,
+                    genoses,
+                    lemma,
+                } => GroupDisposition::Wrap {
+                    symbol: wrap.clone(),
+                    genoses: genos_concat(gen_f, genoses),
+                    lemma: *lemma,
+                },
+                GroupDisposition::Relabel {
+                    symbol: relabel,
+                    genoses,
+                } => GroupDisposition::Relabel {
+                    symbol: relabel.clone(),
+                    genoses: genos_concat(gen_f, genoses),
+                },
+                other => other.clone(),
+            };
+            groups.push(GroupRule {
+                trigger: symbol.clone(),
+                rank: rule.rank,
+                disposition,
+            });
+        }
+    }
+    groups.sort_by(|a, b| a.rank.cmp(&b.rank).then_with(|| a.trigger.cmp(&b.trigger)));
+
+    let hops = |m: &Morph| -> Vec<String> {
+        if m.via.is_empty() {
+            vec![format!("{}=>{}", m.source, m.target)]
+        } else {
+            m.via.clone()
+        }
+    };
+    let mut via = hops(f);
+    via.extend(hops(g));
+
     Ok(Morph {
         source: f.source.clone(),
         target: g.target.clone(),
         map,
+        groups,
+        via,
         source_dial: f.source_dial.clone(),
         target_dial: g.target_dial.clone(),
     })
 }
 
-/// Serialize a morphism as a `.hom` file in normal form: rules
-/// sorted by source symbol, implicit identities omitted. Two
-/// morphisms are equal iff their normal forms are byte-equal.
+/// Serialize a morphism as a `.hom` file in normal form: group
+/// rules in rank order (order is nesting semantics), then table
+/// rules sorted by source symbol, implicit identities omitted.
+/// Two morphisms are equal iff their normal forms are byte-equal;
+/// `@=via` provenance lines are metadata, excluded from semantic
+/// comparison.
 pub fn serialize_hom(m: &Morph) -> String {
+    serialize_hom_inner(m, true)
+}
+
+/// The semantic normal form: [`serialize_hom`] without the
+/// `@=via` provenance lines. This is the equality and coherence
+/// surface — two morphisms are equal iff their normal forms are
+/// byte-equal, regardless of how they were derived.
+pub fn normal_form(m: &Morph) -> String {
+    serialize_hom_inner(m, false)
+}
+
+fn serialize_hom_inner(m: &Morph, with_via: bool) -> String {
     let mut implicit: HashMap<String, Action> = HashMap::new();
     add_implicit_identities(&mut implicit, &m.source_dial, &m.target_dial, true);
     let mut out = format!("@@@!atrep-hom\n@={}=>{}\n", m.source, m.target);
+    if with_via {
+        for hop in &m.via {
+            out.push_str(&format!("@=via {hop}\n"));
+        }
+    }
+    let genos_suffix =
+        |genoses: &[String]| genoses.iter().map(|g| format!(" .{g}")).collect::<String>();
+    let mut rules = String::new();
+    for rule in &m.groups {
+        let trigger = &rule.trigger;
+        match &rule.disposition {
+            GroupDisposition::Wrap {
+                symbol,
+                genoses,
+                lemma,
+            } => {
+                let spelling = if *lemma { "@>#" } else { "@><" };
+                rules.push_str(&format!(
+                    "{spelling} {trigger} {symbol}{}\n",
+                    genos_suffix(genoses)
+                ));
+            }
+            GroupDisposition::Deplain => rules.push_str(&format!("@># {trigger}\n")),
+            GroupDisposition::DropRegion => rules.push_str(&format!("@>- {trigger}\n")),
+            GroupDisposition::Relabel { symbol, genoses } => {
+                rules.push_str(&format!(
+                    "@>: {trigger} {symbol}{}\n",
+                    genos_suffix(genoses)
+                ));
+            }
+            GroupDisposition::DeleteTrigger => rules.push_str(&format!("@>: {trigger}\n")),
+        }
+    }
     let mut symbols: Vec<&String> = m.map.keys().collect();
     symbols.sort();
-    let mut rules = String::new();
     for symbol in symbols {
         let action = &m.map[symbol];
         if implicit.get(symbol) == Some(action) {
             continue;
         }
-        let genos_suffix =
-            |genoses: &[String]| genoses.iter().map(|g| format!(" .{g}")).collect::<String>();
         match action {
             Action::Rename { to, genoses } => {
                 rules.push_str(&format!("@:: {symbol} {to}{}\n", genos_suffix(genoses)));
@@ -551,6 +846,8 @@ fn derive_embedding(src: &Dialektos, tgt: &Dialektos) -> Option<Morph> {
         source: src.id.clone(),
         target: tgt.id.clone(),
         map,
+        groups: Vec::new(),
+        via: Vec::new(),
         source_dial: src.clone(),
         target_dial: tgt.clone(),
     })
@@ -602,11 +899,23 @@ fn parse_morph_source(
 
     let mut declared = false;
     let mut explicit: Vec<(String, Action)> = Vec::new();
+    let mut group_lines: Vec<(String, GroupDisposition)> = Vec::new();
+    let mut via: Vec<String> = Vec::new();
 
     while i < lines.len() {
         let line = lines[i].trim();
         i += 1;
         if line.is_empty() || line.starts_with("@@/") {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("@=via ") {
+            let hop = rest.trim();
+            if !hop.contains("=>") {
+                return Err(invalid(format!(
+                    "malformed provenance hop `{line}` (expected `a=>b`)"
+                )));
+            }
+            via.push(hop.to_string());
             continue;
         }
         if let Some(rest) = line.strip_prefix("@=") {
@@ -700,6 +1009,69 @@ fn parse_morph_source(
             explicit.push((rest.trim().to_string(), Action::Drop));
             continue;
         }
+        if let Some((spelling, rest)) = ["@>#", "@><", "@>-", "@>:"]
+            .iter()
+            .find_map(|p| line.strip_prefix(p).map(|rest| (*p, rest)))
+        {
+            if iso {
+                return Err(invalid("group rules are not allowed in an .iso".into()));
+            }
+            let mut parts = rest.split_whitespace();
+            let Some(trigger) = parts.next() else {
+                return Err(invalid(format!("malformed group rule `{line}`")));
+            };
+            let operand = parts.next();
+            let mut genoses: Vec<String> = Vec::new();
+            for extra in parts {
+                let Some(genos) = extra.strip_prefix('.') else {
+                    return Err(invalid(format!("malformed group rule `{line}`")));
+                };
+                if !crate::sigil::is_valid_genos(genos) {
+                    return Err(invalid(format!("invalid genos `{extra}` in `{line}`")));
+                }
+                genoses.push(genos.to_string());
+            }
+            let disposition = match (spelling, operand) {
+                ("@>#" | "@><", Some(symbol)) => GroupDisposition::Wrap {
+                    symbol: symbol.to_string(),
+                    genoses,
+                    lemma: spelling == "@>#",
+                },
+                // Operand-less @># is deplain: "becomes a plain
+                // paragraph" in both families (compare @<#).
+                ("@>#", None) if genoses.is_empty() => GroupDisposition::Deplain,
+                ("@>#", None) => {
+                    return Err(invalid(format!(
+                        "deplain `{line}` takes no genoses (a plain \
+                         paragraph carries no annotations)"
+                    )));
+                }
+                ("@><", None) => {
+                    return Err(invalid(format!(
+                        "group rule `{line}` needs a wrapper sim operand"
+                    )));
+                }
+                ("@>-", None) if genoses.is_empty() => GroupDisposition::DropRegion,
+                ("@>-", _) => {
+                    return Err(invalid(format!(
+                        "region drop `{line}` takes only a trigger operand"
+                    )));
+                }
+                ("@>:", Some(symbol)) => GroupDisposition::Relabel {
+                    symbol: symbol.to_string(),
+                    genoses,
+                },
+                ("@>:", None) if genoses.is_empty() => GroupDisposition::DeleteTrigger,
+                ("@>:", None) => {
+                    return Err(invalid(format!(
+                        "trigger deletion `{line}` takes no genoses"
+                    )));
+                }
+                _ => unreachable!("spelling set is fixed"),
+            };
+            group_lines.push((trigger.to_string(), disposition));
+            continue;
+        }
         return Err(invalid(format!("unexpected line: `{line}`")));
     }
     if !declared {
@@ -772,6 +1144,97 @@ fn parse_morph_source(
     }
     add_implicit_identities(&mut map, src_dial, tgt_dial, !iso);
 
+    // Validate group rules and assign ranks (file order is the
+    // nesting order, outermost first).
+    let mut groups: Vec<GroupRule> = Vec::new();
+    for (rank, (trigger, disposition)) in group_lines.into_iter().enumerate() {
+        match src_dial.sims.get(&trigger).map(|d| &d.form) {
+            Some(SimForm::Endo) => {}
+            Some(_) => {
+                return Err(invalid(format!(
+                    "group trigger `{trigger}` is not an endo-simmere of `{}`",
+                    src_dial.id
+                )));
+            }
+            None => {
+                return Err(invalid(format!(
+                    "`{trigger}` is not defined in dialektos `{}`",
+                    src_dial.id
+                )));
+            }
+        }
+        if groups.iter().any(|g| g.trigger == trigger) {
+            return Err(invalid(format!("duplicate group rule for `{trigger}`")));
+        }
+        match &disposition {
+            GroupDisposition::Wrap {
+                symbol,
+                lemma: use_lemma,
+                ..
+            } => match tgt_dial.sims.get(symbol).map(|d| &d.form) {
+                Some(SimForm::Para {
+                    stichoi: false,
+                    taxis,
+                    lemma,
+                    hypograph,
+                    ..
+                }) => {
+                    if *hypograph == Optionality::Required {
+                        return Err(invalid(format!(
+                            "group target `{symbol}` requires a hypograph grouping cannot supply"
+                        )));
+                    }
+                    if *taxis == Optionality::Required {
+                        return Err(invalid(format!(
+                            "group target `{symbol}` requires a taxis grouping cannot supply"
+                        )));
+                    }
+                    if *use_lemma && *lemma == Optionality::Unsupported {
+                        return Err(invalid(format!(
+                            "group target `{symbol}` cannot carry a lemma"
+                        )));
+                    }
+                    if !*use_lemma && *lemma == Optionality::Required {
+                        return Err(invalid(format!(
+                            "group target `{symbol}` requires a lemma the rule discards"
+                        )));
+                    }
+                }
+                Some(_) => {
+                    return Err(invalid(format!(
+                        "group target `{symbol}` is not an ordinary para-simmere of `{}`",
+                        tgt_dial.id
+                    )));
+                }
+                None => {
+                    return Err(invalid(format!(
+                        "`{symbol}` is not defined in dialektos `{}`",
+                        tgt_dial.id
+                    )));
+                }
+            },
+            GroupDisposition::Relabel { symbol, .. } => {
+                match tgt_dial.sims.get(symbol).map(|d| &d.form) {
+                    Some(SimForm::Endo) => {}
+                    _ => {
+                        return Err(invalid(format!(
+                            "relabel target `{symbol}` is not an endo-simmere of `{}`",
+                            tgt_dial.id
+                        )));
+                    }
+                }
+            }
+            GroupDisposition::Deplain
+            | GroupDisposition::DropRegion
+            | GroupDisposition::DeleteTrigger => {}
+        }
+        groups.push(GroupRule {
+            trigger,
+            rank,
+            disposition,
+        });
+    }
+
     if iso {
         // Bijectivity over the effective map.
         let mut seen: HashMap<&String, &String> = HashMap::new();
@@ -787,10 +1250,31 @@ fn parse_morph_source(
         }
     }
 
+    // Totality: an explicit morphism accounts for every sim of
+    // its source dialektos — table rule, implicit self-map, or
+    // group trigger; `@--` marks deliberate drops. Checked here,
+    // with no documents present (spec: "Static Validation").
+    let mut missing: Vec<String> = src_dial
+        .sims
+        .keys()
+        .filter(|s| !map.contains_key(*s) && !groups.iter().any(|g| &g.trigger == *s))
+        .cloned()
+        .collect();
+    if !missing.is_empty() {
+        missing.sort();
+        return Err(Error::new(ErrorKind::MorphIncomplete(format!(
+            "{}: {}",
+            path.display(),
+            missing.join(", ")
+        ))));
+    }
+
     Ok(Morph {
         source: src_dial.id.clone(),
         target: tgt_dial.id.clone(),
         map,
+        groups,
+        via,
         source_dial: src_dial.clone(),
         target_dial: tgt_dial.clone(),
     })
@@ -887,9 +1371,10 @@ pub fn apply(doc: &Document, morph: &Morph) -> Result<Document> {
         ))));
     }
     // Pre-scan: every dialektos-defined symbol in the document
-    // must have a mapping.
+    // must have a mapping (or, for solo trigger paragraphs and
+    // deixes to triggers, a group rule).
     let mut unmapped: Vec<String> = Vec::new();
-    scan_unmapped_blocks(&doc.blocks, &morph.map, &mut unmapped);
+    scan_unmapped_blocks(&doc.blocks, morph, &mut unmapped);
     if !unmapped.is_empty() {
         unmapped.sort();
         unmapped.dedup();
@@ -910,15 +1395,29 @@ pub fn apply(doc: &Document, morph: &Morph) -> Result<Document> {
     Ok(out)
 }
 
-fn scan_unmapped_blocks(blocks: &[Block], map: &HashMap<String, Action>, out: &mut Vec<String>) {
+fn scan_unmapped_blocks(blocks: &[Block], morph: &Morph, out: &mut Vec<String>) {
     let check = |symbol: &String, out: &mut Vec<String>| {
-        if !map.contains_key(symbol) {
+        if !morph.map.contains_key(symbol) {
             out.push(symbol.clone());
         }
     };
     for block in blocks {
         match block {
-            Block::Paragraph(inlines) => scan_unmapped_inlines(inlines, map, out),
+            Block::Paragraph(inlines) => {
+                // A solo trigger paragraph is consumed by its
+                // group rule; only its content needs mappings.
+                if let [
+                    Inline::Endo {
+                        symbol, content, ..
+                    },
+                ] = inlines.as_slice()
+                    && morph.group_for(symbol).is_some()
+                {
+                    scan_unmapped_inlines(content, morph, out);
+                } else {
+                    scan_unmapped_inlines(inlines, morph, out);
+                }
+            }
             Block::Para {
                 symbol,
                 lemma,
@@ -927,9 +1426,9 @@ fn scan_unmapped_blocks(blocks: &[Block], map: &HashMap<String, Action>, out: &m
                 ..
             } => {
                 check(symbol, out);
-                scan_unmapped_inlines(lemma, map, out);
-                scan_unmapped_blocks(children, map, out);
-                scan_unmapped_inlines(hypograph, map, out);
+                scan_unmapped_inlines(lemma, morph, out);
+                scan_unmapped_blocks(children, morph, out);
+                scan_unmapped_inlines(hypograph, morph, out);
             }
             Block::Stichoi {
                 symbol,
@@ -941,45 +1440,213 @@ fn scan_unmapped_blocks(blocks: &[Block], map: &HashMap<String, Action>, out: &m
                 if let Some(symbol) = symbol {
                     check(symbol, out);
                 }
-                scan_unmapped_inlines(lemma, map, out);
+                scan_unmapped_inlines(lemma, morph, out);
                 for strophe in strophes {
                     for line in &strophe.0 {
-                        scan_unmapped_inlines(line, map, out);
+                        scan_unmapped_inlines(line, morph, out);
                     }
                 }
-                scan_unmapped_inlines(hypograph, map, out);
+                scan_unmapped_inlines(hypograph, morph, out);
             }
             Block::ParaDiaphane { children, .. } | Block::MonadEnglossis { children, .. } => {
-                scan_unmapped_blocks(children, map, out);
+                scan_unmapped_blocks(children, morph, out);
             }
             _ => {}
         }
     }
 }
 
-fn scan_unmapped_inlines(inlines: &[Inline], map: &HashMap<String, Action>, out: &mut Vec<String>) {
+fn scan_unmapped_inlines(inlines: &[Inline], morph: &Morph, out: &mut Vec<String>) {
     for inline in inlines {
         match inline {
             Inline::Endo {
                 symbol, content, ..
             } => {
-                if !map.contains_key(symbol) {
+                if !morph.map.contains_key(symbol) {
                     out.push(symbol.clone());
                 }
-                scan_unmapped_inlines(content, map, out);
+                scan_unmapped_inlines(content, morph, out);
             }
-            Inline::Monosim { symbol, .. } | Inline::Deixis { symbol, .. }
-                if !map.contains_key(symbol) =>
+            // A deixis to a trigger follows the group rule.
+            Inline::Deixis { symbol, .. }
+                if !morph.map.contains_key(symbol) && morph.group_for(symbol).is_none() =>
             {
                 out.push(symbol.clone());
             }
-            Inline::EndoDiaphane { content, .. } => scan_unmapped_inlines(content, map, out),
+            Inline::Monosim { symbol, .. } if !morph.map.contains_key(symbol) => {
+                out.push(symbol.clone());
+            }
+            Inline::EndoDiaphane { content, .. } => scan_unmapped_inlines(content, morph, out),
             _ => {}
         }
     }
 }
 
+/// Transform a block sequence: the grouping pass first (spec:
+/// "Group Rules" — every sequence independently), then the rule
+/// table. Wrappers and relabeled headings produced by grouping
+/// are already target-dialektos nodes and are not subject to the
+/// table.
 fn transform_blocks(blocks: &mut Vec<Block>, morph: &Morph) {
+    if morph.groups.is_empty() {
+        transform_blocks_table(blocks, morph);
+    } else {
+        let taken = std::mem::take(blocks);
+        *blocks = group_and_transform(taken, morph);
+    }
+}
+
+/// The grouping stack machine, fused with the table: a trigger
+/// closes every open region of equal or greater rank and opens
+/// its own; every other sibling is table-transformed and routed
+/// into the innermost open region.
+fn group_and_transform(blocks: Vec<Block>, morph: &Morph) -> Vec<Block> {
+    struct Open {
+        rank: usize,
+        kind: OpenKind,
+        out: Vec<Block>,
+    }
+    enum OpenKind {
+        Wrap {
+            symbol: String,
+            lemma: Vec<Inline>,
+            ann: crate::dendron::Annotations,
+        },
+        DropRegion,
+        /// Relabel / trigger deletion: the region delimits
+        /// nesting but contributes no wrapper.
+        Transparent,
+    }
+    fn close_one(stack: &mut Vec<Open>, result: &mut Vec<Block>, morph: &Morph) {
+        let open = stack.pop().expect("close on an empty region stack");
+        let parent = stack.last_mut().map(|o| &mut o.out).unwrap_or(result);
+        match open.kind {
+            OpenKind::Wrap { symbol, lemma, ann } => {
+                let bracket_matching = morph
+                    .target_dial
+                    .sims
+                    .get(&symbol)
+                    .map(|d| d.bracket_matching)
+                    .unwrap_or(true);
+                parent.push(Block::Para {
+                    symbol,
+                    taxis: None,
+                    lemma,
+                    children: open.out,
+                    hypograph: Vec::new(),
+                    bracket_matching,
+                    ann,
+                });
+            }
+            OpenKind::DropRegion => {}
+            OpenKind::Transparent => parent.extend(open.out),
+        }
+    }
+
+    let mut result: Vec<Block> = Vec::new();
+    let mut stack: Vec<Open> = Vec::new();
+    for block in blocks {
+        let rule = match &block {
+            Block::Paragraph(inlines) => match inlines.as_slice() {
+                [Inline::Endo { symbol, .. }] => morph.group_for(symbol).cloned(),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(rule) = rule else {
+            let mut one = vec![block];
+            transform_blocks_table(&mut one, morph);
+            let parent = stack.last_mut().map(|o| &mut o.out).unwrap_or(&mut result);
+            parent.extend(one);
+            continue;
+        };
+        while stack.last().is_some_and(|o| o.rank >= rule.rank) {
+            close_one(&mut stack, &mut result, morph);
+        }
+        let Block::Paragraph(mut inlines) = block else {
+            unreachable!("trigger is a paragraph");
+        };
+        let Some(Inline::Endo {
+            content, mut ann, ..
+        }) = inlines.pop()
+        else {
+            unreachable!("trigger holds exactly one endo");
+        };
+        let mut content = content;
+        transform_inlines(&mut content, morph);
+        match rule.disposition {
+            GroupDisposition::Wrap {
+                symbol,
+                genoses,
+                lemma,
+            } => {
+                ann.genoses.extend(genoses);
+                stack.push(Open {
+                    rank: rule.rank,
+                    kind: OpenKind::Wrap {
+                        symbol,
+                        lemma: if lemma { content } else { Vec::new() },
+                        ann,
+                    },
+                    out: Vec::new(),
+                });
+            }
+            GroupDisposition::Deplain => {
+                if !content.is_empty() {
+                    let parent = stack.last_mut().map(|o| &mut o.out).unwrap_or(&mut result);
+                    parent.push(Block::Paragraph(content));
+                }
+                stack.push(Open {
+                    rank: rule.rank,
+                    kind: OpenKind::Transparent,
+                    out: Vec::new(),
+                });
+            }
+            GroupDisposition::DropRegion => {
+                stack.push(Open {
+                    rank: rule.rank,
+                    kind: OpenKind::DropRegion,
+                    out: Vec::new(),
+                });
+            }
+            GroupDisposition::Relabel { symbol, genoses } => {
+                ann.genoses.extend(genoses);
+                let bracket_matching = morph
+                    .target_dial
+                    .sims
+                    .get(&symbol)
+                    .map(|d| d.bracket_matching)
+                    .unwrap_or(true);
+                let relabeled = Block::Paragraph(vec![Inline::Endo {
+                    symbol,
+                    content,
+                    bracket_matching,
+                    ann,
+                }]);
+                let parent = stack.last_mut().map(|o| &mut o.out).unwrap_or(&mut result);
+                parent.push(relabeled);
+                stack.push(Open {
+                    rank: rule.rank,
+                    kind: OpenKind::Transparent,
+                    out: Vec::new(),
+                });
+            }
+            GroupDisposition::DeleteTrigger => {
+                stack.push(Open {
+                    rank: rule.rank,
+                    kind: OpenKind::Transparent,
+                    out: Vec::new(),
+                });
+            }
+        }
+    }
+    while !stack.is_empty() {
+        close_one(&mut stack, &mut result, morph);
+    }
+    result
+}
+
+fn transform_blocks_table(blocks: &mut Vec<Block>, morph: &Morph) {
     let mut i = 0;
     while i < blocks.len() {
         // Determine the action for dialektos-defined blocks first.
@@ -1166,9 +1833,24 @@ fn transform_inlines(inlines: &mut Vec<Inline>, morph: &Morph) {
     let mut i = 0;
     while i < inlines.len() {
         let action = match &inlines[i] {
-            Inline::Endo { symbol, .. }
-            | Inline::Monosim { symbol, .. }
-            | Inline::Deixis { symbol, .. } => morph.map.get(symbol).cloned(),
+            Inline::Endo { symbol, .. } | Inline::Monosim { symbol, .. } => {
+                morph.map.get(symbol).cloned()
+            }
+            // A deixis to a trigger follows the group rule: to
+            // the wrapper or relabeled heading it moved to, or
+            // out of the document with a dropped region or
+            // deleted trigger.
+            Inline::Deixis { symbol, .. } => morph.map.get(symbol).cloned().or_else(|| {
+                morph.group_for(symbol).map(|rule| match &rule.disposition {
+                    GroupDisposition::Wrap { symbol, .. }
+                    | GroupDisposition::Relabel { symbol, .. } => Action::rename(symbol),
+                    // A deplained trigger loses its onym with
+                    // the markup.
+                    GroupDisposition::Deplain
+                    | GroupDisposition::DropRegion
+                    | GroupDisposition::DeleteTrigger => Action::Drop,
+                })
+            }),
             _ => None,
         };
         match action {

@@ -356,14 +356,6 @@ _ \_
 \ltmilestone{@(value)}{@(genoses)}
 >-@
 
-@-> |-
-\ltmilestone{@(param)}{@(genoses)}
->-@
-
-@-> *solo |-
-\ltmilestone{@(param)}{@(genoses)}
->-@
-
 @@/ ----- figures, tables, containers (stock bodies) -----
 
 @-> <

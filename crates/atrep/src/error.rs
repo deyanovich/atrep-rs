@@ -87,6 +87,9 @@ pub enum ErrorKind {
     UnresolvableMorph(String),
     /// Document sims with no mapping under the morphism.
     MorphUnmapped(String),
+    /// An explicit morphism that is not total over its source
+    /// dialektos's sims (spec: "Static Validation").
+    MorphIncomplete(String),
     /// Two or more distinct shortest morphism routes.
     AmbiguousMorphRoute(String),
     /// No `.exo` file found for the dialektos/target pair.
@@ -207,6 +210,11 @@ impl fmt::Display for Error {
             ErrorKind::MorphUnmapped(syms) => {
                 write!(f, "sims with no mapping under the morphism: {syms}")?
             }
+            ErrorKind::MorphIncomplete(syms) => write!(
+                f,
+                "morphism is not total over its source dialektos; unaccounted \
+                 sims (map, group, or drop explicitly with @--): {syms}"
+            )?,
             ErrorKind::AmbiguousMorphRoute(routes) => write!(
                 f,
                 "ambiguous morphism route; add a direct morphism or morph \

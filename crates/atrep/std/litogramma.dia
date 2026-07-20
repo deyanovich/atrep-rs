@@ -203,11 +203,6 @@ curly-brace and delimiter-family pointer syntax is retired.
 ======================================================================
 /@@@
 
-@=== milestone
-@|-(n)
-@"edition milestone (Stephanus page etc.); genoses name unit and scheme; renders marginally"@
-===@
-
 @=== heading-ref
 @>>(onym)
 @"reference to the closest enclosing heading of an onym"@

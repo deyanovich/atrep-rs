@@ -61,3 +61,69 @@ fn collation_requires_a_known_base() {
     let err = collation(&[("B".into(), a), ("T".into(), b)], "steph", "Z");
     assert!(err.is_err());
 }
+
+#[test]
+fn collation_validates_sigla_and_dialektos() {
+    let a = doc("x", "y");
+    let b = doc("x", "y");
+    // Duplicate siglum.
+    let err = collation(
+        &[("B".into(), a.clone()), ("B".into(), b.clone())],
+        "steph",
+        "B",
+    );
+    assert!(format!("{}", err.unwrap_err()).contains("duplicate witness siglum"));
+    // Whitespace in a siglum.
+    let err = collation(
+        &[("B 1".into(), a.clone()), ("T".into(), b.clone())],
+        "steph",
+        "T",
+    );
+    assert!(format!("{}", err.unwrap_err()).contains("not a valid siglum"));
+    // Uppercase manuscript capitals are welcome (free sigla,
+    // spec v0.12.1) - this invocation validates.
+    assert!(
+        collation(
+            &[("B".into(), a.clone()), ("T".into(), b.clone())],
+            "steph",
+            "B"
+        )
+        .is_ok()
+    );
+    // One dialektos per collation.
+    let mut c = doc("x", "y");
+    c.dialect_id = "koine".into();
+    let err = collation(&[("B".into(), a), ("T".into(), c)], "steph", "B");
+    assert!(format!("{}", err.unwrap_err()).contains("one dialektos per collation"));
+}
+
+#[test]
+fn collation_rejects_contradictory_coordinate_order() {
+    // Alignment is that of zygosis: shared coordinates must
+    // merge order-consistently.
+    let base = doc("alpha", "beta");
+    let flipped = Document {
+        dialect_id: "litogramma".into(),
+        dialect_version: None,
+        blocks: vec![Block::Paragraph(vec![
+            milestone("1b"),
+            Inline::Text("beta".into()),
+            milestone("1a"),
+            Inline::Text("alpha".into()),
+        ])],
+    };
+    let err = collation(&[("B".into(), base), ("T".into(), flipped)], "steph", "B");
+    assert!(format!("{}", err.unwrap_err()).contains("disagree on coordinate order"),);
+}
+
+#[test]
+fn collation_drops_unanchorable_leading_addition() {
+    // An addition before the first shared word has no anchor
+    // word in the base; the entry is dropped (recorded limit).
+    let base = doc("quick fox", "tail");
+    let wit = doc("the quick fox", "tail");
+    let out = collation(&[("B".into(), base), ("T".into(), wit)], "steph", "B").unwrap();
+    let s = serialize(&out);
+    assert!(!s.contains("add. the"), "{s}");
+    assert!(!s.contains("app-"), "{s}");
+}

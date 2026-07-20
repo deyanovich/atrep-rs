@@ -3,14 +3,14 @@ resolver = "2"
 members = ["crates/atrep", "crates/atrep-cli", "crates/atrep-lsp"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 authors = ["Bojan Durickovic <dev@deyanovich.org>"]
 repository = "https://gitlab.com/atrep/atrep-rs"
 
 [workspace.dependencies]
-atrep = { path = "crates/atrep", version = "0.1.0" }
+atrep = { path = "crates/atrep", version = "0.2.0" }
 unicode-normalization = "0.1"
 sha2 = "0.10"
 ureq = "3"

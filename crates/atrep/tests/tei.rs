@@ -261,13 +261,12 @@ fn milestones_and_zygosis() {
     // Litosis keeps coordinates (and strips their free genoses).
     let lit = litosis::litosis_with(&ka, &|_| Ok(Vec::new()), &|id| {
         atrep::dialektos::resolve(&tmp, id).ok()
-    });
-    if let Ok(l) = lit {
-        assert!(
-            l.litos.contains("@(\"s:1\")"),
-            "coordinates survive litosis"
-        );
-    }
+    })
+    .unwrap();
+    assert!(
+        lit.litos.contains("@(\"s:1\")"),
+        "coordinates survive litosis"
+    );
 
     // Duplicate coordinates are rejected.
     std::fs::write(

@@ -49,8 +49,19 @@ pub fn litosis_with(
     let mut kept: std::collections::HashSet<String> = std::collections::HashSet::new();
     collect_deixis_onyms(&doc.blocks, &mut kept);
     let dial = resolve(&doc.dialect_id);
-    strip_blocks(&mut doc.blocks, read_media, &kept, dial.as_ref(), resolve)?;
-    renumber_kept_onyms(&mut doc.blocks);
+    // Autonym onyms survive litosis even unreferenced and are
+    // exempt from the o1.. renumbering: a computed headword is
+    // citable identity, like a milestone (spec v0.12.1).
+    let mut autonym: std::collections::HashSet<String> = std::collections::HashSet::new();
+    strip_blocks(
+        &mut doc.blocks,
+        read_media,
+        &kept,
+        dial.as_ref(),
+        resolve,
+        &mut autonym,
+    )?;
+    renumber_kept_onyms(&mut doc.blocks, &autonym);
     let litos = dendron::serialize(&doc);
     let litos_id = hex(&Sha256::digest(litos.as_bytes()));
     Ok(LitosResult { litos, litos_id })
@@ -138,7 +149,12 @@ fn strip_blocks(
     kept: &std::collections::HashSet<String>,
     dial: Option<&dialektos::Dialektos>,
     resolve: &dyn Fn(&str) -> Option<dialektos::Dialektos>,
+    autonym: &mut std::collections::HashSet<String>,
 ) -> Result<()> {
+    let is_autonym_sim = |dial: Option<&dialektos::Dialektos>, symbol: &str| -> bool {
+        dial.and_then(|d| d.sims.get(symbol))
+            .is_some_and(|def| matches!(def.form, dialektos::SimForm::Para { autonym: true, .. }))
+    };
     let mut i = 0;
     while i < blocks.len() {
         match &mut blocks[i] {
@@ -158,9 +174,14 @@ fn strip_blocks(
                 ..
             } => {
                 let keep_vocab = vocab_genoses(dial, symbol);
-                strip_ann_vocab(ann, kept, keep_vocab);
+                if is_autonym_sim(dial, symbol)
+                    && let Some(o) = &ann.onym
+                {
+                    autonym.insert(o.clone());
+                }
+                strip_ann_vocab(ann, kept, autonym, keep_vocab);
                 strip_inlines(lemma, read_media)?;
-                strip_blocks(children, read_media, kept, dial, resolve)?;
+                strip_blocks(children, read_media, kept, dial, resolve, autonym)?;
                 strip_inlines(hypograph, read_media)?;
             }
             Block::Stichoi {
@@ -172,7 +193,12 @@ fn strip_blocks(
                 ..
             } => {
                 let keep_vocab = vocab_genoses(dial, symbol.as_deref().unwrap_or(""));
-                strip_ann_vocab(ann, kept, keep_vocab);
+                if is_autonym_sim(dial, symbol.as_deref().unwrap_or(""))
+                    && let Some(o) = &ann.onym
+                {
+                    autonym.insert(o.clone());
+                }
+                strip_ann_vocab(ann, kept, autonym, keep_vocab);
                 strip_inlines(lemma, read_media)?;
                 for strophe in strophes {
                     for line in &mut strophe.0 {
@@ -190,7 +216,7 @@ fn strip_blocks(
                 // not a dialektos sim and cannot be a deixis
                 // target.)
                 let mut children = std::mem::take(children);
-                strip_blocks(&mut children, read_media, kept, dial, resolve)?;
+                strip_blocks(&mut children, read_media, kept, dial, resolve, autonym)?;
                 blocks.splice(i..=i, children);
                 continue;
             }
@@ -204,7 +230,7 @@ fn strip_blocks(
                 // The embedded dialektos's own vocabularies
                 // govern its genoses.
                 let inner = resolve(dialect);
-                strip_blocks(children, read_media, kept, inner.as_ref(), resolve)?;
+                strip_blocks(children, read_media, kept, inner.as_ref(), resolve, autonym)?;
             }
             Block::Enmedia { param } => {
                 let bytes = read_media(param)?;
@@ -227,14 +253,19 @@ fn strip_blocks(
 }
 
 /// Clear annotations, keeping the onym only when a deixis
-/// references it; genoses that are canonical terms of the
-/// sim's bound vocabulary are semantic and survive.
+/// references it or it is an autonym (citable identity);
+/// genoses that are canonical terms of the sim's bound
+/// vocabulary are semantic and survive.
 fn strip_ann_vocab(
     ann: &mut Annotations,
     kept: &std::collections::HashSet<String>,
+    autonym: &std::collections::HashSet<String>,
     vocab: Option<&dialektos::Vocabulary>,
 ) {
-    let keep = ann.onym.as_ref().is_some_and(|o| kept.contains(o.as_str()));
+    let keep = ann
+        .onym
+        .as_ref()
+        .is_some_and(|o| kept.contains(o.as_str()) || autonym.contains(o.as_str()));
     if !keep {
         ann.onym = None;
     }
@@ -247,13 +278,19 @@ fn strip_ann_vocab(
 /// Renumber the surviving onyms afresh (`o1`.. in declaration
 /// order), independent of the kanon numbering, and rewrite the
 /// deixes; stripped metadata must not influence the litos ID.
-fn renumber_kept_onyms(blocks: &mut [Block]) {
+/// Autonym onyms are exempt: computed from content, they are
+/// already canonical (spec v0.12.1).
+fn renumber_kept_onyms(blocks: &mut [Block], exempt: &std::collections::HashSet<String>) {
     let mut mapping: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    collect_decls(blocks, &mut mapping);
+    collect_decls(blocks, exempt, &mut mapping);
     rewrite_kept(blocks, &mapping);
 }
 
-fn collect_decls(blocks: &[Block], mapping: &mut std::collections::HashMap<String, String>) {
+fn collect_decls(
+    blocks: &[Block],
+    exempt: &std::collections::HashSet<String>,
+    mapping: &mut std::collections::HashMap<String, String>,
+) {
     for block in blocks {
         let (ann, children) = match block {
             Block::Para { children, ann, .. } => (Some(ann), Some(children)),
@@ -263,13 +300,14 @@ fn collect_decls(blocks: &[Block], mapping: &mut std::collections::HashMap<Strin
         };
         if let Some(ann) = ann
             && let Some(onym) = &ann.onym
+            && !exempt.contains(onym)
             && !mapping.contains_key(onym)
         {
             let next = format!("o{}", mapping.len() + 1);
             mapping.insert(onym.clone(), next);
         }
         if let Some(children) = children {
-            collect_decls(children, mapping);
+            collect_decls(children, exempt, mapping);
         }
     }
 }

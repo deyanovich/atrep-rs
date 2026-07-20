@@ -3,10 +3,11 @@
 
 @@/ Lossy return: strong renames onto org's star emphasis,
 @@/ spans and divisions dissolve, list containers unwrap (items
-@@/ are containerless in at-org), and the verse sim maps
+@@/ are containerless in at-org), the verse sim maps
 @@/ implicitly with its components dropped (at-org's verse is
-@@/ bare).
+@@/ bare), and h6 demotes onto org's deepest heading level.
 
+@:: ###### #####
 @:: ! *
 @<< ,
 @<< _

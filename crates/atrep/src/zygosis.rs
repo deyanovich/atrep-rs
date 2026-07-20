@@ -330,7 +330,10 @@ pub fn zygosis_split(
                 doc.dialect_id
             )));
         }
-        if !sigil::is_valid_genos(&format!("zyg-{id}")) {
+        // The identifier itself must conform to the genos
+        // grammar (spec v0.12.1) - checking the derived
+        // `zyg-<id>` genos would wrongly admit leading digits.
+        if !sigil::is_valid_genos(id) {
             return Err(zyg_err(format!(
                 "witness id `{id}` is not a valid identifier"
             )));
@@ -360,52 +363,7 @@ pub fn zygosis_split(
                 .collect()
         })
         .collect();
-    let mut pointers = vec![0usize; traces.len()];
-    let positions: Vec<std::collections::HashMap<&str, usize>> = traces
-        .iter()
-        .map(|t| t.iter().enumerate().map(|(i, v)| (v.as_str(), i)).collect())
-        .collect();
-    let total: usize = traces
-        .iter()
-        .flat_map(|t| t.iter())
-        .collect::<std::collections::HashSet<_>>()
-        .len();
-    let mut order: Vec<String> = Vec::new();
-    while order.len() < total {
-        let mut emitted = false;
-        'witness: for (i, trace) in traces.iter().enumerate() {
-            if pointers[i] >= trace.len() {
-                continue;
-            }
-            let cand = &trace[pointers[i]];
-            for (j, pos) in positions.iter().enumerate() {
-                if let Some(&p) = pos.get(cand.as_str())
-                    && p != pointers[j]
-                {
-                    continue 'witness;
-                }
-            }
-            // Emittable: advance every witness that has it.
-            for (j, pos) in positions.iter().enumerate() {
-                if pos.contains_key(cand.as_str()) {
-                    pointers[j] += 1;
-                }
-            }
-            order.push(cand.clone());
-            emitted = true;
-            break;
-        }
-        if !emitted {
-            let heads: Vec<String> = traces
-                .iter()
-                .enumerate()
-                .filter_map(|(i, t)| t.get(pointers[i]).cloned())
-                .collect();
-            return Err(zyg_err(format!(
-                "witnesses disagree on coordinate order near {heads:?}"
-            )));
-        }
-    }
+    let order = aligned_order(&traces)?;
 
     // Assemble the zygoma.
     let tag = |id: &str, blocks: Vec<Block>| Block::ParaDiaphane {
@@ -875,8 +833,7 @@ impl ViewWalker<'_> {
                 Inline::Milestone {
                     scheme: s, value, ..
                 } if s == self.scheme
-                    || (value.starts_with(&format!("{}:", self.scheme))
-                        && value.contains('|')) =>
+                    || (value.starts_with(&format!("{}:", self.scheme)) && value.contains('|')) =>
                 {
                     if value.contains('|') {
                         // An existing quasi cut: its segment is
@@ -1056,9 +1013,7 @@ fn apply_cuts(
         // litogram:ch:1|0.1) unless the segmentation scheme IS
         // the namespace already.
         let (ms_scheme, ms_value) = match cut_ns {
-            Some(ns) if ns != scheme => {
-                (ns.to_string(), format!("{scheme}:{value}"))
-            }
+            Some(ns) if ns != scheme => (ns.to_string(), format!("{scheme}:{value}")),
             _ => (scheme.to_string(), value),
         };
         let ms = Inline::Milestone {
@@ -1468,9 +1423,86 @@ impl Inserter {
 /// every shared segment, and return the base document with the
 /// derived apparatus criticus threaded through it as
 /// manuscript-notes.
+/// Order-consistent merge of the witnesses' coordinate traces
+/// with witness precedence (spec: "Alignment"): a coordinate is
+/// emittable only when it heads every trace that contains it,
+/// the earliest-listed witness's head wins ties, and a deadlock
+/// means the witnesses disagree on coordinate order - an error,
+/// never a silent choice.
+fn aligned_order(traces: &[Vec<String>]) -> Result<Vec<String>> {
+    let mut pointers = vec![0usize; traces.len()];
+    let positions: Vec<std::collections::HashMap<&str, usize>> = traces
+        .iter()
+        .map(|t| t.iter().enumerate().map(|(i, v)| (v.as_str(), i)).collect())
+        .collect();
+    let total: usize = traces
+        .iter()
+        .flat_map(|t| t.iter())
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+    let mut order: Vec<String> = Vec::new();
+    while order.len() < total {
+        let mut emitted = false;
+        'witness: for (i, trace) in traces.iter().enumerate() {
+            if pointers[i] >= trace.len() {
+                continue;
+            }
+            let cand = &trace[pointers[i]];
+            for (j, pos) in positions.iter().enumerate() {
+                if let Some(&p) = pos.get(cand.as_str())
+                    && p != pointers[j]
+                {
+                    continue 'witness;
+                }
+            }
+            // Emittable: advance every witness that has it.
+            for (j, pos) in positions.iter().enumerate() {
+                if pos.contains_key(cand.as_str()) {
+                    pointers[j] += 1;
+                }
+            }
+            order.push(cand.clone());
+            emitted = true;
+            break;
+        }
+        if !emitted {
+            let heads: Vec<String> = traces
+                .iter()
+                .enumerate()
+                .filter_map(|(i, t)| t.get(pointers[i]).cloned())
+                .collect();
+            return Err(zyg_err(format!(
+                "witnesses disagree on coordinate order near {heads:?}"
+            )));
+        }
+    }
+    Ok(order)
+}
+
 pub fn collation(witnesses: &[(String, Document)], scheme: &str, base: &str) -> Result<Document> {
     if witnesses.len() < 2 {
         return Err(zyg_err("at least two witnesses are required".into()));
+    }
+    // Collation identifiers are free sigla (apparatus text only,
+    // never genoses - spec v0.12.1): nonempty, whitespace-free,
+    // unique. One dialektos per collation, as for zygosis.
+    let dialect = witnesses[0].1.dialect_id.clone();
+    let mut ids = std::collections::HashSet::new();
+    for (id, doc) in witnesses {
+        if id.is_empty() || id.chars().any(char::is_whitespace) {
+            return Err(zyg_err(format!(
+                "witness siglum `{id}` is not a valid siglum"
+            )));
+        }
+        if !ids.insert(id.clone()) {
+            return Err(zyg_err(format!("duplicate witness siglum `{id}`")));
+        }
+        if doc.dialect_id != dialect {
+            return Err(zyg_err(format!(
+                "witness `{id}` is `{}`, expected `{dialect}` (one dialektos per collation)",
+                doc.dialect_id
+            )));
+        }
     }
     if !witnesses.iter().any(|(id, _)| id == base) {
         return Err(zyg_err(format!(
@@ -1486,24 +1518,33 @@ pub fn collation(witnesses: &[(String, Document)], scheme: &str, base: &str) -> 
     // Per-witness segment word lists.
     let mut base_order: Vec<String> = Vec::new();
     let mut maps: Vec<(String, std::collections::HashMap<String, Vec<String>>)> = Vec::new();
+    let mut traces: Vec<Vec<String>> = Vec::new();
     for (id, doc) in witnesses {
         let mut slicer = Slicer::new(scheme);
         for block in doc.blocks.clone() {
             slicer.feed(block);
         }
         let mut map = std::collections::HashMap::new();
+        let mut trace = Vec::new();
         for slice in &slicer.slices {
             if let Some((coord, _)) = &slice.coord {
                 let mut words = Vec::new();
                 words_of_blocks(&slice.blocks, &mut words);
                 map.insert(coord.clone(), words);
+                trace.push(coord.clone());
                 if id == base {
                     base_order.push(coord.clone());
                 }
             }
         }
         maps.push((id.clone(), map));
+        traces.push(trace);
     }
+    // Alignment is that of zygosis (spec: "Collation"): the
+    // witnesses' shared coordinates must merge order-
+    // consistently; a contradiction is an error, never a
+    // silent choice.
+    aligned_order(&traces)?;
     let base_map = maps
         .iter()
         .find(|(id, _)| id == base)
