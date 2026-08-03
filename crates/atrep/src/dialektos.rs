@@ -84,6 +84,15 @@ pub struct InheritOp {
     pub kind: InheritKind,
 }
 
+/// Result of a plerographic name lookup ([`Dialektos::sim_named`]).
+pub enum NamedLookup<'a> {
+    None,
+    One(&'a SimDef),
+    /// The name is shared by several sims — legal, but not
+    /// plerographically addressable.
+    Ambiguous,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InheritKind {
     /// `@@::parent` - full inheritance.
@@ -110,6 +119,10 @@ pub struct Dialektos {
     pub lineage: Vec<InheritOp>,
     /// Controlled vocabularies (`@==%` blocks), by name.
     pub vocabularies: BTreeMap<String, Vocabulary>,
+    /// Glossae: localized sim names by language tag, loaded from
+    /// sibling `<id>.<lang>.glossa` files at resolution (spec:
+    /// "Glossae"). Symbol -> localized name.
+    pub glossae: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 /// A controlled vocabulary: canonical terms with multilingual
@@ -139,6 +152,42 @@ impl Vocabulary {
 }
 
 impl Dialektos {
+    /// Look a sim up by its definition name (the plerographic
+    /// reference, spec: "Metagraphe"). Duplicate names are legal
+    /// in a dialektos but not plerographically addressable.
+    pub fn sim_named(&self, name: &str) -> NamedLookup<'_> {
+        // The plerographic address space is the union of the
+        // primary names and every glossa's localized names; a
+        // name matching sims of two different symbols is
+        // ambiguous (spec: "Glossae").
+        let mut symbol: Option<String> = None;
+        let record = |sym: &str, symbol: &mut Option<String>| -> bool {
+            match symbol {
+                Some(s) => s != sym,
+                None => {
+                    *symbol = Some(sym.to_string());
+                    false
+                }
+            }
+        };
+        for def in self.sims.values() {
+            if def.name == name && record(&def.symbol, &mut symbol) {
+                return NamedLookup::Ambiguous;
+            }
+        }
+        for names in self.glossae.values() {
+            for (sym, lname) in names {
+                if lname == name && record(sym, &mut symbol) {
+                    return NamedLookup::Ambiguous;
+                }
+            }
+        }
+        match symbol {
+            Some(sym) => NamedLookup::One(&self.sims[&sym]),
+            None => NamedLookup::None,
+        }
+    }
+
     /// Longest defined symbol that is a prefix of `text`.
     pub fn longest_match(&self, text: &str) -> Option<&SimDef> {
         let run: String = text
@@ -384,7 +433,27 @@ fn resolve_inner(source: &dyn Source, id: &str, stack: &mut Vec<String>) -> Resu
     stack.push(id.to_string());
     let result = parse_definition(&text, Path::new(&name), id, source, stack);
     stack.pop();
-    result
+    let mut dial = result?;
+    load_glossae(source, &mut dial)?;
+    Ok(dial)
+}
+
+/// Load the dialektos's glossae from sibling
+/// `<id>.<lang>.glossa` files in the resolution context.
+fn load_glossae(source: &dyn Source, dial: &mut Dialektos) -> Result<()> {
+    let prefix = format!("{}.", dial.id);
+    for name in source.names() {
+        if let Some(rest) = name.strip_prefix(&prefix)
+            && let Some(lang) = rest.strip_suffix(".glossa")
+            && !lang.is_empty()
+            && !lang.contains('.')
+            && let Some(text) = fetch_normalized(source, &name)?
+        {
+            let names = crate::glossa::parse_glossa_source(&text, dial, lang)?;
+            dial.glossae.insert(lang.to_string(), names);
+        }
+    }
+    Ok(())
 }
 
 /// Strip a `@<major>[.<minor>]` version suffix from an identifier.
@@ -438,6 +507,7 @@ fn parse_definition(
         sims: BTreeMap::new(),
         lineage: Vec::new(),
         vocabularies: BTreeMap::new(),
+        glossae: BTreeMap::new(),
     };
 
     while i < lines.len() {
@@ -535,6 +605,17 @@ fn parse_definition(
         let simdef_open = format!("{sig}=== ");
         if let Some(name) = line.strip_prefix(&simdef_open) {
             let name = name.trim().to_string();
+            // Names are addressable syntax (spec: "Metagraphe"):
+            // the dialektos-identifier grammar applies.
+            if !sigil::is_valid_name(&name) {
+                return Err(Error::at(
+                    ErrorKind::InvalidLektos(format!(
+                        "sim name `{name}`: letters, digits, and hyphens only, \
+                         beginning and ending alphanumeric"
+                    )),
+                    loc(i + 1),
+                ));
+            }
             let start = i + 1;
             // The block close is found structurally by
             // parse_sim_block: a chapter-style sim whose symbol is
@@ -705,6 +786,16 @@ fn parse_sim_block(
     if symbol.is_empty() {
         return Err(Error::at(
             ErrorKind::InvalidLektos(format!("sim `{name}`: empty symbol")),
+            loc(idx),
+        ));
+    }
+    // The braces are reserved for plerographic name references
+    // (spec: "Metagraphe").
+    if symbol.contains('{') || symbol.contains('}') {
+        return Err(Error::at(
+            ErrorKind::InvalidLektos(format!(
+                "sim `{name}`: `{{` and `}}` are reserved and cannot appear in a symbol"
+            )),
             loc(idx),
         ));
     }
@@ -1042,10 +1133,14 @@ mod tests {
         let src = "@@@!atrep\n\n@=== aside\n@< grammata <@\n===@\n";
         let d = parse_str(src).unwrap();
         assert!(!d.sims["<"].bracket_matching);
-        // `@{` closed by flipped `}@`: enabled.
-        let src2 = "@@@!atrep\n\n@=== braced\n@{ grammata }@\n===@\n";
+        // `@[` closed by flipped `]@`: enabled.
+        let src2 = "@@@!atrep\n\n@=== bracketed\n@[ grammata ]@\n===@\n";
         let d2 = parse_str(src2).unwrap();
-        assert!(d2.sims["{"].bracket_matching);
+        assert!(d2.sims["["].bracket_matching);
+        // Braces are reserved for plerographic name references.
+        let src3 = "@@@!atrep\n\n@=== braced\n@{ grammata }@\n===@\n";
+        let err = parse_str(src3).unwrap_err();
+        assert!(format!("{err}").contains("reserved"), "{err}");
     }
 
     #[test]
@@ -1075,6 +1170,7 @@ mod tests {
             sims: BTreeMap::new(),
             lineage: Vec::new(),
             vocabularies: BTreeMap::new(),
+            glossae: BTreeMap::new(),
         };
         let mut block = mk(
             "block",
@@ -1107,8 +1203,6 @@ mod tests {
                 true,
             ),
         );
-        d.sims
-            .insert("{".into(), mk("brace", "{", SimForm::Endo, false));
         d.sims
             .insert("[".into(), mk("bracket", "[", SimForm::Endo, true));
         d.sims.insert(
@@ -1145,10 +1239,6 @@ mod tests {
              Long text.\n\
              \"\"@\n\
              @^(~)\n\
-             ===@\n\
-             \n\
-             @=== brace\n\
-             @{ grammata {@\n\
              ===@\n\
              \n\
              @=== bracket\n\

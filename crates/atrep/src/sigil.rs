@@ -56,11 +56,28 @@ pub fn flip_bracket(c: char) -> char {
 /// The episymbol of a symbol: reversed characters, with brackets
 /// flipped unless bracket matching is disabled.
 pub fn episymbol(symbol: &str, bracket_matching: bool) -> String {
+    // A braced pseudo-symbol is a plerographic name reference
+    // (spec: "Metagraphe"); the name closes verbatim, never
+    // reversed.
+    if symbol.starts_with('{') && symbol.ends_with('}') {
+        return symbol.to_string();
+    }
     symbol
         .chars()
         .rev()
         .map(|c| if bracket_matching { flip_bracket(c) } else { c })
         .collect()
+}
+
+/// Validate a name identifier — sim names, glossa names, and
+/// dialektos identifiers share one grammar (spec: "Metagraphe"):
+/// letters and digits of any script, and hyphens, beginning and
+/// ending alphanumeric.
+pub fn is_valid_name(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars().next().unwrap().is_alphanumeric()
+        && s.chars().last().unwrap().is_alphanumeric()
+        && s.chars().all(|c| c.is_alphanumeric() || c == '-')
 }
 
 /// Validate an onym identifier: alphanumeric characters (arbitrary
@@ -98,8 +115,12 @@ pub fn is_valid_onym(s: &str) -> bool {
 /// joined by `|` — the quasi-coordinate notation (`17a|1`,
 /// `17a|0.1`) that `quasialign` inserts at statistical midpoints.
 /// The pipe marks a derived, non-citable coordinate; each piece on
-/// its own obeys the onym rules.
+/// its own obeys the onym rules. `^` is the implicit
+/// document-start anchor: legal only as the head of a quasi cut
+/// path (`^|0.1`, from quasialign on a milestone-less document),
+/// never as a value on its own.
 pub fn is_valid_milestone_value(s: &str) -> bool {
+    let s = s.strip_prefix("^|").unwrap_or(s);
     !s.is_empty() && s.split('|').all(is_valid_onym)
 }
 

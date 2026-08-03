@@ -9,13 +9,14 @@
 use std::path::{Path, PathBuf};
 
 use crate::dendron::{Annotations, Block, Document, Inline, Strophe, Taxis};
-use crate::dialektos::{self, Dialektos, Optionality, SimDef, SimForm};
+use crate::dialektos::{self, Dialektos, NamedLookup, Optionality, SimDef, SimForm};
 use crate::error::{Error, ErrorKind, Location, Result};
 use crate::sigil::{self, Sigil};
 
-/// Parse a document from source text. `path` locates error reports
-/// and is the base for dialektos resolution (its parent directory).
-pub fn parse_document(source: &str, path: &Path) -> Result<Document> {
+fn parse_inner(
+    source: &str,
+    path: &Path,
+) -> Result<(Document, Vec<crate::outline::OutlineBlock>, Dialektos)> {
     let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
     let mut lines: Vec<String> = source
         .lines()
@@ -75,13 +76,31 @@ pub fn parse_document(source: &str, path: &Path) -> Result<Document> {
         sigil: sig,
         file: path.to_path_buf(),
         dir,
+        depth: 0,
+        outline: Vec::new(),
     };
     let blocks = parser.parse_blocks(&dial, None)?;
-    Ok(Document {
+    let doc = Document {
         dialect_id,
         dialect_version,
         blocks,
-    })
+    };
+    Ok((doc, parser.outline, dial))
+}
+
+/// Parse a document from source text. `path` locates error reports
+/// and is the base for dialektos resolution (its parent directory).
+pub fn parse_document(source: &str, path: &Path) -> Result<Document> {
+    parse_inner(source, path).map(|(doc, _, _)| doc)
+}
+
+/// [`parse_document`], also returning the recorded outline blocks
+/// and the resolved dialektos (see [`crate::outline`]).
+pub fn parse_document_outline(
+    source: &str,
+    path: &Path,
+) -> Result<(Document, Vec<crate::outline::OutlineBlock>, Dialektos)> {
+    parse_inner(source, path)
 }
 
 /// Parse `<dialect-id>[@<version>]`.
@@ -96,11 +115,7 @@ fn parse_declaration(rest: &str, path: &Path, line: usize) -> Result<(String, Op
         Some(i) => (&rest[..i], Some(rest[i + 1..].to_string())),
         None => (rest, None),
     };
-    let valid_id = !id.is_empty()
-        && id.chars().next().unwrap().is_alphanumeric()
-        && id.chars().last().unwrap().is_alphanumeric()
-        && id.chars().all(|c| c.is_alphanumeric() || c == '-');
-    if !valid_id {
+    if !sigil::is_valid_name(id) {
         return Err(Error::at(
             ErrorKind::InvalidDeclaration(rest.to_string()),
             loc,
@@ -121,11 +136,70 @@ fn parse_declaration(rest: &str, path: &Path, line: usize) -> Result<(String, Op
     Ok((id.to_string(), version))
 }
 
-/// Whether a para-simmere symbol at line start is followed by a
-/// parenthesized group that cannot be a taxis - in which case the
-/// line begins a paragraph and the group is a deixis reference.
-fn deixis_not_taxis(def: &SimDef, after_symbol: &str) -> bool {
-    let rest = &after_symbol[def.symbol.len()..];
+/// A resolved sim reference after a monograph sigil: the
+/// definition, the reference's source length, and whether it was
+/// plerographic (`@{name}`, spec: "Metagraphe").
+struct SimRef<'a> {
+    def: &'a SimDef,
+    /// Byte length of the reference (symbol, or `{name}`).
+    bytes: usize,
+    /// Char length of the reference (for char-indexed scanners).
+    chars: usize,
+    /// The braced name as written, for a plerographic reference
+    /// (the closer echoes it; a glossa name closes as itself).
+    plero: Option<String>,
+}
+
+/// Resolve the text after a monograph sigil as a sim reference:
+/// brachygraphic (longest symbol match) or plerographic
+/// (`{name}`). `Ok(None)` when no symbol matches; an unknown or
+/// ambiguous braced name is an error.
+fn resolve_sim_ref<'a>(
+    dial: &'a Dialektos,
+    text: &str,
+    loc: Location,
+) -> Result<Option<SimRef<'a>>> {
+    if let Some(rest) = text.strip_prefix('{') {
+        let Some(end) = rest.find('}') else {
+            return Err(Error::at(
+                ErrorKind::Syntax("unterminated plerographic name reference".into()),
+                loc,
+            ));
+        };
+        let name = &rest[..end];
+        return match dial.sim_named(name) {
+            NamedLookup::One(def) => Ok(Some(SimRef {
+                def,
+                bytes: name.len() + 2,
+                chars: name.chars().count() + 2,
+                plero: Some(name.to_string()),
+            })),
+            NamedLookup::None => Err(Error::at(
+                ErrorKind::UndefinedSim(format!("{{{name}}}")),
+                loc,
+            )),
+            NamedLookup::Ambiguous => Err(Error::at(
+                ErrorKind::Syntax(format!(
+                    "sim name `{name}` is duplicated in this dialektos and \
+                     not plerographically addressable"
+                )),
+                loc,
+            )),
+        };
+    }
+    Ok(dial.longest_match(text).map(|def| SimRef {
+        def,
+        bytes: def.symbol.len(),
+        chars: def.symbol.chars().count(),
+        plero: None,
+    }))
+}
+
+/// Whether a para-simmere reference at line start is followed by
+/// a parenthesized group that cannot be a taxis - in which case
+/// the line begins a paragraph and the group is a deixis
+/// reference.
+fn deixis_not_taxis(def: &SimDef, rest: &str) -> bool {
     let Some(inner) = rest.strip_prefix('(') else {
         return false;
     };
@@ -150,6 +224,10 @@ struct Parser {
     sigil: Sigil,
     file: PathBuf,
     dir: PathBuf,
+    /// Structural recording for the outline (spec-adjacent
+    /// tooling surface); depth tracks parse_blocks recursion.
+    depth: usize,
+    outline: Vec<crate::outline::OutlineBlock>,
 }
 
 /// Outcome of classifying a line at para level.
@@ -180,7 +258,44 @@ impl Parser {
         std::iter::repeat_n(self.sig(), 3).collect()
     }
 
+    /// Record a completed structural block for the outline
+    /// (paragraphs and self-delimiting one-liners are skipped).
+    fn record_outline(&mut self, block: &Block, start: usize) {
+        use crate::outline::{OutlineBlock, inline_text};
+        let end = self.idx.max(start + 1); // idx is one past the closer line
+        let (kind, symbol, lemma, ann) = match block {
+            Block::Para {
+                symbol, lemma, ann, ..
+            } => ("para", Some(symbol.clone()), inline_text(lemma), ann),
+            Block::Stichoi {
+                symbol, lemma, ann, ..
+            } => ("stichoi", symbol.clone(), inline_text(lemma), ann),
+            Block::ParaDiaphane { ann, .. } => ("diaphane", None, String::new(), ann),
+            Block::MonadEnglossis { dialect, ann, .. } => {
+                ("englossis", Some(dialect.clone()), String::new(), ann)
+            }
+            _ => return,
+        };
+        self.outline.push(OutlineBlock {
+            kind,
+            symbol,
+            depth: self.depth - 1,
+            start: start + 1,
+            end,
+            lemma,
+            onym: ann.onym.clone(),
+            genoses: ann.genoses.clone(),
+        });
+    }
+
     fn parse_blocks(&mut self, dial: &Dialektos, closer: Option<&str>) -> Result<Vec<Block>> {
+        self.depth += 1;
+        let result = self.parse_blocks_inner(dial, closer);
+        self.depth -= 1;
+        result
+    }
+
+    fn parse_blocks_inner(&mut self, dial: &Dialektos, closer: Option<&str>) -> Result<Vec<Block>> {
         let opened_at = self.idx;
         let mut blocks = Vec::new();
         while self.idx < self.lines.len() {
@@ -194,8 +309,12 @@ impl Parser {
             {
                 return Ok(blocks);
             }
+            let start = self.idx;
             match self.step_para(dial, &line)? {
-                ParaStep::Block(b) => blocks.push(b),
+                ParaStep::Block(b) => {
+                    self.record_outline(&b, start);
+                    blocks.push(b);
+                }
                 ParaStep::Skipped => {}
                 ParaStep::Text => blocks.push(self.collect_paragraph(dial, closer)?),
             }
@@ -229,19 +348,22 @@ impl Parser {
                 if after.starts_with('(') {
                     return Ok(ParaStep::Text); // standalone onym in a paragraph
                 }
-                match dial.longest_match(&after) {
-                    Some(def) if matches!(def.form, SimForm::Para { .. }) => {
-                        // A group after the symbol that cannot be a
-                        // taxis (any group on a taxis-less sim; a
+                match resolve_sim_ref(dial, &after, self.loc(self.idx))? {
+                    Some(r) if matches!(r.def.form, SimForm::Para { .. }) => {
+                        // A group after the reference that cannot be
+                        // a taxis (any group on a taxis-less sim; a
                         // non-empty non-numeric group otherwise)
                         // means this line starts an ordinary
                         // paragraph containing a deixis.
-                        if deixis_not_taxis(def, &after) {
+                        let rest = &after[r.bytes..];
+                        if deixis_not_taxis(r.def, rest) {
                             return Ok(ParaStep::Text);
                         }
-                        let def = def.clone();
+                        let def = r.def.clone();
+                        let plero = r.plero.clone();
+                        let rest = rest.to_string();
                         Ok(ParaStep::Block(
-                            self.parse_para_simmere(dial, &def, &after)?,
+                            self.parse_para_simmere(dial, &def, &rest, plero)?,
                         ))
                     }
                     Some(_) => Ok(ParaStep::Text),
@@ -566,7 +688,8 @@ impl Parser {
         &mut self,
         dial: &Dialektos,
         def: &SimDef,
-        after_sigil: &str,
+        after_ref: &str,
+        plero: Option<String>,
     ) -> Result<Block> {
         let start = self.idx;
         let SimForm::Para {
@@ -579,7 +702,7 @@ impl Parser {
         else {
             unreachable!()
         };
-        let mut rest = &after_sigil[def.symbol.len()..];
+        let mut rest = after_ref;
 
         // Taxis.
         let mut taxis = None;
@@ -646,7 +769,12 @@ impl Parser {
         let lemma = self.scan_line(dial, lemma_text, start)?;
 
         self.idx += 1;
-        let closer = format!("{}{}", def.episymbol(), self.sig());
+        // A simmere closes in the spelling it opened with; a
+        // plerographic closer echoes the name as written.
+        let closer = match &plero {
+            Some(name) => format!("{{{name}}}{}", self.sig()),
+            None => format!("{}{}", def.episymbol(), self.sig()),
+        };
 
         // Line-structured grammata (`stichos` ostensive keyword):
         // strophes of inline-scanned lines until the episim line.
@@ -763,10 +891,13 @@ impl Parser {
         let after: String = line.chars().skip(run).collect();
         Ok(match run {
             1 => {
+                // Lookahead only: braced-name errors surface in the
+                // real parse, never here.
                 !after.starts_with('(')
-                    && dial
-                        .longest_match(&after)
-                        .is_some_and(|d| matches!(d.form, SimForm::Para { .. }))
+                    && matches!(
+                        resolve_sim_ref(dial, &after, self.loc(self.idx)),
+                        Ok(Some(r)) if matches!(r.def.form, SimForm::Para { .. })
+                    )
             }
             3 => {
                 let tri = self.tri();
@@ -1011,7 +1142,7 @@ impl Scanner {
                         continue;
                     }
                     let rest: String = self.chars[self.pos + 1..].iter().collect();
-                    let Some(def) = dial.longest_match(&rest) else {
+                    let Some(r) = resolve_sim_ref(dial, &rest, self.loc())? else {
                         let sym: String = rest
                             .chars()
                             .take_while(|&c| sigil::is_symbolic(c))
@@ -1021,12 +1152,19 @@ impl Scanner {
                             self.loc(),
                         ));
                     };
-                    let def = def.clone();
+                    let def = r.def.clone();
+                    let plero = r.plero.clone();
                     flush!();
-                    self.pos += 1 + def.symbol.chars().count();
+                    self.pos += 1 + r.chars;
                     match def.form {
                         SimForm::Endo => {
-                            let term = format!("{}{}", def.episymbol(), sig);
+                            // A simmere closes in the spelling it
+                            // opened with; a plerographic closer
+                            // echoes the name as written.
+                            let term = match &plero {
+                                Some(name) => format!("{{{name}}}{sig}"),
+                                None => format!("{}{}", def.episymbol(), sig),
+                            };
                             let content = self.scan(dial, Some(&term))?;
                             if !self.starts_with(&term) {
                                 return Err(Error::at(

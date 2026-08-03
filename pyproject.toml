@@ -1,0 +1,34 @@
+# PyPI packaging for the `atrep` CLI binary (dist: atrep-cli).
+# maturin bin bindings: the wheel carries the compiled `atrep`
+# binary in its scripts dir — no Python module, no ABI coupling
+# (wheels tag as py3-none-<platform>). The bindings library is the
+# separate `atrep` dist, built from the atrep-py repo.
+
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "atrep-cli"
+description = "The atrep command-line tool: check, respellings, outline, kanonizo, endo importers, morphisms, exo rendering, collation"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
+authors = [{ name = "Bojan Đuričković" }]
+requires-python = ">=3.9"
+keywords = ["atrep", "markup", "semantic", "document", "dialect", "cli"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Rust",
+  "Topic :: Text Processing :: Markup",
+]
+dynamic = ["version"]
+
+[project.urls]
+Repository = "https://gitlab.com/atrep/atrep-rs"
+
+[tool.maturin]
+bindings = "bin"
+manifest-path = "crates/atrep-cli/Cargo.toml"
+strip = true

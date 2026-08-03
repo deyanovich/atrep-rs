@@ -117,7 +117,7 @@ fn quasialign_inserts_binary_path_labels() {
         witness(&sentences(8, "Original")),
         witness(&sentences(8, "Translated")),
     ];
-    let report = quasialign(&mut docs, "steph", 120, None, None).unwrap();
+    let report = quasialign(&mut docs, "steph", 120, None, None, false).unwrap();
     assert_eq!(report.inserted[0], report.inserted[1]);
     assert!(
         report.inserted[0] >= 3,
@@ -149,10 +149,10 @@ fn quasialign_is_idempotent_and_weaves_plain() {
         witness(&sentences(8, "Original")),
         witness(&sentences(8, "Translated")),
     ];
-    quasialign(&mut docs, "steph", 120, None, None).unwrap();
+    quasialign(&mut docs, "steph", 120, None, None, false).unwrap();
     let first = (serialize(&docs[0]), serialize(&docs[1]));
     // A second run finds the quasi cuts and touches nothing.
-    let again = quasialign(&mut docs, "steph", 120, None, None).unwrap();
+    let again = quasialign(&mut docs, "steph", 120, None, None, false).unwrap();
     assert_eq!(again.inserted, vec![0, 0]);
     assert_eq!(again.skipped, vec!["1a".to_string()]);
     assert_eq!(first.0, serialize(&docs[0]));
@@ -174,7 +174,7 @@ fn quasialign_is_idempotent_and_weaves_plain() {
 fn quasialign_under_threshold_is_a_no_op() {
     let mut docs = vec![witness("Small. Tiny."), witness("Klein. Winzig.")];
     let before = serialize(&docs[0]);
-    let report = quasialign(&mut docs, "steph", 120, None, None).unwrap();
+    let report = quasialign(&mut docs, "steph", 120, None, None, false).unwrap();
     assert_eq!(report.inserted, vec![0, 0]);
     assert_eq!(before, serialize(&docs[0]));
 }
@@ -203,7 +203,7 @@ fn quasialign_prefix_scopes_to_one_witness() {
             diaphane("eng", &sentences(8, "Translated")),
         ],
     }];
-    let report = quasialign(&mut docs, "steph", 120, Some("zyg-grc"), None).unwrap();
+    let report = quasialign(&mut docs, "steph", 120, Some("zyg-grc"), None, false).unwrap();
     assert!(report.inserted[0] >= 3, "{}", report.inserted[0]);
     let s = serialize(&docs[0]);
     // Cuts sit inside the grc stream only.
@@ -213,7 +213,7 @@ fn quasialign_prefix_scopes_to_one_witness() {
     assert!(!eng.contains("1a|"), "{s}");
     // A second run scoped to the other witness cuts that stream
     // at its own midpoints, reusing the same label space.
-    let report = quasialign(&mut docs, "steph", 120, Some("zyg-eng"), None).unwrap();
+    let report = quasialign(&mut docs, "steph", 120, Some("zyg-eng"), None, false).unwrap();
     assert!(report.inserted[0] >= 3, "{}", report.inserted[0]);
     let s = serialize(&docs[0]);
     let eng = s.split(".@@@.zyg-grc").nth(1).unwrap();
@@ -337,4 +337,106 @@ fn zygosis_hoists_containers_at_cuts() {
     };
     assert!(pos("Before the cut.") < pos("steph:1a"), "{s}");
     assert!(pos("After the cut.") > pos("steph:1a"), "{s}");
+}
+
+// ---- quasialign: verse (ask 16 — leaf-block-boundary tier) ----
+
+use atrep::dendron::Strophe;
+
+fn stichoi_block(strophes: &[&[&str]]) -> Block {
+    Block::Stichoi {
+        symbol: None,
+        taxis: None,
+        lemma: Vec::new(),
+        strophes: strophes
+            .iter()
+            .map(|ls| Strophe(ls.iter().map(|l| vec![Inline::Text((*l).into())]).collect()))
+            .collect(),
+        hypograph: Vec::new(),
+        bracket_matching: false,
+        ann: Annotations {
+            onym: None,
+            genoses: Vec::new(),
+        },
+    }
+}
+
+fn verse_lines(n: usize, stem: &str) -> Vec<String> {
+    (1..=n)
+        .map(|i| format!("{stem} verse line number {i} padded out to length,"))
+        .collect()
+}
+
+/// Verse cuts land on leaf-block and strophe heads (the block
+/// tier, preferred over everything): a block head becomes a
+/// standalone milestone paragraph before the block, a strophe
+/// head a milestone prepended to the strophe's first line —
+/// and stichoi lines are never split.
+#[test]
+fn quasialign_cuts_verse_at_block_and_strophe_heads() {
+    let lines = verse_lines(3, "Alpha");
+    let l: Vec<&str> = lines.iter().map(String::as_str).collect();
+    let two_strophes: &[&[&str]] = &[&l, &l];
+    let doc = Document {
+        dialect_id: "litogramma".into(),
+        dialect_version: None,
+        blocks: vec![
+            Block::Paragraph(vec![milestone("1a")]),
+            stichoi_block(two_strophes),
+            stichoi_block(two_strophes),
+        ],
+    };
+    let mut docs = vec![doc];
+    let report = quasialign(&mut docs, "steph", 200, None, None, false).unwrap();
+    assert!(report.inserted[0] >= 3, "got {}", report.inserted[0]);
+    let s = serialize(&docs[0]);
+    // Block head: a standalone milestone paragraph between the
+    // stichoi blocks (the corpus-canonical verse anchor form).
+    assert!(s.contains("@(\"steph:1a|1\")\n"), "{s}");
+    // Strophe head: the milestone opens the strophe's first line.
+    assert!(
+        s.contains("@(\"steph:1a|0.1\")Alpha verse line number 1"),
+        "{s}"
+    );
+    // No line was cut mid-way: every original line survives whole.
+    for line in &lines {
+        assert!(s.contains(line.as_str()), "line broken: {line}\n{s}");
+    }
+    // Round-trips through the parser.
+    let koine = s.replacen("@@@!litogramma", "@@@!koine", 1);
+    let reparsed = atrep::parser::parse_document(&koine, std::path::Path::new("t.atd")).unwrap();
+    assert_eq!(serialize(&reparsed), koine);
+}
+
+/// A milestone-less pure-verse document chunks via the implicit
+/// `^` anchor: single-strophe blocks cut at line boundaries
+/// (sentence tier), the emitted `^|…` values re-parse, and a
+/// second run recognizes the cuts inside the stichoi and skips.
+#[test]
+fn quasialign_milestone_less_verse_cuts_and_reparses() {
+    let lines = verse_lines(12, "Beta");
+    let l: Vec<&str> = lines.iter().map(String::as_str).collect();
+    let one_strophe: &[&[&str]] = &[&l];
+    let doc = Document {
+        dialect_id: "litogramma".into(),
+        dialect_version: None,
+        blocks: vec![stichoi_block(one_strophe)],
+    };
+    let mut docs = vec![doc];
+    let report = quasialign(&mut docs, "steph", 150, None, None, false).unwrap();
+    assert!(report.inserted[0] >= 2, "got {}", report.inserted[0]);
+    let s = serialize(&docs[0]);
+    // Cuts are line-head prepends under the implicit anchor.
+    assert!(s.contains("@(\"steph:^|1\")Beta verse line"), "{s}");
+    for line in &lines {
+        assert!(s.contains(line.as_str()), "line broken: {line}\n{s}");
+    }
+    // The `^|…` value is legal on re-parse (implicit-anchor form).
+    let koine = s.replacen("@@@!litogramma", "@@@!koine", 1);
+    let reparsed = atrep::parser::parse_document(&koine, std::path::Path::new("t.atd")).unwrap();
+    assert_eq!(serialize(&reparsed), koine);
+    // Idempotent: the second run sees the in-stichoi cuts.
+    let again = quasialign(&mut docs, "steph", 150, None, None, false).unwrap();
+    assert_eq!(again.inserted, vec![0]);
+    assert_eq!(again.skipped, vec!["^".to_string()]);
 }

@@ -4,6 +4,10 @@ description = "atrep command-line tool (pilot implementation)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+keywords = ["atrep", "markup", "semantic", "document", "cli"]
+categories = ["command-line-utilities", "text-processing"]
 
 [[bin]]
 name = "atrep"

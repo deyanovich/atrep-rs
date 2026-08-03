@@ -431,11 +431,17 @@ fn parse_html_attrs(text: &str) -> Result<Vec<(String, String)>> {
         rest = rest[name_end..].trim_start();
         let value = if let Some(after_eq) = rest.strip_prefix('=') {
             let after_eq = after_eq.trim_start();
-            let Some(quoted) = after_eq.strip_prefix('"') else {
-                return Err(html_err(format!("unquoted attribute value after `{name}`")));
+            // XML allows either quote character (rend='indent'
+            // in Perseus epidoc files).
+            let quote = match after_eq.chars().next() {
+                Some(q @ ('"' | '\'')) => q,
+                _ => {
+                    return Err(html_err(format!("unquoted attribute value after `{name}`")));
+                }
             };
+            let quoted = &after_eq[1..];
             let end = quoted
-                .find('"')
+                .find(quote)
                 .ok_or_else(|| html_err(format!("unterminated attribute `{name}`")))?;
             rest = quoted[end + 1..].trim_start();
             decode_entities(&quoted[..end])
@@ -1305,10 +1311,22 @@ fn tokenize_xml(xml: &str) -> Result<Vec<Tok>> {
                 continue;
             }
             if rest.starts_with("<?") || rest.starts_with("<!") {
+                // A DOCTYPE may carry an internal DTD subset
+                // (`[ … ]>`, Perseus P4 parameter entities): the
+                // declaration then ends at `]>`, not the first `>`.
                 let end = rest
                     .find('>')
                     .ok_or_else(|| tei_err("unterminated declaration".into()))?;
-                rest = &rest[end + 1..];
+                if let Some(bracket) = rest.find('[')
+                    && bracket < end
+                {
+                    let close = rest[bracket..]
+                        .find("]>")
+                        .ok_or_else(|| tei_err("unterminated declaration".into()))?;
+                    rest = &rest[bracket + close + 2..];
+                } else {
+                    rest = &rest[end + 1..];
+                }
                 continue;
             }
             let end = rest
@@ -1343,9 +1361,93 @@ fn tokenize_xml(xml: &str) -> Result<Vec<Tok>> {
     Ok(toks)
 }
 
+/// Inject a synthetic `<milestone unit="{scheme}" n="{value}"/>`
+/// immediately after every `<l n="N">` open whose N is a positive
+/// integer and (N == 1 or N % 5 == 0). The book prefix is the `n`
+/// of the innermost enclosing `<div type|subtype="book">` with a
+/// numeric n (value `{book}.{N}`), else the bare `{N}`.
+fn tei_inject_line_milestones(toks: &mut Vec<Tok>, scheme: &str) {
+    let mut books: Vec<Option<u32>> = Vec::new();
+    let mut out: Vec<Tok> = Vec::with_capacity(toks.len());
+    for tok in std::mem::take(toks) {
+        let mut milestone: Option<Tok> = None;
+        match &tok {
+            Tok::Open {
+                name,
+                attrs,
+                self_closing,
+            } if name == "div" && !self_closing => {
+                let is_book = [attr(attrs, "type"), attr(attrs, "subtype")]
+                    .iter()
+                    .flatten()
+                    .any(|v| v.eq_ignore_ascii_case("book"));
+                let book = is_book
+                    .then(|| attr(attrs, "n").and_then(|n| n.trim().parse::<u32>().ok()))
+                    .flatten();
+                books.push(book);
+            }
+            Tok::Close(name) if name == "div" => {
+                books.pop();
+            }
+            Tok::Open { name, attrs, .. } if name == "l" => {
+                if let Some(n) = attr(attrs, "n").and_then(|n| n.trim().parse::<u32>().ok())
+                    && (n == 1 || n % 5 == 0)
+                {
+                    let value = match books.iter().rev().find_map(|b| *b) {
+                        Some(b) => format!("{b}.{n}"),
+                        None => n.to_string(),
+                    };
+                    milestone = Some(Tok::Open {
+                        name: "milestone".to_string(),
+                        attrs: vec![
+                            ("unit".to_string(), scheme.to_string()),
+                            ("n".to_string(), value),
+                        ],
+                        self_closing: true,
+                    });
+                }
+            }
+            _ => {}
+        }
+        out.push(tok);
+        if let Some(ms) = milestone {
+            out.push(ms);
+        }
+    }
+    *toks = out;
+}
+
 /// Import a TEI P5 document (basic subset) as litogramma.
 pub fn tei_to_document(xml: &str) -> Result<Document> {
-    let toks = tokenize_xml(xml)?;
+    tei_to_document_lines(xml, None)
+}
+
+/// As `tei_to_document`, but with an opt-in line-milestone
+/// pre-pass: when `line_milestones` is set, every `<l n="N">`
+/// verse line whose N is a positive integer with N == 1 or
+/// N % 5 == 0 gets a synthetic milestone under that scheme as its
+/// first inline (value `{book}.{N}` under the innermost numeric
+/// book div, else `{N}`).
+pub fn tei_to_document_lines(xml: &str, line_milestones: Option<&str>) -> Result<Document> {
+    let mut toks = tokenize_xml(xml)?;
+    // TEI P4 numbered divisions (div1..div7, Perseus P4 files)
+    // normalize to the P5 nested div: depth is recomputed from
+    // type/nesting either way.
+    for tok in &mut toks {
+        match tok {
+            Tok::Open { name, .. } | Tok::Close(name)
+                if name.len() == 4
+                    && name.starts_with("div")
+                    && name.as_bytes()[3].is_ascii_digit() =>
+            {
+                *name = "div".to_string();
+            }
+            _ => {}
+        }
+    }
+    if let Some(scheme) = line_milestones {
+        tei_inject_line_milestones(&mut toks, scheme);
+    }
     // A body of <entry> elements is a dictionary: the Lex-0
     // path imports it as lexigramma.
     if tei_is_dictionary(&toks) {
@@ -1357,8 +1459,8 @@ pub fn tei_to_document(xml: &str) -> Result<Document> {
     while i < toks.len() {
         match &toks[i] {
             Tok::Text(t) if t.trim().is_empty() => i += 1,
-            Tok::Open { name, .. } if name == "TEI" => i += 1,
-            Tok::Close(name) if name == "TEI" => i += 1,
+            Tok::Open { name, .. } if name == "TEI" || name == "TEI.2" => i += 1,
+            Tok::Close(name) if name == "TEI" || name == "TEI.2" => i += 1,
             Tok::Open { name, .. } if name == "teiHeader" => {
                 let next = tei_header(&toks, i + 1, &mut blocks)?;
                 i = next;
@@ -1387,6 +1489,18 @@ pub fn tei_to_document(xml: &str) -> Result<Document> {
                     i += 1;
                 } else {
                     i = skip_element(&toks, i + 1, "interpGrp".to_string())?;
+                }
+            }
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "pb" || name == "gap" => {
+                // a page break / gap between text-level elements
+                // (Perseus emits <pb/> before <front>) — tolerated
+                let sc = *self_closing;
+                let n2 = name.clone();
+                i += 1;
+                if !sc && matches!(toks.get(i), Some(Tok::Close(n)) if *n == n2) {
+                    i += 1;
                 }
             }
             other => return Err(tei_err(format!("unexpected {other:?} at document level"))),
@@ -1512,11 +1626,20 @@ fn tei_header(toks: &[Tok], mut i: usize, blocks: &mut Vec<Block>) -> Result<usi
 /// falling back to unit; the unit rides as a presentation
 /// genos when both are present (a Stephanus page renders
 /// bolder than a section in a Loeb margin).
-fn tei_milestone_mono(n: &str, attrs: &[(String, String)]) -> Inline {
+/// A milestone n that reads as a prose TITLE, not a reference
+/// coordinate (Ovid n="Quattuor aetates. Gigantes."): callers
+/// treat it as furniture.
+fn tei_milestone_is_title(n: &str) -> bool {
+    n.trim().chars().count() > 24
+}
+
+fn tei_milestone_mono(n: &str, attrs: &[(String, String)]) -> Option<Inline> {
     let resp = attr(attrs, "resp")
         .or_else(|| attr(attrs, "ed").filter(|e| e.len() > 1))
         .map(|r| r.to_ascii_lowercase());
-    let unit = attr(attrs, "unit").map(|u| u.to_ascii_lowercase());
+    // Reference-system names ride as kebab-case schemes/genoses:
+    // underscores in a unit (alt_poem_line) become hyphens.
+    let unit = attr(attrs, "unit").map(|u| u.to_ascii_lowercase().replace('_', "-"));
     let scheme = resp
         .clone()
         .or_else(|| unit.clone())
@@ -1528,8 +1651,38 @@ fn tei_milestone_mono(n: &str, attrs: &[(String, String)]) -> Inline {
     let value: String = n
         .trim()
         .chars()
-        .map(|c| if c.is_whitespace() { '-' } else { c })
+        .map(|c| {
+            if c.is_whitespace() {
+                '-'
+            } else if c.is_alphanumeric() || matches!(c, '.' | ':' | '-' | '_') {
+                c
+            } else {
+                // uncertain-numbering junk (Livy n="5??"):
+                // sanitize to a valid milestone value
+                '-'
+            }
+        })
         .collect();
+    let value = value
+        .trim_matches(|c| c == '-' || c == '.')
+        .replace(".-", "-")
+        .replace("-.", "-");
+    let value = {
+        let mut v = String::new();
+        let mut dash = false;
+        for c in value.chars() {
+            if c == '-' {
+                if !dash {
+                    v.push(c);
+                }
+                dash = true;
+            } else {
+                v.push(c);
+                dash = false;
+            }
+        }
+        v
+    };
     // Perseus's ~5-line "card" is an arbitrary witness division,
     // not a canonical reference: it lives in the perseus:
     // namespace (registry ruling 2026-07-15, perseus:card:N).
@@ -1542,14 +1695,20 @@ fn tei_milestone_mono(n: &str, attrs: &[(String, String)]) -> Inline {
     } else {
         (scheme, value, genoses)
     };
-    Inline::Milestone {
+    // A value that sanitizes to nothing citable (empty, or stray
+    // punctuation debris) is dropped rather than emitted as an
+    // invalid coordinate.
+    if !crate::sigil::is_valid_milestone_value(&value) {
+        return None;
+    }
+    Some(Inline::Milestone {
         scheme,
         value,
         ann: Annotations {
             onym: None,
             genoses,
         },
-    }
+    })
 }
 
 /// A run of consecutive verse lines (and interleaved stage
@@ -1707,7 +1866,9 @@ fn tei_is_verse_quote(toks: &[Tok], i: usize) -> bool {
     while matches!(&toks.get(probe), Some(Tok::Text(t)) if t.trim().is_empty()) {
         probe += 1;
     }
-    matches!(&toks.get(probe), Some(Tok::Open { name, .. }) if name == "l" || name == "lg")
+    // A quoted drama excerpt (<sp> speeches) reads as verse too.
+    matches!(&toks.get(probe), Some(Tok::Open { name, .. })
+        if name == "l" || name == "lg" || name == "sp")
 }
 
 /// The lines of an inline verse quotation, joined " / ".
@@ -1723,6 +1884,40 @@ fn tei_inline_verse_quote(
             Tok::Close(name) if name == "quote" => return Ok((out, vq_bodies, i + 1)),
             Tok::Close(name) if name == "lg" => i += 1,
             Tok::Open { name, .. } if name == "lg" => i += 1,
+            Tok::Open { name, .. } if name == "sp" => i += 1,
+            Tok::Close(name) if name == "sp" => i += 1,
+            Tok::Open { name, .. } if name == "speaker" => {
+                // a drama excerpt: the speaker label leads its line
+                let ((content, inner), next) = tei_inline_run(toks, i + 1, "speaker", notes)?;
+                if !out.is_empty() {
+                    out.push(Inline::Text(" / ".to_string()));
+                }
+                out.extend(content);
+                vq_bodies.extend(inner);
+                i = next;
+            }
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "quote" => {
+                // a quotation nested within the quoted verse
+                if *self_closing {
+                    i += 1;
+                    continue;
+                }
+                let (mut content, inner, next) = tei_inline_verse_quote(toks, i + 1, notes)?;
+                trim_inline_edges(&mut content);
+                if !out.is_empty() {
+                    out.push(Inline::Text(" / ".to_string()));
+                }
+                out.push(Inline::Endo {
+                    symbol: "\"\"".to_string(),
+                    content,
+                    bracket_matching: true,
+                    ann: Annotations::default(),
+                });
+                vq_bodies.extend(inner);
+                i = next;
+            }
             Tok::Text(t) if t.trim().is_empty() => i += 1,
             Tok::Open {
                 name, self_closing, ..
@@ -1753,8 +1948,11 @@ fn tei_inline_verse_quote(
                 attrs,
                 self_closing,
             } if name == "milestone" => {
-                if let Some(n) = attr(attrs, "n") {
-                    out.push(tei_milestone_mono(n, attrs));
+                if let Some(ms) = attr(attrs, "n")
+                    .filter(|n| !tei_milestone_is_title(n))
+                    .and_then(|n| tei_milestone_mono(n, attrs))
+                {
+                    out.push(ms);
                 } else {
                     // an n-less milestone (unit=para print-
                     // paragraph anchor) still separates words
@@ -1784,11 +1982,25 @@ fn tei_inline_verse_quote(
                 });
                 i = next;
             }
-            Tok::Open { name, .. } if name == "note" => {
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "note" => {
+                if *self_closing {
+                    // <note/>: an empty note — nothing to emit
+                    i += 1;
+                    continue;
+                }
                 // apparatus notes inside a quoted verse run drop
                 i = skip_element(toks, i + 1, "note".to_string())?;
             }
-            Tok::Open { name, .. } if name == "bibl" => {
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "bibl" => {
+                if *self_closing {
+                    // <bibl/>: citation data in attributes only
+                    i += 1;
+                    continue;
+                }
                 let ((content, inner), next) = tei_inline_run(toks, i + 1, "bibl", notes)?;
                 if !out.is_empty() {
                     out.push(Inline::Text(" ".to_string()));
@@ -1805,6 +2017,16 @@ fn tei_inline_verse_quote(
                 let sc = *self_closing;
                 i += 1;
                 if !sc && matches!(toks.get(i), Some(Tok::Close(n)) if n == "gap") {
+                    i += 1;
+                }
+            }
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "pb" => {
+                // a print page turn mid-quote — no content
+                let sc = *self_closing;
+                i += 1;
+                if !sc && matches!(toks.get(i), Some(Tok::Close(n)) if n == "pb") {
                     i += 1;
                 }
             }
@@ -1917,7 +2139,14 @@ fn tei_ab_lines(
                 bodies.extend(inner);
                 i = next;
             }
-            Tok::Open { name, .. } if name == "note" => {
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "note" => {
+                if *self_closing {
+                    // <note/>: an empty note — nothing to emit
+                    i += 1;
+                    continue;
+                }
                 *notes += 1;
                 let onym = format!("n{notes}");
                 let (children, next) = tei_note_body(toks, i + 1, notes)?;
@@ -1990,6 +2219,17 @@ fn tei_blocks(
         match &toks[i] {
             Tok::Close(name) if name == until => return Ok((blocks, i + 1)),
             Tok::Text(t) if t.trim().is_empty() => i += 1,
+            Tok::Text(t)
+                if t.trim().chars().count() <= 3
+                    && t.trim()
+                        .chars()
+                        .all(|c| c.is_ascii_punctuation() || c.is_whitespace()) =>
+            {
+                // stray punctuation orphaned outside a block (a
+                // trailing `.` or `?` left by overlapping markup):
+                // dropped, not an error.
+                i += 1;
+            }
             Tok::Text(t) => {
                 return Err(tei_err(format!("bare text at block level: `{}`", t.trim())));
             }
@@ -2039,7 +2279,14 @@ fn tei_blocks(
                 }
                 i = next;
             }
-            Tok::Open { name, .. } if name == "head" => {
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "head" => {
+                if *self_closing {
+                    // <head/>: an empty heading — nothing to emit
+                    i += 1;
+                    continue;
+                }
                 // Wrapped in a sentinel endo; the enclosing div
                 // promotes it to the lemma.
                 let ((content, bodies), next) = {
@@ -2059,6 +2306,26 @@ fn tei_blocks(
                 let (block, next) = tei_said_paragraph(toks, i, notes)?;
                 blocks.push(block);
                 i = next;
+            }
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "app" || name == "listPerson" => {
+                if *self_closing {
+                    i += 1;
+                } else {
+                    let n2 = name.clone();
+                    i = skip_element(toks, i + 1, n2)?;
+                }
+            }
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "pb" || name == "gap" => {
+                let sc = *self_closing;
+                let n2 = name.clone();
+                i += 1;
+                if !sc && matches!(toks.get(i), Some(Tok::Close(n)) if *n == n2) {
+                    i += 1;
+                }
             }
             Tok::Open {
                 name, self_closing, ..
@@ -2108,12 +2375,26 @@ fn tei_blocks(
                 blocks.extend(inner);
                 i = next;
             }
-            Tok::Open { name, .. } if name == "p" => {
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "p" => {
+                if *self_closing {
+                    // <p/>: an empty paragraph — nothing to emit
+                    i += 1;
+                    continue;
+                }
                 let mut probe = i + 1;
                 while matches!(&toks.get(probe), Some(Tok::Text(t)) if t.trim().is_empty()) {
                     probe += 1;
                 }
-                if matches!(&toks.get(probe), Some(Tok::Open { name, .. }) if name == "said") {
+                // A said paragraph only when the said spans the
+                // whole p: narration interleaved around saids
+                // (Xenophon `<said>For,</said> said he, <said>`)
+                // stays a plain paragraph flow with quoted
+                // phrases.
+                if matches!(&toks.get(probe), Some(Tok::Open { name, .. }) if name == "said")
+                    && tei_said_spans_paragraph(toks, probe)
+                {
                     let (block, next) = tei_said_paragraph(toks, probe, notes)?;
                     blocks.push(block);
                     i = next;
@@ -2143,8 +2424,11 @@ fn tei_blocks(
                 attrs,
                 self_closing,
             } if name == "milestone" => {
-                if let Some(n) = attr(attrs, "n") {
-                    blocks.push(Block::Paragraph(vec![tei_milestone_mono(n, attrs)]));
+                if let Some(ms) = attr(attrs, "n")
+                    .filter(|n| !tei_milestone_is_title(n))
+                    .and_then(|n| tei_milestone_mono(n, attrs))
+                {
+                    blocks.push(Block::Paragraph(vec![ms]));
                 }
                 i += 1;
                 if !self_closing {
@@ -2241,7 +2525,14 @@ fn tei_blocks(
                     i = skip_element(toks, i, name.clone())?;
                 }
             }
-            Tok::Open { name, .. } if name == "note" => {
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "note" => {
+                if *self_closing {
+                    // <note/>: an empty note — nothing to emit
+                    i += 1;
+                    continue;
+                }
                 let (children, next) = tei_note_body(toks, i + 1, notes)?;
                 blocks.push(Block::Para {
                     symbol: "^!".to_string(),
@@ -2253,6 +2544,20 @@ fn tei_blocks(
                     ann: Annotations::default(),
                 });
                 i = next;
+            }
+            Tok::Open {
+                name, self_closing, ..
+            } if matches!(
+                name.as_str(),
+                "listPerson" | "pb" | "space" | "desc" | "docAuthor"
+            ) =>
+            {
+                let sc = *self_closing;
+                let n2 = name.clone();
+                i += 1;
+                if !sc {
+                    i = skip_element(toks, i, n2)?;
+                }
             }
             Tok::Open { name, .. } if name == "castList" => {
                 let (items, next) = tei_cast_list(toks, i + 1, notes)?;
@@ -2308,6 +2613,12 @@ fn tei_blocks(
                 let (inner, next) = tei_blocks(toks, i + 1, &n, depth, notes)?;
                 blocks.extend(inner);
                 i = next;
+            }
+            Tok::Close(name) if until != name.as_str() && name == "p" => {
+                // overlapping markup (a said paragraph closed at
+                // its </said>, orphaning the outer </p>): the
+                // stray close is structure noise — skip
+                i += 1;
             }
             other => {
                 return Err(tei_err(format!("unsupported {other:?} at block level")));
@@ -2439,16 +2750,21 @@ fn tei_speech(
     notes: &mut usize,
 ) -> Result<(Vec<Block>, usize)> {
     let mut lemma: Vec<Inline> = Vec::new();
+    // Note bodies from the speaker run (an editor's note on the
+    // dramatis persona) must land with the speech: a dropped
+    // body orphans its deixis callout.
+    let mut lemma_bodies: Vec<Block> = Vec::new();
     // The speaker leads; everything after is block content.
     loop {
         match &toks[i] {
             Tok::Text(t) if t.trim().is_empty() => i += 1,
             Tok::Open { name, .. } if name == "speaker" => {
-                let ((content, _), next) = {
+                let ((content, inner), next) = {
                     let (run, next) = tei_inline_run(toks, i + 1, "speaker", notes)?;
                     (run, next)
                 };
                 lemma = content;
+                lemma_bodies = inner;
                 i = next;
                 break;
             }
@@ -2485,8 +2801,16 @@ fn tei_speech(
         && matches!(&toks.get(probe), Some(Tok::Open { name, .. }) if name == "l" || name == "lg")
     {
         let (lines, bodies, next) = tei_speech_lines(toks, probe, notes)?;
+        // a speakerless <sp> (continuation after an interjection)
+        // must not open a lemma-less verse-dialogue: its lines
+        // splice as a plain stichoi block in the flow
+        let symbol = if lemma.is_empty() {
+            "~".to_string()
+        } else {
+            ":~".to_string()
+        };
         let mut out = vec![Block::Stichoi {
-            symbol: Some(":~".to_string()),
+            symbol: Some(symbol),
             taxis: None,
             lemma,
             strophes: vec![Strophe(lines)],
@@ -2494,22 +2818,29 @@ fn tei_speech(
             bracket_matching: true,
             ann: Annotations::default(),
         }];
+        out.extend(lemma_bodies);
         out.extend(bodies);
         return Ok((out, next));
     }
     let (children, next) = tei_blocks(toks, i, "sp", depth, notes)?;
-    Ok((
-        vec![Block::Para {
-            symbol: ":".to_string(),
-            taxis: None,
-            lemma,
-            children,
-            hypograph: Vec::new(),
-            bracket_matching: true,
-            ann: Annotations::default(),
-        }],
-        next,
-    ))
+    // a speakerless <sp> (continuation) splices bare: dialogue
+    // sims require a lemma
+    if lemma.is_empty() {
+        let mut out = children;
+        out.extend(lemma_bodies);
+        return Ok((out, next));
+    }
+    let mut out = vec![Block::Para {
+        symbol: ":".to_string(),
+        taxis: None,
+        lemma,
+        children,
+        hypograph: Vec::new(),
+        bracket_matching: true,
+        ann: Annotations::default(),
+    }];
+    out.extend(lemma_bodies);
+    Ok((out, next))
 }
 
 /// The lines of a verse speech: l elements are lines, lg
@@ -2541,7 +2872,14 @@ fn tei_speech_lines(
                 bodies.extend(inner);
                 i = next;
             }
-            Tok::Open { name, .. } if name == "note" => {
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "note" => {
+                if *self_closing {
+                    // <note/>: an empty note — nothing to emit
+                    i += 1;
+                    continue;
+                }
                 // A note between lines: the callout rides the end
                 // of the previous line.
                 *notes += 1;
@@ -2585,11 +2923,16 @@ fn tei_speech_lines(
                 name,
                 attrs,
                 self_closing,
-            } if name == "milestone" || name == "lb" || name == "pb" => {
+            } if name == "milestone" || name == "lb" || name == "pb" || name == "gap" => {
                 if name == "milestone"
-                    && let Some(n) = attr(attrs, "n")
+                    && let Some(ms) = attr(attrs, "n")
+                        .filter(|n| !tei_milestone_is_title(n))
+                        .and_then(|n| tei_milestone_mono(n, attrs))
                 {
-                    lines.push(vec![tei_milestone_mono(n, attrs)]);
+                    lines.push(vec![ms]);
+                } else if name == "gap" {
+                    // lost lines between verses render as a lacuna
+                    lines.push(vec![Inline::Text("[\u{2026}]".to_string())]);
                 }
                 i += 1;
                 if !self_closing {
@@ -2607,6 +2950,35 @@ fn tei_speech_lines(
 /// A Perseus dialogue paragraph: <p><said who><label>Speaker.
 /// </label> speech</said></p> becomes a dialogue block whose
 /// lemma is the label (sans trailing period).
+/// Whether the <said> opening at `i` runs to the end of its
+/// paragraph (only whitespace between its close and the </p>).
+fn tei_said_spans_paragraph(toks: &[Tok], i: usize) -> bool {
+    let mut depth = 0usize;
+    let mut j = i;
+    while j < toks.len() {
+        match &toks[j] {
+            Tok::Open {
+                name,
+                self_closing: false,
+                ..
+            } if name == "said" => depth += 1,
+            Tok::Close(name) if name == "said" => {
+                depth -= 1;
+                if depth == 0 {
+                    j += 1;
+                    while matches!(&toks.get(j), Some(Tok::Text(t)) if t.trim().is_empty()) {
+                        j += 1;
+                    }
+                    return matches!(&toks.get(j), Some(Tok::Close(name)) if name == "p");
+                }
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    false
+}
+
 fn tei_said_paragraph(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Block, usize)> {
     // i points at the <said> open.
     let who = match &toks[i] {
@@ -2631,8 +3003,11 @@ fn tei_said_paragraph(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(
                 attrs,
                 self_closing,
             }) if name == "milestone" => {
-                if let Some(n) = attr(attrs, "n") {
-                    prefix.push(tei_milestone_mono(n, attrs));
+                if let Some(ms) = attr(attrs, "n")
+                    .filter(|n| !tei_milestone_is_title(n))
+                    .and_then(|n| tei_milestone_mono(n, attrs))
+                {
+                    prefix.push(ms);
                 }
                 i = probe + 1;
                 if !self_closing {
@@ -2673,6 +3048,16 @@ fn tei_said_paragraph(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(
     }
     let mut children = vec![Block::Paragraph(content)];
     children.extend(bodies);
+    if lemma.is_empty() {
+        // said/speech without an attribution: a plain paragraph
+        return Ok((
+            Block::ParaDiaphane {
+                children,
+                ann: Annotations::default(),
+            },
+            j,
+        ));
+    }
     Ok((
         Block::Para {
             symbol: ":".to_string(),
@@ -2714,7 +3099,14 @@ fn tei_cit(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Block, usiz
                 children.extend(inner);
                 i = next;
             }
-            Tok::Open { name, .. } if name == "bibl" => {
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "bibl" => {
+                if *self_closing {
+                    // <bibl/>: citation data in attributes only
+                    i += 1;
+                    continue;
+                }
                 let ((content, _), next) = tei_inline_run(toks, i + 1, "bibl", notes)?;
                 hypograph = content;
                 i = next;
@@ -2763,13 +3155,30 @@ fn tei_epigraph(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Block,
             }
             Tok::Open { name, .. } if name == "cit" => i += 1,
             Tok::Close(name) if name == "cit" => i += 1,
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "pb" || name == "gap" => {
+                let sc = *self_closing;
+                let n2 = name.clone();
+                i += 1;
+                if !sc && matches!(toks.get(i), Some(Tok::Close(n)) if *n == n2) {
+                    i += 1;
+                }
+            }
             Tok::Open { name, .. } if name == "lg" => {
                 let (block, bodies, next) = tei_verse(toks, i + 1, notes)?;
                 children.push(block);
                 children.extend(bodies);
                 i = next;
             }
-            Tok::Open { name, .. } if name == "bibl" => {
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "bibl" => {
+                if *self_closing {
+                    // <bibl/>: citation data in attributes only
+                    i += 1;
+                    continue;
+                }
                 let ((content, _), next) = {
                     let (run, next) = tei_inline_run(toks, i + 1, "bibl", notes)?;
                     (run, next)
@@ -3131,7 +3540,19 @@ fn tei_inline_run(
                 bodies.extend(inner_bodies);
                 i = next;
             }
-            Tok::Open { name, attrs, .. } if name == "q" || name == "said" => {
+            Tok::Open {
+                name,
+                attrs,
+                self_closing,
+            } if name == "q" || name == "said" => {
+                if *self_closing {
+                    // <q/> (Perseus type="unspecified"): an empty
+                    // quotation-boundary marker — nothing to emit;
+                    // consuming it as an open would swallow the
+                    // enclosing element's close
+                    i += 1;
+                    continue;
+                }
                 let genoses = if name == "said" || attr(attrs, "who").is_some() {
                     vec!["said".to_string()]
                 } else {
@@ -3261,8 +3682,11 @@ fn tei_inline_run(
             } if name == "gap" || name == "milestone" => {
                 if name == "gap" {
                     inlines.push(Inline::Text("[\u{2026}]".to_string()));
-                } else if let Some(n) = attr(attrs, "n") {
-                    inlines.push(tei_milestone_mono(n, attrs));
+                } else if let Some(ms) = attr(attrs, "n")
+                    .filter(|n| !tei_milestone_is_title(n))
+                    .and_then(|n| tei_milestone_mono(n, attrs))
+                {
+                    inlines.push(ms);
                 } else {
                     // an n-less milestone (unit=para print-
                     // paragraph anchor) still separates words
@@ -3296,41 +3720,61 @@ fn tei_inline_run(
                 bodies.extend(inner);
                 i = next;
             }
-            Tok::Open { name, .. }
-                if matches!(
-                    name.as_str(),
-                    "add"
-                        | "name"
-                        | "persName"
-                        | "placeName"
-                        | "orgName"
-                        | "rs"
-                        | "date"
-                        | "time"
-                        | "num"
-                        | "measure"
-                        | "mentioned"
-                        | "seg"
-                        | "forename"
-                        | "surname"
-                        | "roleName"
-                        | "genName"
-                        | "nameLink"
-                        | "span"
-                        | "s"
-                ) =>
+            Tok::Open {
+                name, self_closing, ..
+            } if matches!(
+                name.as_str(),
+                "add"
+                    | "name"
+                    | "persName"
+                    | "placeName"
+                    | "orgName"
+                    | "rs"
+                    | "date"
+                    | "dateRange"
+                    | "author"
+                    | "time"
+                    | "num"
+                    | "measure"
+                    | "mentioned"
+                    | "seg"
+                    | "forename"
+                    | "surname"
+                    | "roleName"
+                    | "genName"
+                    | "nameLink"
+                    | "span"
+                    | "s"
+                    | "addName"
+                    | "abbr"
+                    | "ex"
+                    | "expan"
+                    | "w"
+            ) =>
             {
                 // Transparent wrappers: the text carries, the
-                // markup does not (reading-text policy).
+                // markup does not (reading-text policy). A
+                // self-closing form carries nothing.
+                if *self_closing {
+                    i += 1;
+                    continue;
+                }
                 let n = name.clone();
                 let ((content, inner), next) = tei_inline_run(toks, i + 1, &n, notes)?;
                 inlines.extend(content);
                 bodies.extend(inner);
                 i = next;
             }
-            Tok::Open { name, .. } if name == "bibl" => {
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "bibl" => {
                 // an inline citation (after a cit quote): the
                 // text carries, space-separated from neighbours
+                if *self_closing {
+                    // <bibl/>: citation data in attributes only
+                    i += 1;
+                    continue;
+                }
                 let ((content, inner), next) = tei_inline_run(toks, i + 1, "bibl", notes)?;
                 if !matches!(inlines.last(), Some(Inline::Text(t)) if t.ends_with(char::is_whitespace))
                     && !inlines.is_empty()
@@ -3367,7 +3811,14 @@ fn tei_inline_run(
                 bodies.extend(inner);
                 i = next;
             }
-            Tok::Open { name, .. } if name == "note" => {
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "note" => {
+                if *self_closing {
+                    // <note/>: an empty note — nothing to emit
+                    i += 1;
+                    continue;
+                }
                 // A footnote: the callout is a deixis, the body a
                 // litogramma footnote block emitted after the
                 // enclosing paragraph. Bodies may hold their own
@@ -3435,9 +3886,24 @@ fn tei_inline_run(
             }
             Tok::Open {
                 name, self_closing, ..
-            } if name == "p" || name == "div" => {
-                // a paragraph (or a whole div section) inside an
-                // inline context (long Perseus notes): flatten
+            } if matches!(
+                name.as_str(),
+                "p" | "div"
+                    | "ab"
+                    | "text"
+                    | "body"
+                    | "head"
+                    | "opener"
+                    | "closer"
+                    | "salute"
+                    | "dateline"
+                    | "signed"
+            ) =>
+            {
+                // a paragraph (or a whole div section, an ab
+                // block, an embedded quoted document with its
+                // letter furniture) inside an inline context
+                // (long Perseus notes): flatten
                 if *self_closing {
                     i += 1;
                     continue;
@@ -3472,6 +3938,16 @@ fn tei_inline_run(
             }
             Tok::Open {
                 name, self_closing, ..
+            } if name == "app" => {
+                // apparatus criticus: editorial variants, not text
+                if *self_closing {
+                    i += 1;
+                } else {
+                    i = skip_element(toks, i + 1, "app".to_string())?;
+                }
+            }
+            Tok::Open {
+                name, self_closing, ..
             } if name == "delSpan" || name == "addSpan" || name == "anchor" => {
                 // editorial span anchors (deletion/addition to a
                 // #target) and their #xml:id targets: apparatus,
@@ -3485,9 +3961,20 @@ fn tei_inline_run(
             }
             Tok::Open {
                 name, self_closing, ..
+            } if name == "reg" => {
+                // standalone <reg> = a regularized/gazetteer form
+                // (Herodotus place annotations): apparatus, drop
+                if *self_closing {
+                    i += 1;
+                } else {
+                    i = skip_element(toks, i + 1, "reg".to_string())?;
+                }
+            }
+            Tok::Open {
+                name, self_closing, ..
             } if matches!(
                 name.as_str(),
-                "gloss" | "sic" | "corr" | "reg" | "unclear" | "label" | "supplied"
+                "gloss" | "sic" | "corr" | "unclear" | "label" | "supplied"
             ) =>
             {
                 // editorial wrappers: the text stays, typed as a
@@ -3530,7 +4017,32 @@ fn tei_inline_run(
             }
             Tok::Open {
                 name, self_closing, ..
-            } if name == "list" || name == "listPerson" => {
+            } if matches!(name.as_str(), "listPerson" | "castList" | "castGroup") => {
+                // dramatis-personae furniture inside a cast line —
+                // skipped wholesale like the block-level cast list.
+                if *self_closing {
+                    i += 1;
+                } else {
+                    let n2 = name.clone();
+                    i = skip_element(toks, i + 1, n2)?;
+                }
+            }
+            Tok::Open {
+                name, self_closing, ..
+            } if matches!(name.as_str(), "space" | "desc" | "figure") => {
+                // <space/> (metrical gap), <desc> (editorial
+                // description), and an inline <figure> (a print
+                // mark anchor) are print furniture — skipped.
+                if *self_closing {
+                    i += 1;
+                } else {
+                    let n2 = name.clone();
+                    i = skip_element(toks, i + 1, n2)?;
+                }
+            }
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "list" => {
                 // an inline list flattens, items joined "; "
                 if *self_closing {
                     i += 1;
@@ -3588,7 +4100,10 @@ fn tei_inline_run(
             }
             Tok::Close(name)
                 if until != name.as_str()
-                    && matches!(name.as_str(), "p" | "l" | "quote" | "sp") =>
+                    && matches!(
+                        name.as_str(),
+                        "p" | "l" | "quote" | "sp" | "persName" | "note" | "q" | "person"
+                    ) =>
             {
                 // overlapping markup (a block closed across the
                 // run's opener, e.g. <p>…<quote>…</p>…</quote>):

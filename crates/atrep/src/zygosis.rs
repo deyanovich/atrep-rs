@@ -3,7 +3,7 @@
 //! of milestone-headed segments in the merged coordinate order,
 //! each witness's slice riding a `zyg-<id>`-tagged paradiaphane.
 
-use crate::dendron::{Annotations, Block, Document, Inline};
+use crate::dendron::{Annotations, Block, Document, Inline, Strophe};
 use crate::error::{Error, ErrorKind, Result};
 use crate::sigil;
 
@@ -637,12 +637,18 @@ fn subdivide(parts: Vec<(String, Vec<Block>)>, threshold: usize) -> Vec<Vec<(Str
 // only on the opening coordinate and the recursion structure, so
 // it is witness-invariant even when coverage differs; the files
 // stay milestone-aligned and weave with plain zygo. Cuts are
-// chosen exactly as in subdivision: sentence boundary nearest
-// the midpoint, same sentence index when every witness counts
-// the same number of sentences, comma and whitespace as
-// fallback tiers; paragraph heads count as sentence-strength
-// candidates. Insertion is inline-only (top-level paragraphs);
-// a segment whose midpoint machinery cannot find a cut in some
+// chosen nearest the window midpoint down a preference order of
+// tiers: leaf-block boundaries (speech/poem-block and strophe
+// heads — so verse cuts land between strophes) > paragraph
+// heads > sentence ends (verse line boundaries count here — the
+// line end is the verse sentence) > commas > whitespace, with
+// the same sentence index taken when every witness counts the
+// same number of sentence sites. Insertion is structural per
+// site: mid-paragraph cuts split the paragraph, leaf-block
+// heads get a standalone milestone paragraph before the block,
+// verse cuts prepend the milestone to the strophe/line head
+// (stichoi lines stay whole — never cut inside a line). A
+// segment whose midpoint machinery cannot find a cut in some
 // witness is left whole.
 // -------------------------------------------------------------------
 
@@ -655,32 +661,67 @@ pub struct QuasialignReport {
 }
 
 /// A candidate insertion point in one document: the path to the
-/// target paragraph, inline index within that paragraph, char
-/// offset within that text inline (offset 0 = before the
-/// inline), and the cumulative char position within the segment.
+/// target block, the structural cut kind within it, and the
+/// cumulative char position within the segment.
 #[derive(Clone)]
 struct Site {
     /// Child-index path from the document root to the target
-    /// paragraph: `[block]` for a top-level paragraph, or
+    /// block: `[block]` for a top-level block, or
     /// `[block, child, …]` descending through nested
     /// para-simmeres / para-diaphanes — quasialign descends into
     /// enclosing divisions so chapter-wrapped prose still cuts.
     path: Vec<usize>,
-    inline: usize,
-    offset: usize,
     pos: usize,
+    kind: SiteKind,
+}
+
+/// The structural form a cut takes at its site.
+#[derive(Clone)]
+enum SiteKind {
+    /// Cut inside a paragraph: inline index and char offset
+    /// within that text inline (offset 0 = before the inline;
+    /// 0/0 = paragraph head, milestone prepended in place).
+    Para { inline: usize, offset: usize },
+    /// Leaf-block head (stichoi, verbatim, …): a standalone
+    /// milestone paragraph is inserted BEFORE the block —
+    /// the corpus-canonical form for verse anchors.
+    BlockHead,
+    /// Boundary inside a Stichoi block: the milestone is
+    /// prepended to line `line` of strophe `strophe` (a strophe
+    /// head when `line == 0`, a plain line boundary otherwise).
+    /// Stichoi lines themselves stay whole — no mid-line cuts.
+    Stichos { strophe: usize, line: usize },
 }
 
 /// One document's view of one real coordinate's segment.
 struct SegView {
     len: usize,
-    /// Paragraph-head sites — preferred cut tier: a milestone
-    /// placed here opens a paragraph (and thus a line).
+    /// Leaf-block-boundary sites — the preferred cut tier:
+    /// speech/poem-block heads and strophe heads, so verse
+    /// chunks land between strophes.
+    block: Vec<Site>,
+    /// Paragraph-head sites: a milestone placed here opens a
+    /// paragraph (and thus a line).
     head: Vec<Site>,
+    /// Sentence-end sites in prose, line boundaries in verse.
     sentence: Vec<Site>,
     clause: Vec<Site>,
     word: Vec<Site>,
     has_quasi: bool,
+}
+
+impl SegView {
+    fn blank() -> Self {
+        SegView {
+            len: 0,
+            block: Vec::new(),
+            head: Vec::new(),
+            sentence: Vec::new(),
+            clause: Vec::new(),
+            word: Vec::new(),
+            has_quasi: false,
+        }
+    }
 }
 
 /// Char offsets of cut points after any of `ends` (landing on
@@ -713,12 +754,23 @@ fn text_cut_offsets(t: &str, ends: &[char]) -> Vec<usize> {
 /// covers only paradiaphanes carrying a matching genos — the
 /// chosen witness's stream in a multi-witness file — while
 /// top-level milestones still delimit segments.
-fn segment_views(doc: &Document, scheme: &str, prefix: Option<&str>) -> Vec<(String, SegView)> {
+fn segment_views(
+    doc: &Document,
+    scheme: &str,
+    prefix: Option<&str>,
+    refine: bool,
+    implicit: bool,
+) -> Vec<(String, SegView)> {
     let mut w = ViewWalker {
         scheme,
         views: Vec::new(),
         current: None,
+        refine,
     };
+    if implicit {
+        w.views.push(("^".to_string(), SegView::blank()));
+        w.current = Some(0);
+    }
     if let Some(p) = prefix {
         // Witness-scoped (zygoma): the original flat walk — the
         // witness's stream is exactly the matched paradiaphanes'
@@ -756,8 +808,10 @@ fn segment_views(doc: &Document, scheme: &str, prefix: Option<&str>) -> Vec<(Str
 /// Depth-first walk for the whole-document (non-witness) case:
 /// paragraphs at any depth are head candidates and cuttable
 /// content; enclosing blocks contribute their lemma/hypograph
-/// text to the running segment length; stichoi and other leaf
-/// blocks are atomic (their length counts, no cuts inside).
+/// text to the running segment length; stichoi scan as verse
+/// (block/strophe heads and line boundaries are cut sites,
+/// lines stay whole); other leaf blocks are atomic but their
+/// heads are block-boundary sites.
 fn walk_blocks(w: &mut ViewWalker, blocks: &[Block], path: &mut Vec<usize>) {
     for (bi, block) in blocks.iter().enumerate() {
         path.push(bi);
@@ -783,7 +837,23 @@ fn walk_blocks(w: &mut ViewWalker, blocks: &[Block], path: &mut Vec<usize>) {
             Block::ParaDiaphane { children, .. } => {
                 walk_blocks(w, children, path);
             }
+            Block::Stichoi {
+                lemma,
+                strophes,
+                hypograph,
+                ..
+            } => {
+                w.block_candidate(path);
+                if let Some(ci) = w.current {
+                    w.views[ci].1.len += lemma.iter().map(inline_chars).sum::<usize>();
+                }
+                w.scan_stichoi(path, strophes);
+                if let Some(ci) = w.current {
+                    w.views[ci].1.len += hypograph.iter().map(inline_chars).sum::<usize>();
+                }
+            }
             other => {
+                w.block_candidate(path);
                 if let Some(ci) = w.current {
                     w.views[ci].1.len += blocks_chars(std::slice::from_ref(other));
                 }
@@ -797,22 +867,96 @@ struct ViewWalker<'a> {
     scheme: &'a str,
     views: Vec<(String, SegView)>,
     current: Option<usize>,
+    refine: bool,
 }
 
 impl ViewWalker<'_> {
     /// A paragraph head inside a running segment is a
-    /// sentence-strength candidate.
+    /// head-tier candidate.
     fn head_candidate(&mut self, path: &[usize]) {
         if let Some(ci) = self.current
             && self.views[ci].1.len > 0
         {
             let site = Site {
                 path: path.to_vec(),
-                inline: 0,
-                offset: 0,
                 pos: self.views[ci].1.len,
+                kind: SiteKind::Para {
+                    inline: 0,
+                    offset: 0,
+                },
             };
             self.views[ci].1.head.push(site);
+        }
+    }
+
+    /// A leaf-block head (stichoi, verbatim, …) inside a running
+    /// segment is a block-tier candidate: the cut inserts a
+    /// standalone milestone paragraph before the block.
+    fn block_candidate(&mut self, path: &[usize]) {
+        if let Some(ci) = self.current
+            && self.views[ci].1.len > 0
+        {
+            let site = Site {
+                path: path.to_vec(),
+                pos: self.views[ci].1.len,
+                kind: SiteKind::BlockHead,
+            };
+            self.views[ci].1.block.push(site);
+        }
+    }
+
+    /// Scan one stichoi block: milestones on verse lines track
+    /// segments exactly as in paragraphs; strophe heads are
+    /// block-tier sites and line boundaries sentence-tier ones
+    /// (a verse line end is the verse sentence); no sites inside
+    /// a line — stichoi lines stay whole.
+    fn scan_stichoi(&mut self, path: &[usize], strophes: &[Strophe]) {
+        for (si, strophe) in strophes.iter().enumerate() {
+            for (li, line) in strophe.0.iter().enumerate() {
+                if (si, li) != (0, 0)
+                    && let Some(ci) = self.current
+                    && self.views[ci].1.len > 0
+                {
+                    let view = &mut self.views[ci].1;
+                    let site = Site {
+                        path: path.to_vec(),
+                        pos: view.len,
+                        kind: SiteKind::Stichos {
+                            strophe: si,
+                            line: li,
+                        },
+                    };
+                    if li == 0 {
+                        view.block.push(site);
+                    } else {
+                        view.sentence.push(site);
+                    }
+                }
+                for inline in line {
+                    match inline {
+                        Inline::Milestone {
+                            scheme: s, value, ..
+                        } if s == self.scheme
+                            || (value.starts_with(&format!("{}:", self.scheme))
+                                && value.contains('|')) =>
+                        {
+                            if value.contains('|') && !self.refine {
+                                if let Some(ci) = self.current {
+                                    self.views[ci].1.has_quasi = true;
+                                }
+                            } else {
+                                self.views.push((value.clone(), SegView::blank()));
+                                self.current = Some(self.views.len() - 1);
+                            }
+                        }
+                        other => {
+                            if let Some(ci) = self.current {
+                                self.views[ci].1.len += inline_chars(other);
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -820,14 +964,6 @@ impl ViewWalker<'_> {
     /// text contributes length and candidate sites only when
     /// `content` (the paragraph belongs to the scanned stream).
     fn scan_paragraph(&mut self, path: &[usize], inlines: &[Inline], content: bool) {
-        let blank = || SegView {
-            len: 0,
-            head: Vec::new(),
-            sentence: Vec::new(),
-            clause: Vec::new(),
-            word: Vec::new(),
-            has_quasi: false,
-        };
         for (ii, inline) in inlines.iter().enumerate() {
             match inline {
                 Inline::Milestone {
@@ -835,14 +971,18 @@ impl ViewWalker<'_> {
                 } if s == self.scheme
                     || (value.starts_with(&format!("{}:", self.scheme)) && value.contains('|')) =>
                 {
-                    if value.contains('|') {
+                    if value.contains('|') && !self.refine {
                         // An existing quasi cut: its segment is
                         // already subdivided — hands off.
                         if let Some(ci) = self.current {
                             self.views[ci].1.has_quasi = true;
                         }
                     } else {
-                        self.views.push((value.clone(), blank()));
+                        // real anchors always; under --refine the
+                        // existing cuts anchor too, so the finer
+                        // pass subdivides BETWEEN them, extending
+                        // their binary paths
+                        self.views.push((value.clone(), SegView::blank()));
                         self.current = Some(self.views.len() - 1);
                     }
                 }
@@ -857,9 +997,8 @@ impl ViewWalker<'_> {
                             for offset in text_cut_offsets(t, ends) {
                                 let site = Site {
                                     path: path.to_vec(),
-                                    inline: ii,
-                                    offset,
                                     pos: view.len + offset,
+                                    kind: SiteKind::Para { inline: ii, offset },
                                 };
                                 match tier {
                                     0 => view.sentence.push(site),
@@ -881,11 +1020,20 @@ impl ViewWalker<'_> {
     }
 }
 
-/// Choose one witness's cut inside the `(lo, hi)` window:
-/// `same_index` among the window's sentence sites when the round
-/// agreed on one, otherwise nearest the window midpoint across
-/// the tiers.
-fn window_cut(view: &SegView, lo: usize, hi: usize, same_index: Option<usize>) -> Option<Site> {
+/// Choose one witness's cut inside the `(lo, hi)` window. The
+/// block tier (leaf-block/strophe heads) is preferred outright:
+/// `same_block` index among the window's block sites when the
+/// round agreed on one, else the block site nearest the window
+/// midpoint. Below it, `same_index` among the sentence sites
+/// when the round agreed, otherwise nearest the midpoint down
+/// the remaining tiers.
+fn window_cut(
+    view: &SegView,
+    lo: usize,
+    hi: usize,
+    same_block: Option<usize>,
+    same_index: Option<usize>,
+) -> Option<Site> {
     let in_window = |sites: &[Site]| -> Vec<Site> {
         sites
             .iter()
@@ -893,13 +1041,22 @@ fn window_cut(view: &SegView, lo: usize, hi: usize, same_index: Option<usize>) -
             .filter(|s| s.pos > lo && s.pos < hi)
             .collect()
     };
+    let mid = lo + (hi - lo) / 2;
+    let block = in_window(&view.block);
+    if let Some(idx) = same_block
+        && let Some(site) = block.get(idx)
+    {
+        return Some(site.clone());
+    }
+    if let Some(site) = block.iter().min_by_key(|s| s.pos.abs_diff(mid)) {
+        return Some(site.clone());
+    }
     let sentence = in_window(&view.sentence);
     if let Some(idx) = same_index
         && let Some(site) = sentence.get(idx)
     {
         return Some(site.clone());
     }
-    let mid = lo + (hi - lo) / 2;
     for tier in [
         in_window(&view.head),
         sentence,
@@ -928,20 +1085,24 @@ fn plan_cuts(
     if widest <= max_segment {
         return;
     }
-    let counts: Vec<usize> = views
-        .iter()
-        .zip(windows)
-        .map(|(v, (lo, hi))| {
-            v.sentence
-                .iter()
-                .filter(|s| s.pos > *lo && s.pos < *hi)
-                .count()
-        })
-        .collect();
-    let same_index = match counts.as_slice() {
+    let tier_counts = |sites: fn(&SegView) -> &[Site]| -> Vec<usize> {
+        views
+            .iter()
+            .zip(windows)
+            .map(|(v, (lo, hi))| {
+                sites(v)
+                    .iter()
+                    .filter(|s| s.pos > *lo && s.pos < *hi)
+                    .count()
+            })
+            .collect()
+    };
+    let same = |counts: &[usize]| match counts {
         [first, rest @ ..] if *first > 0 && rest.iter().all(|c| c == first) => Some(first / 2),
         _ => None,
     };
+    let same_block = same(&tier_counts(|v| &v.block));
+    let same_index = same(&tier_counts(|v| &v.sentence));
     let label = if path.is_empty() {
         "1".to_string()
     } else {
@@ -949,7 +1110,7 @@ fn plan_cuts(
     };
     let mut cuts: Vec<Site> = Vec::new();
     for (view, (lo, hi)) in views.iter().zip(windows) {
-        match window_cut(view, *lo, *hi, same_index) {
+        match window_cut(view, *lo, *hi, same_block, same_index) {
             Some(site) => cuts.push(site),
             // One witness without a cut leaves the whole round
             // unsplit — the labels must stay witness-invariant.
@@ -994,9 +1155,18 @@ fn apply_cuts(
     cut_ns: Option<&str>,
     mut cuts: Vec<(String, Site)>,
 ) {
-    cuts.sort_by(|(_, a), (_, b)| {
-        (&b.path, b.inline, b.offset).cmp(&(&a.path, a.inline, a.offset))
-    });
+    // Descending document order. Within one path a BlockHead
+    // (rank 0, insertion before the block) precedes any interior
+    // site (rank 1); Para and Stichos never share a path, so
+    // their index pairs order freely at rank 1.
+    let key = |s: &Site| -> (Vec<usize>, usize, usize, usize) {
+        match s.kind {
+            SiteKind::BlockHead => (s.path.clone(), 0, 0, 0),
+            SiteKind::Para { inline, offset } => (s.path.clone(), 1, inline, offset),
+            SiteKind::Stichos { strophe, line } => (s.path.clone(), 1, strophe, line),
+        }
+    };
+    cuts.sort_by(|(_, a), (_, b)| key(b).cmp(&key(a)));
     'cuts: for (value, site) in cuts {
         let last = *site.path.last().unwrap();
         let parent: &mut Vec<Block> = {
@@ -1024,21 +1194,42 @@ fn apply_cuts(
                 genoses: Vec::new(),
             },
         };
+        let (inline, offset) = match site.kind {
+            SiteKind::BlockHead => {
+                // A standalone milestone paragraph before the
+                // leaf block — the corpus-canonical verse form.
+                parent.insert(last, Block::Paragraph(vec![ms]));
+                continue;
+            }
+            SiteKind::Stichos { strophe, line } => {
+                // The milestone opens the strophe/line it cuts
+                // before; the line itself stays whole.
+                let Block::Stichoi { strophes, .. } = &mut parent[last] else {
+                    continue;
+                };
+                let Some(l) = strophes.get_mut(strophe).and_then(|s| s.0.get_mut(line)) else {
+                    continue;
+                };
+                l.insert(0, ms);
+                continue;
+            }
+            SiteKind::Para { inline, offset } => (inline, offset),
+        };
         let Block::Paragraph(inlines) = &mut parent[last] else {
             continue;
         };
-        if site.inline == 0 && site.offset == 0 {
+        if inline == 0 && offset == 0 {
             inlines.insert(0, ms);
             continue;
         }
-        let tail: Vec<Inline> = if site.offset == 0 {
-            inlines.split_off(site.inline)
-        } else if let Inline::Text(t) = &inlines[site.inline] {
+        let tail: Vec<Inline> = if offset == 0 {
+            inlines.split_off(inline)
+        } else if let Inline::Text(t) = &inlines[inline] {
             let chars: Vec<char> = t.chars().collect();
-            let head_txt: String = chars[..site.offset].iter().collect();
-            let tail_txt: String = chars[site.offset..].iter().collect();
-            let mut rest = inlines.split_off(site.inline + 1);
-            inlines[site.inline] = Inline::Text(head_txt.trim_end().to_string());
+            let head_txt: String = chars[..offset].iter().collect();
+            let tail_txt: String = chars[offset..].iter().collect();
+            let mut rest = inlines.split_off(inline + 1);
+            inlines[inline] = Inline::Text(head_txt.trim_end().to_string());
             rest.insert(0, Inline::Text(tail_txt));
             rest
         } else {
@@ -1060,13 +1251,24 @@ pub fn quasialign(
     max_segment: usize,
     prefix: Option<&str>,
     cut_prefix: Option<&str>,
+    refine: bool,
 ) -> Result<QuasialignReport> {
     if max_segment == 0 {
         return Err(zyg_err("--max-segment must be positive".into()));
     }
     let all_views: Vec<Vec<(String, SegView)>> = docs
         .iter()
-        .map(|d| segment_views(d, scheme, prefix))
+        .map(|d| {
+            let views = segment_views(d, scheme, prefix, refine, false);
+            if views.is_empty() {
+                // no milestones at all: the document start is an
+                // implicit anchor (coord `^`, the proem), so
+                // milestone-less works still chunk
+                segment_views(d, scheme, prefix, refine, true)
+            } else {
+                views
+            }
+        })
         .collect();
     // The union of real coordinates in first-seen order.
     let mut order: Vec<String> = Vec::new();
@@ -1079,6 +1281,22 @@ pub fn quasialign(
     }
     let mut skipped: Vec<String> = Vec::new();
     let mut all_cuts: Vec<Vec<(String, Site)>> = vec![Vec::new(); docs.len()];
+    // existing scheme-bare cut values per document (collision
+    // avoidance for --refine label composition)
+    let existing: Vec<std::collections::HashSet<String>> = all_views
+        .iter()
+        .map(|views| {
+            views
+                .iter()
+                .filter(|(c, _)| c.contains('|'))
+                .map(|(c, _)| {
+                    c.strip_prefix(&format!("{scheme}:"))
+                        .unwrap_or(c)
+                        .to_string()
+                })
+                .collect()
+        })
+        .collect();
     for coord in &order {
         let holders: Vec<usize> = all_views
             .iter()
@@ -1097,10 +1315,36 @@ pub fn quasialign(
         let windows: Vec<(usize, usize)> = views.iter().map(|v| (0, v.len)).collect();
         let mut plans: Vec<Vec<(String, Site)>> = vec![Vec::new(); holders.len()];
         plan_cuts(&views, &windows, max_segment, "", &mut plans);
+        // a refine anchor is itself a cut (its coord carries a
+        // binary path already, and the scheme prefix when
+        // namespaced): the new path EXTENDS it with `.`; a real
+        // anchor opens its path with `|`. Either way the value
+        // handed to apply_cuts is scheme-bare. Under --refine the
+        // window's labels are zero-deepened (`0.` prefixes) until
+        // none collides with an existing cut value: a deeper zero
+        // still sorts strictly inside the open interval after the
+        // anchor, so document order is preserved.
+        let bare = coord
+            .strip_prefix(&format!("{scheme}:"))
+            .unwrap_or(coord)
+            .to_string();
+        let joiner = if bare.contains('|') { "." } else { "|" };
         for (slot, plan) in holders.iter().zip(plans) {
+            let mut depth = if refine { 1usize } else { 0 };
+            loop {
+                let zeros = "0.".repeat(depth);
+                let clash = plan.iter().any(|(label, _)| {
+                    existing[*slot].contains(&format!("{bare}{joiner}{zeros}{label}"))
+                });
+                if !clash {
+                    break;
+                }
+                depth += 1;
+            }
+            let zeros = "0.".repeat(depth);
             all_cuts[*slot].extend(
-                plan.into_iter()
-                    .map(|(label, site)| (format!("{coord}|{label}"), site)),
+                plan.iter()
+                    .map(|(label, site)| (format!("{bare}{joiner}{zeros}{label}"), site.clone())),
             );
         }
     }

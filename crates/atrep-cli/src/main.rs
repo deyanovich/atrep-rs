@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "atrep",
     version,
-    about = "Atrep pilot toolchain (spec draft v0.10)"
+    about = "Atrep pilot toolchain (spec draft v0.13)"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -21,6 +21,30 @@ enum Command {
     /// Parse and validate a document or dialektos definition.
     Check {
         /// Path to an .atd/.atk document or .lektos/.dia definition.
+        file: PathBuf,
+    },
+    /// Verbalize: rewrite a document in the plerographic
+    /// spelling (sim names in braces; spec: "Metagraphe").
+    Plero {
+        /// Path to the .atd/.atk document (either spelling).
+        file: PathBuf,
+        /// Spell sim names in this language's glossa
+        /// (<dialektos>.<lang>.glossa), falling back to primary
+        /// names where the glossa is silent.
+        #[arg(long)]
+        lang: Option<String>,
+    },
+    /// Symbolize: rewrite a document in the brachygraphic
+    /// spelling (sim symbols; the canonical spelling).
+    Brachy {
+        /// Path to the .atd/.atk document (either spelling).
+        file: PathBuf,
+    },
+    /// Emit the document's structural outline as kaiv data
+    /// (blocks with line spans, milestones, onyms, deixes) for
+    /// structure-aware editor tooling.
+    Outline {
+        /// Path to the .atd/.atk document (either spelling).
         file: PathBuf,
     },
     /// Canonicalize a deltos (.atd) into a kanon (.atk), or a
@@ -97,12 +121,16 @@ enum Command {
     },
     /// Insert quasi-milestones at statistical midpoints so no
     /// segment exceeds --max-segment characters in any file: the
-    /// in-file counterpart of zygo --split. Cuts land at the
-    /// sentence boundary nearest each witness's midpoint and are
-    /// named by the opening coordinate plus a binary path
-    /// (17a|1, then 17a|0.1 / 17a|1.1), each carrying the quasi
-    /// genos; the files stay milestone-aligned and re-emit in
-    /// canonical form, in place.
+    /// in-file counterpart of zygo --split. Cuts prefer, in
+    /// order: leaf-block boundaries (speech/poem-block and
+    /// strophe heads -- verse cuts land between strophes, never
+    /// inside a line), paragraph heads, sentence ends (verse
+    /// line boundaries count here), commas, whitespace --
+    /// nearest each witness's midpoint, and are named by the
+    /// opening coordinate plus a binary path (17a|1, then
+    /// 17a|0.1 / 17a|1.1; `^|...` under the implicit
+    /// document-start anchor); the files stay milestone-aligned
+    /// and re-emit in canonical form, in place.
     Quasialign {
         /// Files sharing a milestone scheme (.atd or .atk),
         /// rewritten in place.
@@ -125,6 +153,12 @@ enum Command {
         /// insert the cuts inside it.
         #[arg(long)]
         prefix: Option<String>,
+        /// Refine: existing quasi cuts anchor further subdivision
+        /// at the (smaller) ceiling; new cuts extend their binary
+        /// paths (ch:3|0.1 -> ch:3|0.1.1). Without this flag,
+        /// already-cut segments are left untouched.
+        #[arg(long)]
+        refine: bool,
     },
     /// Import an external format as an atrep document: Markdown
     /// into at-markdown, HTML into at-html (by file extension).
@@ -135,6 +169,11 @@ enum Command {
         /// (usfm/usx/osis inputs), e.g. protestant.
         #[arg(long)]
         milestone_scheme: Option<String>,
+        /// Inject line-number milestones on TEI verse `<l n>` lines
+        /// under this scheme (e.g. grc:book-line or grc:line); one
+        /// at line 1 and every fifth line thereafter.
+        #[arg(long)]
+        line_milestones: Option<String>,
         /// Output path (defaults to the input with extension .atd).
         #[arg(short, long)]
         output: Option<PathBuf>,
@@ -185,6 +224,127 @@ fn main() -> ExitCode {
     }
 }
 
+/// Metagraphe: reparse (either spelling in) and serialize in the
+/// requested spelling.
+fn respell(file: &std::path::Path, plero: bool, lang: Option<&str>) -> atrep::Result<String> {
+    let text = std::fs::read_to_string(file).map_err(|e| {
+        atrep::error::Error::new(atrep::error::ErrorKind::MissingResource(format!(
+            "{}: {e}",
+            file.display()
+        )))
+    })?;
+    let doc = atrep::parser::parse_document(&text, file)?;
+    if plero {
+        let dir = file.parent().unwrap_or(std::path::Path::new("."));
+        let dial = atrep::dialektos::resolve(dir, &doc.dialect_id)?;
+        atrep::dendron::serialize_plerographic_in(&doc, &dial, lang)
+    } else {
+        Ok(atrep::dendron::serialize(&doc))
+    }
+}
+
+/// The outline as authored kaiv text (namespace-array table
+/// headers, almost-verbatim values with `$$` doubling).
+fn outline_kaiv(file: &std::path::Path) -> atrep::Result<String> {
+    let text = std::fs::read_to_string(file).map_err(|e| {
+        atrep::error::Error::new(atrep::error::ErrorKind::MissingResource(format!(
+            "{}: {e}",
+            file.display()
+        )))
+    })?;
+    let (doc, blocks, dial) = atrep::parser::parse_document_outline(&text, file)?;
+    let o = atrep::outline::assemble(&doc, blocks, &text, &dial);
+    let esc = |v: &str| {
+        if let Some(rest) = v.strip_prefix('$') {
+            format!("$${rest}")
+        } else {
+            v.to_string()
+        }
+    };
+    let mut s = String::from(
+        ".!kaiv
+
+",
+    );
+    s.push_str(&format!(
+        "dialektos={}
+",
+        esc(&o.dialektos)
+    ));
+    for b in &o.blocks {
+        s.push_str(
+            "
+[/@blocks]
+",
+        );
+        s.push_str(&format!(
+            "kind={}
+",
+            b.kind
+        ));
+        if let Some(sym) = &b.symbol {
+            s.push_str(&format!(
+                "symbol={}
+",
+                esc(sym)
+            ));
+        }
+        if let Some(n) = &b.name {
+            s.push_str(&format!(
+                "name={}
+",
+                esc(n)
+            ));
+        }
+        s.push_str(&format!(
+            "depth={}
+start={}
+end={}
+",
+            b.depth, b.start, b.end
+        ));
+        if !b.lemma.is_empty() {
+            s.push_str(&format!(
+                "lemma={}
+",
+                esc(&b.lemma)
+            ));
+        }
+        if let Some(onym) = &b.onym {
+            s.push_str(&format!(
+                "onym={}
+",
+                esc(onym)
+            ));
+        }
+        for g in &b.genoses {
+            s.push_str(&format!(
+                "@genoses+={}
+",
+                esc(g)
+            ));
+        }
+    }
+    for (ns, points) in [
+        ("milestones", &o.milestones),
+        ("onyms", &o.onyms),
+        ("deixes", &o.deixes),
+    ] {
+        for p in points.iter() {
+            s.push_str(&format!(
+                "
+[/@{ns}]
+key={}
+line={}
+",
+                esc(&p.key),
+                p.line
+            ));
+        }
+    }
+    Ok(s)
+}
+
 fn run() -> atrep::Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -192,6 +352,9 @@ fn run() -> atrep::Result<()> {
             atrep::check_any(&file)?;
             println!("{}: OK", file.display());
         }
+        Command::Plero { file, lang } => print!("{}", respell(&file, true, lang.as_deref())?),
+        Command::Brachy { file } => print!("{}", respell(&file, false, None)?),
+        Command::Outline { file } => print!("{}", outline_kaiv(&file)?),
         Command::Kanonizo {
             file,
             output,
@@ -271,13 +434,13 @@ fn run() -> atrep::Result<()> {
             output,
         } => {
             if files.len() != ids.len() {
-                return Err(atrep::error::Error::new(
-                    atrep::error::ErrorKind::Syntax(format!(
+                return Err(atrep::error::Error::new(atrep::error::ErrorKind::Syntax(
+                    format!(
                         "{} files but {} ids (--as takes one id per file)",
                         files.len(),
                         ids.len()
-                    )),
-                ));
+                    ),
+                )));
             }
             let mut witnesses = Vec::new();
             for (file, id) in files.iter().zip(&ids) {
@@ -296,13 +459,13 @@ fn run() -> atrep::Result<()> {
             split,
         } => {
             if files.len() != ids.len() {
-                return Err(atrep::error::Error::new(
-                    atrep::error::ErrorKind::Syntax(format!(
+                return Err(atrep::error::Error::new(atrep::error::ErrorKind::Syntax(
+                    format!(
                         "{} files but {} ids (--as takes one id per file)",
                         files.len(),
                         ids.len()
-                    )),
-                ));
+                    ),
+                )));
             }
             let mut witnesses = Vec::new();
             for (file, id) in files.iter().zip(&ids) {
@@ -314,6 +477,7 @@ fn run() -> atrep::Result<()> {
             println!("{}", output.display());
         }
         Command::Quasialign {
+            refine,
             files,
             max_segment,
             scheme,
@@ -334,19 +498,17 @@ fn run() -> atrep::Result<()> {
                     match schemes.len() {
                         1 => schemes.into_iter().next().unwrap(),
                         0 => {
-                            return Err(atrep::error::Error::new(
-                                atrep::error::ErrorKind::Syntax(
-                                    "no milestones found; nothing to quasialign".into(),
-                                ),
-                            ));
+                            return Err(atrep::error::Error::new(atrep::error::ErrorKind::Syntax(
+                                "no milestones found; nothing to quasialign".into(),
+                            )));
                         }
                         _ => {
-                            return Err(atrep::error::Error::new(
-                                atrep::error::ErrorKind::Syntax(format!(
+                            return Err(atrep::error::Error::new(atrep::error::ErrorKind::Syntax(
+                                format!(
                                     "several milestone schemes present ({}); pick one with --scheme",
                                     schemes.into_iter().collect::<Vec<_>>().join(", ")
-                                )),
-                            ));
+                                ),
+                            )));
                         }
                     }
                 }
@@ -357,6 +519,7 @@ fn run() -> atrep::Result<()> {
                 max_segment,
                 prefix.as_deref(),
                 cut_prefix.as_deref(),
+                refine,
             )?;
             for ((file, doc), n) in files.iter().zip(&docs).zip(&report.inserted) {
                 std::fs::write(file, atrep::dendron::serialize(doc))?;
@@ -369,6 +532,7 @@ fn run() -> atrep::Result<()> {
         Command::Endo {
             file,
             milestone_scheme,
+            line_milestones,
             output,
         } => {
             let source = std::fs::read_to_string(&file)?;
@@ -401,7 +565,9 @@ fn run() -> atrep::Result<()> {
                 )?,
                 "usx" => atrep::endo::usx_to_document(&source)?,
                 "osis" => atrep::endo::osis_to_document(&source)?,
-                "xml" | "tei" => atrep::endo::tei_to_document(&source)?,
+                "xml" | "tei" => {
+                    atrep::endo::tei_to_document_lines(&source, line_milestones.as_deref())?
+                }
                 _ => atrep::endo::markdown_to_document(&source)?,
             };
             let mut doc = doc;
@@ -490,10 +656,7 @@ fn run() -> atrep::Result<()> {
 
 /// Collect every milestone scheme in the blocks, for
 /// quasialign's single-scheme inference.
-fn collect_schemes(
-    blocks: &[atrep::dendron::Block],
-    out: &mut std::collections::BTreeSet<String>,
-) {
+fn collect_schemes(blocks: &[atrep::dendron::Block], out: &mut std::collections::BTreeSet<String>) {
     use atrep::dendron::{Block, Inline};
     fn inlines(v: &[Inline], out: &mut std::collections::BTreeSet<String>) {
         for inline in v {
