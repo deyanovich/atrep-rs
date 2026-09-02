@@ -100,9 +100,7 @@ fn tasso_settles_without_canonicalizing() {
         .blocks
         .iter()
         .filter_map(|b| match b {
-            Block::Para { symbol, ann, .. } => {
-                Some((symbol.as_str(), ann.onym.as_deref()))
-            }
+            Block::Para { symbol, ann, .. } => Some((symbol.as_str(), ann.onym.as_deref())),
             _ => None,
         })
         .map(|(_, o)| o)

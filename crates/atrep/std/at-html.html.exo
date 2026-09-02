@@ -53,6 +53,10 @@
 <em>@(grammata)</em>
 >-@
 
+@-> ><
+<a href="@(grammata)">@(grammata)</a>
+>-@
+
 @-> !
 <strong>@(grammata)</strong>
 >-@

@@ -246,3 +246,48 @@ fn xhtml_is_a_second_export_target() {
     assert!(xhtml.contains("<html xmlns=\"http://www.w3.org/1999/xhtml\">"));
     assert!(xhtml.contains("<em>text</em>"));
 }
+
+/// Hyperlink references with embedded URIs: text equal to the URL
+/// (or absent, anonymous `__ included) is the visible-URL link
+/// sim; distinct text projects as prose with the URL beside it;
+/// named references without a URI and bare URLs stay prose. The
+/// export re-emits the canonical `URL <URL>`_ form, a fixed
+/// point, and the link rides the at-html homs both ways.
+#[test]
+fn rst_links_import_and_roundtrip() {
+    let rst = "Title\n\
+               =====\n\
+               \n\
+               See `docs <https://example.org/d>`_, `https://example.org/x <https://example.org/x>`_,\n\
+               `<https://example.org/y>`__ and `named`_ beside https://example.org/bare.\n";
+    let doc = endo::rst_to_document(rst).unwrap();
+    let atd = dendron::serialize(&doc);
+    assert!(
+        atd.contains("See docs (@><https://example.org/d><@), @><https://example.org/x><@,"),
+        "{atd}"
+    );
+    assert!(
+        atd.contains("@><https://example.org/y><@ and `named`_ beside https://example.org/bare."),
+        "{atd}"
+    );
+    let tmp = tmp_dir("rst-links");
+    let cycle = |rst: &str| -> String {
+        let kanon = kanon_from_rst(&tmp, rst);
+        let x = exo::resolve_exo(&tmp, "at-rst", "rst").unwrap();
+        exo::render(&kanon.document, &x, &tmp).unwrap()
+    };
+    let r1 = cycle(rst);
+    assert!(
+        r1.contains("`https://example.org/x <https://example.org/x>`_"),
+        "{r1}"
+    );
+    assert_eq!(r1, cycle(&r1));
+    // at-rst => at-html => at-rst: the link passes through both ways.
+    let kanon = kanon_from_rst(&tmp, rst);
+    let m = morph::resolve_morph(&tmp, "at-rst", "at-html").unwrap();
+    let there = morph::apply(&kanon.document, &m).unwrap();
+    assert!(dendron::serialize(&there).contains("@><https://example.org/x><@"));
+    let back = morph::resolve_morph(&tmp, "at-html", "at-rst").unwrap();
+    let again = morph::apply(&there, &back).unwrap();
+    assert!(dendron::serialize(&again).contains("@><https://example.org/x><@"));
+}

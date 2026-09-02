@@ -22,3 +22,14 @@
 @@::at-html::/ *
 
 @@::at-html::! **
+
+@@/ The footnote extension ([^name] callouts, [^name]: bodies):
+@@/ the koine construction — the body is a para-simmere, the
+@@/ callout a deixis, both on the ^ symbol.
+
+@=== footnote
+@^
+grammata
+^@
+@"footnote body ([^name]: text); attached by deixis callouts"@
+===@

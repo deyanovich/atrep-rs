@@ -3,8 +3,10 @@
 
 @@/ Gemtext export: the maximal-loss surface. Three heading
 @@/ levels (deeper levels cap at ###), no inline formatting
-@@/ (everything dissolves to plain text), links as bare
-@@/ targets, verse and tables as preformatted lines, notes
+@@/ (everything dissolves to plain text), links as their bare
+@@/ URL in the running text (the => link line is a line form,
+@@/ invalid mid-paragraph), verse and tables as preformatted
+@@/ lines, notes
 @@/ inlined as bracketed asides after their paragraphs. The
 @@/ motivating specimen for loss-graded routing: compare this
 @@/ path's losses with the HTML path's.
@@ -355,7 +357,7 @@ edited by @(grammata)
 >-@
 
 @-> ><
-=> @(grammata)
+@(grammata)
 >-@
 
 @-> >:

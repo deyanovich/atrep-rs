@@ -4,12 +4,15 @@
 @@/ Nested to nested: the whole sectioning ladder maps onto
 @@/ DocBook's uniform nesting section with structure preserved
 @@/ (no extract). Level identity dissolves into depth; taxis
-@@/ drops (lossy renames). Front matter dissolves, note
+@@/ drops (lossy renames). Front matter dissolves (title
+@@/ excepted), note
 @@/ families unify onto the footnote, verse and tables drop
-@@/ (no DocBook counterpart in the basic subset).
+@@/ (no DocBook counterpart in the basic subset). The koine
+@@/ inlines pass through: quotation onto quote, link onto link,
+@@/ and the title onto the root's title.
 
-@@/ Front matter.
-@<< =
+@@/ Front matter: the title survives, the rest dissolves.
+@:: = =
 @<< =_
 @<< =:
 @<< =;
@@ -61,6 +64,7 @@
 @@/ Quotations.
 @:: " >
 @:: "/ >
+@:: "" ""
 @:: -/ /
 
 @@/ Figures, tables, containers.
@@ -78,7 +82,7 @@
 @-- >>>
 @-- >>>>
 @-- >[
-@<< ><
+@:: >< ><
 @:: >: *
 @<< %
 @-- %%

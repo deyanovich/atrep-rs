@@ -189,3 +189,59 @@ fn std_dialektos_resolves_anywhere() {
     let result = kanonizo::kanonizo_file(&tmp.join("doc.atd")).unwrap();
     assert_eq!(result.kanon, "@@@!at-markdown\n\nplain text\n");
 }
+
+/// The footnote extension: `[^name]` callouts become deixes on
+/// the ^ symbol, `[^name]: body` definitions become footnote
+/// bodies — the koine construction, shared with at-rst.
+#[test]
+fn endo_reads_the_footnote_extension() {
+    let md = "\
+# The war
+
+The emus advanced.[^count] They kept coming.
+
+[^count]: Twenty thousand of them.
+    By the settlers' own count.
+";
+    let doc = endo::markdown_to_document(md).unwrap();
+    let atd = dendron::serialize(&doc);
+    assert!(atd.contains("@^(count)"), "callout deixis: {atd}");
+    assert!(atd.contains("@^\n"), "body sim: {atd}");
+    assert!(
+        atd.contains("Twenty thousand of them. By the settlers' own count.")
+            || atd.contains("Twenty thousand of them.\nBy the settlers' own count."),
+        "body text: {atd}"
+    );
+    assert!(atd.contains("^@(count)"), "body onym: {atd}");
+}
+
+/// The visible-URL link: `<URL>` autolinks are the link sim
+/// exactly; `[text](url)` hidden hrefs project as prose text
+/// with the visible URL beside them (pending F9's faithful
+/// form); and the round trip re-emits the canonical autolink.
+#[test]
+fn links_import_and_roundtrip() {
+    let md = "See <https://quarb.org/spec> and [the guide](https://quarb.org/guide).\n\
+              \n\
+              A [bare](https://quarb.org) mention, an email x@y.com, and [plain brackets].\n";
+    let doc = endo::markdown_to_document(md).unwrap();
+    let atd = dendron::serialize(&doc);
+    assert_eq!(
+        atd,
+        "@@@!at-markdown\n\
+         \n\
+         See @><https://quarb.org/spec><@ and the guide (@><https://quarb.org/guide><@).\n\
+         \n\
+         A bare (@><https://quarb.org><@) mention, an email x\\@y.com, and [plain brackets].\n"
+    );
+    // The exomorphosis renders the link back as an autolink.
+    let tmp = tmp_dir("md-links");
+    std::fs::write(tmp.join("doc.atd"), &atd).unwrap();
+    let kanon = kanonizo::kanonizo_file(&tmp.join("doc.atd")).unwrap();
+    let exo = exo::resolve_exo(&tmp, "at-markdown", "md").unwrap();
+    let out = exo::render(&kanon.document, &exo, &tmp).unwrap();
+    assert!(
+        out.contains("<https://quarb.org/spec>"),
+        "autolink re-emitted: {out}"
+    );
+}

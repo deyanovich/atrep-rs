@@ -245,7 +245,8 @@ Implemented:
   and never across a non-injective rename onto a trigger (peer
   triggers would share a rank the serialized form cannot
   express; spec v0.11.1) — everywhere else `apply_route` falls
-  back to staged application automatically. `atrep compose a b [c ...]` writes
+  back to staged application automatically.
+  `atrep compose a b [c ...]` writes
   the composite as an ordinary `.hom` file in normal form —
   group rules in rank order, table rules sorted, implicit
   identities elided, with `@=via` declarations recording the
@@ -263,18 +264,22 @@ Implemented:
   HTML-subset, and reStructuredText-subset importers into
   `at-markdown`/`at-html`/`at-rst` (strict over the canonical
   subsets; RST footnotes become deixis callouts, fixed adornment
-  table for title levels), Org-mode and Djot subset importers into the
-  `at-org` and `at-djot` std dialektoi, a DocBook subset
-  importer into `at-docbook` (`.dbk`); the `at-tei` std dialektos
+  table for title levels, hyperlink references with embedded
+  URIs as the visible-URL link), Org-mode and Djot subset
+  importers into the `at-org` and `at-djot` std dialektoi, a
+  DocBook subset importer into `at-docbook` (`.dbk`; quote and
+  link included); the `at-tei` std dialektos
   applies the bibliogramma pattern to TEI — ~15 form sims with
   the TEI element identity in vocabulary-bound genoses
   (`@,x,@.persname`), a `tei` exo emitting real TEI XML, and a
-  litogramma hom giving litogramma TEI export via morph+exo, a BibTeX importer into
+  litogramma hom giving litogramma TEI export via morph+exo, a
+  BibTeX importer into
   `bibliogramma` (`.bib`), a JATS subset importer (`.jats`) into
   litogramma with the ref-list embedded as a bibliogramma
   englossis — the BibTeX-isomorphic bibliography
   extension defined beside litogramma (entry lemma = citation
-  key, genos = entry type, fields as lemma-named sims) — the first *nested* std
+  key, genos = entry type, fields as lemma-named sims) — the
+  first *nested* std
   dialektos: one uniform section sim nests, so
   structure-preserving morphisms to and from litogramma need
   no flattening — (`.org`: star headings, the emphasis

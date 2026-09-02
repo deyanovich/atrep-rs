@@ -9,7 +9,8 @@
 //!   at-markdown models - ATX headings, paragraphs, blockquotes,
 //!   flat list items, fenced code (info string becomes a genos),
 //!   standalone images, emphasis/strong, code spans, backslash
-//!   escapes.
+//!   escapes, and the footnote extension (`[^name]` callouts as
+//!   deixes, `[^name]: body` definitions as footnote bodies).
 //! - HTML into `at-html`: the canonical subset the at-html syntax
 //!   mapper models - h1-h6, p, em, strong, span/div (class maps
 //!   to genoses), blockquote, ul/ol/li, pre>code, inline code,
@@ -142,6 +143,29 @@ fn parse_blocks(lines: &[&str]) -> Result<Vec<Block>> {
             continue;
         }
 
+        // Footnote definition `[^name]: body` (the footnote
+        // extension); continuation lines indent four spaces.
+        if let Some(after) = line.strip_prefix("[^")
+            && let Some((name, body)) = after.split_once("]: ")
+            && !name.is_empty()
+        {
+            let (children, next) = item_content(lines, i, body, "    ")?;
+            blocks.push(Block::Para {
+                symbol: "^".to_string(),
+                taxis: None,
+                lemma: vec![],
+                children,
+                hypograph: vec![],
+                bracket_matching: true,
+                ann: Annotations {
+                    onym: Some(name.to_string()),
+                    genoses: vec![],
+                },
+            });
+            i = next;
+            continue;
+        }
+
         // Standalone image: enmedia.
         if let Some(target) = line
             .trim_end()
@@ -225,6 +249,39 @@ fn ordered_marker(line: &str) -> Option<(u64, &str)> {
 
 /// Parse inline Markdown: code spans, strong, emphasis, backslash
 /// escapes. Unclosed delimiters fall back to literal text.
+/// The visible-URL link endo: the grammata IS the displayed
+/// target (the link sim's own doctrine). Hidden-href sources
+/// project to prose text with this beside it, pending F9.
+fn link_endo(url: String) -> Inline {
+    Inline::Endo {
+        symbol: "><".to_string(),
+        content: vec![Inline::Text(url)],
+        bracket_matching: true,
+        ann: Annotations::default(),
+    }
+}
+
+/// A CommonMark-shaped autolink at `chars[open] == '<'`: an
+/// absolute URI (ASCII-alphabetic scheme, then `:`), no
+/// whitespace or `<` inside, closed by `>`. Returns the URI and
+/// the index past the closing `>`.
+fn autolink_target(chars: &[char], open: usize) -> Option<(String, usize)> {
+    let close = chars[open + 1..].iter().position(|&c| c == '>')? + open + 1;
+    let inner: String = chars[open + 1..close].iter().collect();
+    if inner.is_empty() || inner.chars().any(|c| c.is_whitespace() || c == '<') {
+        return None;
+    }
+    let (scheme, rest) = inner.split_once(':')?;
+    let mut sc = scheme.chars();
+    if !sc.next().is_some_and(|c| c.is_ascii_alphabetic())
+        || !sc.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
+        || rest.is_empty()
+    {
+        return None;
+    }
+    Some((inner, close + 1))
+}
+
 fn parse_inline(text: &str) -> Vec<Inline> {
     let chars: Vec<char> = text.chars().collect();
     let mut inlines: Vec<Inline> = Vec::new();
@@ -258,6 +315,61 @@ fn parse_inline(text: &str) -> Vec<Inline> {
                 ann: Annotations::default(),
             });
             i = close + 1;
+            continue;
+        }
+        // Footnote callout `[^name]` (the footnote extension).
+        if c == '['
+            && chars.get(i + 1) == Some(&'^')
+            && let Some(close) = find(&chars, i + 2, &[']'])
+        {
+            flush(&mut lit, &mut inlines);
+            inlines.push(Inline::Deixis {
+                symbol: "^".to_string(),
+                onym: chars[i + 2..close].iter().collect(),
+                ann: Annotations::default(),
+            });
+            i = close + 1;
+            continue;
+        }
+        // Autolink `<URL>` — the visible-URL link: the target IS
+        // the display, exactly the link sim's shape.
+        if c == '<'
+            && let Some((url, next)) = autolink_target(&chars, i)
+        {
+            flush(&mut lit, &mut inlines);
+            inlines.push(link_endo(url));
+            i = next;
+            continue;
+        }
+        // Inline link `[text](url)`: a hidden href. The faithful
+        // form waits on F9; meanwhile the org projection applies —
+        // the text stays prose with the visible URL beside it,
+        // `text (url)`, and nothing is lost. (An image's `![` is
+        // not a link; nested brackets are outside the subset.)
+        if c == '['
+            && (i == 0 || chars[i - 1] != '!')
+            && let Some(close) = find(&chars, i + 1, &[']'])
+            && chars.get(close + 1) == Some(&'(')
+            && let Some(end) = find(&chars, close + 2, &[')'])
+        {
+            let text: String = chars[i + 1..close].iter().collect();
+            let url: String = chars[close + 2..end]
+                .iter()
+                .collect::<String>()
+                .trim()
+                .to_string();
+            flush(&mut lit, &mut inlines);
+            if url.is_empty() {
+                inlines.extend(parse_inline(&text));
+            } else if text.trim().is_empty() || text.trim() == url {
+                inlines.push(link_endo(url));
+            } else {
+                inlines.extend(parse_inline(&text));
+                inlines.push(Inline::Text(" (".to_string()));
+                inlines.push(link_endo(url));
+                inlines.push(Inline::Text(")".to_string()));
+            }
+            i = end + 1;
             continue;
         }
         // Strong, then emphasis.
@@ -862,6 +974,35 @@ fn parse_html_inlines(
                         ann: Annotations::default(),
                     });
                 }
+                "a" => {
+                    // The visible-URL link: an anchor whose text
+                    // is its target (or none) is the link sim
+                    // exactly; a hidden href projects as prose
+                    // text with the visible URL beside it — the
+                    // org projection, pending F9's faithful form.
+                    let href = attr(attrs, "href")
+                        .map(|h| h.trim().to_string())
+                        .unwrap_or_default();
+                    let (content, next) = parse_html_inlines(toks, i + 1, name, breaks)?;
+                    if href.is_empty() {
+                        inlines.extend(content);
+                    } else {
+                        let visible = match content.as_slice() {
+                            [] => true,
+                            [Inline::Text(t)] => t.trim() == href,
+                            _ => false,
+                        };
+                        if visible {
+                            inlines.push(link_endo(href));
+                        } else {
+                            inlines.extend(content);
+                            inlines.push(Inline::Text(" (".to_string()));
+                            inlines.push(link_endo(href));
+                            inlines.push(Inline::Text(")".to_string()));
+                        }
+                    }
+                    i = next;
+                }
                 other => {
                     return Err(html_err(format!("unsupported inline element: `<{other}>`")));
                 }
@@ -1193,6 +1334,32 @@ fn parse_rst_inline(text: &str) -> Vec<Inline> {
             i = close + 2;
             continue;
         }
+        // Hyperlink reference with embedded URI, `text <url>`_ (or
+        // anonymous, `__). Text equal to the URL, or absent, is the
+        // visible-URL link sim exactly; distinct text projects as
+        // prose with the visible URL beside it, pending F9. Named
+        // references without a URI stay literal, as do bare URLs.
+        if c == '`'
+            && chars.get(i + 1) != Some(&'`')
+            && let Some(close) = find(&chars, i + 1, &['`', '_'])
+            && let Some((text, url)) = rst_embedded_uri(&chars[i + 1..close])
+        {
+            flush(&mut lit, &mut inlines);
+            let text = text.trim();
+            if text.is_empty() || text == url {
+                inlines.push(link_endo(url));
+            } else {
+                inlines.extend(parse_rst_inline(text));
+                inlines.push(Inline::Text(" (".to_string()));
+                inlines.push(link_endo(url));
+                inlines.push(Inline::Text(")".to_string()));
+            }
+            i = close + 2;
+            if chars.get(i) == Some(&'_') {
+                i += 1;
+            }
+            continue;
+        }
         // Strong, then emphasis.
         if c == '*' {
             let strong = chars.get(i + 1) == Some(&'*');
@@ -1239,6 +1406,27 @@ fn parse_rst_inline(text: &str) -> Vec<Inline> {
 
 /// A choice element: prefer the regularized reading
 /// (expan/corr/reg) over the source form (abbr/sic/orig).
+/// Split the inside of a `` `...`_ `` reference into (text, URI)
+/// when it carries an embedded URI: `text <uri>` with the angle
+/// group last and preceded by whitespace (or standing alone). A
+/// `<name_>` alias, whitespace inside the target, or a stray
+/// backtick disqualifies it.
+fn rst_embedded_uri(inner: &[char]) -> Option<(String, String)> {
+    if inner.last() != Some(&'>') || inner.contains(&'`') {
+        return None;
+    }
+    let open = inner.iter().rposition(|&c| c == '<')?;
+    if open > 0 && !inner[open - 1].is_whitespace() {
+        return None;
+    }
+    let url: String = inner[open + 1..inner.len() - 1].iter().collect();
+    if url.is_empty() || url.chars().any(char::is_whitespace) || url.ends_with('_') {
+        return None;
+    }
+    let text: String = inner[..open].iter().collect();
+    Some((text, url))
+}
+
 fn tei_choice(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Vec<Inline>, usize)> {
     let mut preferred: Vec<Inline> = Vec::new();
     let mut fallback: Vec<Inline> = Vec::new();
@@ -4775,6 +4963,48 @@ fn djot_inlines(text: &str) -> Result<Vec<Inline>> {
             i = end + 1;
             continue;
         }
+        // Autolink `<URL>` — the visible-URL link.
+        if c == '<'
+            && let Some((url, next)) = autolink_target(&chars, i)
+        {
+            flush_plain(&mut plain, &mut inlines);
+            inlines.push(link_endo(url));
+            i = next;
+            continue;
+        }
+        // Inline link `[text](url)`: the org projection, as in
+        // at-markdown (the iso pair reads links identically).
+        if c == '['
+            && (i == 0 || chars[i - 1] != '!')
+            && chars.get(i + 1) != Some(&'^')
+            && let Some(rel) = chars[i + 1..].iter().position(|&ch| ch == ']')
+        {
+            let close = i + 1 + rel;
+            if chars.get(close + 1) == Some(&'(')
+                && let Some(rel2) = chars[close + 2..].iter().position(|&ch| ch == ')')
+            {
+                let end = close + 2 + rel2;
+                let text: String = chars[i + 1..close].iter().collect();
+                let url: String = chars[close + 2..end]
+                    .iter()
+                    .collect::<String>()
+                    .trim()
+                    .to_string();
+                flush_plain(&mut plain, &mut inlines);
+                if url.is_empty() {
+                    inlines.extend(djot_inlines(&text)?);
+                } else if text.trim().is_empty() || text.trim() == url {
+                    inlines.push(link_endo(url));
+                } else {
+                    inlines.extend(djot_inlines(&text)?);
+                    inlines.push(Inline::Text(" (".to_string()));
+                    inlines.push(link_endo(url));
+                    inlines.push(Inline::Text(")".to_string()));
+                }
+                i = end + 1;
+                continue;
+            }
+        }
         plain.push(c);
         i += 1;
     }
@@ -4807,7 +5037,17 @@ pub fn docbook_to_document(xml: &str) -> Result<Document> {
         match &toks[i] {
             Tok::Text(t) if t.trim().is_empty() => i += 1,
             Tok::Open { name, .. } if name == "article" || name == "book" || name == "chapter" => {
-                let (inner, next) = docbook_blocks(&toks, i + 1, name.clone(), &mut notes)?;
+                let (mut inner, next) = docbook_blocks(&toks, i + 1, name.clone(), &mut notes)?;
+                // The root's leading title (bare, or from <info>)
+                // is the document title, standing alone first.
+                if let Some(content) = docbook_take_title(&mut inner) {
+                    blocks.push(Block::Paragraph(vec![Inline::Endo {
+                        symbol: "=".to_string(),
+                        content,
+                        bracket_matching: true,
+                        ann: Annotations::default(),
+                    }]));
+                }
                 blocks.extend(inner);
                 i = next;
             }
@@ -4818,11 +5058,56 @@ pub fn docbook_to_document(xml: &str) -> Result<Document> {
             }
         }
     }
+    docbook_settle_titles(&mut blocks);
     Ok(Document {
         dialect_id: "at-docbook".to_string(),
         dialect_version: None,
         blocks,
     })
+}
+
+/// The sentinel symbol a `<title>` carries until its container
+/// claims it (section lemma, document title).
+const DOCBOOK_TITLE: &str = "\u{0}title";
+
+/// Take a leading sentinel title paragraph off a block run.
+fn docbook_take_title(blocks: &mut Vec<Block>) -> Option<Vec<Inline>> {
+    match blocks.first() {
+        Some(Block::Paragraph(inlines))
+            if matches!(inlines.first(),
+                Some(Inline::Endo { symbol, .. }) if symbol == DOCBOOK_TITLE) => {}
+        _ => return None,
+    }
+    let Block::Paragraph(mut inlines) = blocks.remove(0) else {
+        unreachable!()
+    };
+    let Some(Inline::Endo { content, .. }) = inlines.pop() else {
+        unreachable!()
+    };
+    Some(content)
+}
+
+/// A `<title>` no container claimed (inside a blockquote, an
+/// admonition, a list) is a caption: it settles as a plain
+/// paragraph of its text rather than leaking the sentinel.
+fn docbook_settle_titles(blocks: &mut [Block]) {
+    for block in blocks.iter_mut() {
+        match block {
+            Block::Paragraph(inlines) => {
+                if let [
+                    Inline::Endo {
+                        symbol, content, ..
+                    },
+                ] = inlines.as_mut_slice()
+                    && symbol == DOCBOOK_TITLE
+                {
+                    *inlines = std::mem::take(content);
+                }
+            }
+            Block::Para { children, .. } => docbook_settle_titles(children),
+            _ => {}
+        }
+    }
 }
 
 fn docbook_blocks(
@@ -4843,14 +5128,53 @@ fn docbook_blocks(
                 )));
             }
             Tok::Open { name, .. } if name == "info" => {
-                i = skip_element(toks, i + 1, name.clone())?;
+                // Metadata is skipped, except the title, which
+                // rides the sentinel like a bare <title>.
+                i += 1;
+                loop {
+                    match toks.get(i) {
+                        None => return Err(docbook_err("unterminated <info>".into())),
+                        Some(Tok::Close(name)) if name == "info" => {
+                            i += 1;
+                            break;
+                        }
+                        Some(Tok::Open {
+                            name, self_closing, ..
+                        }) if name == "title" => {
+                            if *self_closing {
+                                i += 1;
+                                continue;
+                            }
+                            let ((content, inner), next) =
+                                docbook_inline_run(toks, i + 1, "title", notes)?;
+                            blocks.push(Block::Paragraph(vec![Inline::Endo {
+                                symbol: DOCBOOK_TITLE.to_string(),
+                                content,
+                                bracket_matching: true,
+                                ann: Annotations::default(),
+                            }]));
+                            blocks.extend(inner);
+                            i = next;
+                        }
+                        Some(Tok::Open {
+                            name, self_closing, ..
+                        }) => {
+                            i = if *self_closing {
+                                i + 1
+                            } else {
+                                skip_element(toks, i + 1, name.clone())?
+                            };
+                        }
+                        Some(_) => i += 1,
+                    }
+                }
             }
             Tok::Open { name, .. } if name == "title" => {
-                // Sentinel-wrapped; the enclosing section
-                // promotes it to the lemma.
+                // Sentinel-wrapped; the enclosing section (or the
+                // root) promotes it to the lemma (or the title).
                 let ((content, inner), next) = docbook_inline_run(toks, i + 1, "title", notes)?;
                 blocks.push(Block::Paragraph(vec![Inline::Endo {
-                    symbol: "\u{0}title".to_string(),
+                    symbol: DOCBOOK_TITLE.to_string(),
                     content,
                     bracket_matching: true,
                     ann: Annotations::default(),
@@ -4863,20 +5187,8 @@ fn docbook_blocks(
                 let n = name.clone();
                 let (mut children, next) = docbook_blocks(toks, i + 1, n, notes)?;
                 // The leading title paragraph becomes the lemma.
-                let lemma = match children.first() {
-                    Some(Block::Paragraph(inlines))
-                        if matches!(inlines.first(),
-                            Some(Inline::Endo { symbol, .. }) if symbol == "\u{0}title") =>
-                    {
-                        let Some(Block::Paragraph(mut inlines)) = Some(children.remove(0)) else {
-                            unreachable!()
-                        };
-                        let Some(Inline::Endo { content, .. }) = inlines.pop() else {
-                            unreachable!()
-                        };
-                        content
-                    }
-                    _ => return Err(docbook_err("section without a title".into())),
+                let Some(lemma) = docbook_take_title(&mut children) else {
+                    return Err(docbook_err("section without a title".into()));
                 };
                 blocks.push(Block::Para {
                     symbol: "#".to_string(),
@@ -5092,6 +5404,60 @@ fn docbook_inline_run(
                         genoses: Vec::new(),
                     },
                 });
+                i = next;
+            }
+            Tok::Open { name, .. } if name == "quote" => {
+                let ((content, inner), next) = docbook_inline_run(toks, i + 1, "quote", notes)?;
+                inlines.push(Inline::Endo {
+                    symbol: "\"\"".to_string(),
+                    content,
+                    bracket_matching: true,
+                    ann: Annotations::default(),
+                });
+                bodies.extend(inner);
+                i = next;
+            }
+            Tok::Open {
+                name,
+                attrs,
+                self_closing,
+                ..
+            } if name == "link" || name == "ulink" => {
+                // The visible-URL link: a DocBook 5 xlink:href (or
+                // DocBook 4 ulink url) whose text is its target, or
+                // none, is the link sim exactly; a hidden href
+                // projects as prose text with the visible URL beside
+                // it — the html projection, pending F9's faithful
+                // form. An internal linkend has no URL: prose only.
+                let url = attr(attrs, "xlink:href")
+                    .or_else(|| attr(attrs, "url"))
+                    .map(|u| u.trim().to_string())
+                    .unwrap_or_default();
+                let (content, next) = if *self_closing {
+                    (Vec::new(), i + 1)
+                } else {
+                    let n = name.clone();
+                    let ((content, inner), next) = docbook_inline_run(toks, i + 1, &n, notes)?;
+                    bodies.extend(inner);
+                    (content, next)
+                };
+                if url.is_empty() {
+                    inlines.extend(content);
+                } else {
+                    let visible = match content.as_slice() {
+                        [] => true,
+                        [Inline::Text(t)] => t.trim() == url,
+                        _ => false,
+                    };
+                    if visible {
+                        inlines.push(link_endo(url));
+                    } else {
+                        inlines.extend(content);
+                        inlines.push(Inline::Text(" (".to_string()));
+                        inlines.push(link_endo(url));
+                        inlines.push(Inline::Text(")".to_string()));
+                    }
+                }
                 i = next;
             }
             other => return Err(docbook_err(format!("unsupported {other:?} inline"))),

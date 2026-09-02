@@ -48,6 +48,18 @@
 @"strong emphasis (**text**)"@
 ===@
 
+@=== link
+@>< grammata ><@
+@"hyperlink reference with embedded URI; the grammata is the displayed URL"@
+@""
+The visible-URL link, `URL <URL>`_ in RST. Hidden-href
+references (`text <url>`_ with text distinct from the URL) are
+deferred pending F9; the endomorphosis meanwhile projects them
+as prose text with the visible URL beside it. Bare URLs in
+prose stay prose.
+""@
+===@
+
 @=== blockquote
 @>
 grammata

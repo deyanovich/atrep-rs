@@ -3,7 +3,7 @@
 
 @@/ The reverse direction: em/strong rename back, list containers
 @@/ and generic wrappers dissolve into their content (at-rst is
-@@/ flat and has no span/division).
+@@/ flat and has no span/division); the link passes through.
 
 @:: / *
 @:: ! **
@@ -11,4 +11,5 @@
 @<< ..
 @<< ,
 @<< _
+@:: >< ><
 @-- ~

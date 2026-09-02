@@ -76,13 +76,14 @@
 @<# _: !
 @<# _/ !
 
-@@/ Apparatus: references have no anchor machinery in at-html.
+@@/ Apparatus: references have no anchor machinery in at-html;
+@@/ the visible-URL link passes through.
 @-- >
 @-- >>
 @-- >>>
 @-- >>>>
 @-- >[
 @:: >: , .standards-ref
-@<< ><
+@:: >< ><
 @<< %
 @-- %%

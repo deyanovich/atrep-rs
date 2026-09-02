@@ -93,10 +93,13 @@ Ode on Solitude
     }
 }
 
-/// Drift guard: the std copies are vendored from the normative
-/// litogramma repo. When the sibling checkout is present, the
-/// copies must be byte-identical; absent (standalone checkout),
-/// the guard is skipped.
+/// Drift guard: the embedded std is the home of the litogramma
+/// files the engine ships; the litogramma repo is the workbench
+/// where they are edited with local precedence. Every file present
+/// in both places must be byte-identical (the vendored set is
+/// derived, not listed: any std file the repo also has), which is
+/// the same rule `scripts/vendor-litogramma.sh check` applies.
+/// Absent the sibling checkout (standalone), the guard is skipped.
 #[test]
 fn std_copies_track_the_litogramma_repo() {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -109,24 +112,54 @@ fn std_copies_track_the_litogramma_repo() {
         return;
     }
     let std_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("std");
-    for f in [
-        "litogramma.dia",
-        "bibliogramma.dia",
-        "litogramma.html.exo",
-        "litogramma.gemtext.exo",
-        "litogramma.latex.exo",
-        "bibliogramma.bib.exo",
-        "bibliogramma.bibtex.exo",
-        "litogramma.at-html.hom",
-        "litogramma.at-docbook.hom",
-        "litogramma.at-tei.hom",
-        "at-docbook.litogramma.hom",
-    ] {
-        let ours = std::fs::read(std_dir.join(f)).unwrap();
-        let theirs = std::fs::read(repo.join(f)).unwrap();
+    let mut shared = 0;
+    for entry in std::fs::read_dir(&std_dir).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_str().unwrap().to_string();
+        let theirs = repo.join(&name);
+        if !theirs.is_file() {
+            continue;
+        }
+        shared += 1;
         assert!(
-            ours == theirs,
-            "std/{f} has drifted from the litogramma repo — re-vendor it"
+            std::fs::read(&path).unwrap() == std::fs::read(&theirs).unwrap(),
+            "std/{name} has drifted from the litogramma repo — run \
+             scripts/vendor-litogramma.sh pull (or push)"
         );
+    }
+    assert!(
+        shared >= 11,
+        "the vendored set shrank: {shared} shared files"
+    );
+}
+
+/// The three export homs are total over litogramma and carry
+/// koine's inlines: the visible-URL link passes through to every
+/// target (all three speak it); the inline quotation lands on
+/// at-html's classed span, at-docbook's quote, and at-tei's q.
+/// Guards the seam the vendoring check cannot see: a koine sim
+/// added after a hom was written.
+#[test]
+fn litogramma_homs_are_total_and_carry_koine_inlines() {
+    let tmp = tmp_dir("litogramma-homs");
+    let atd = "@@@!litogramma\n\
+               \n\
+               @=Title=@\n\
+               \n\
+               @#(1) One\n\
+               A @\"\"word\"\"@ and @><https://example.org/x><@ here.\n\
+               #@\n";
+    std::fs::write(tmp.join("doc.atd"), atd).unwrap();
+    let kanon = kanonizo::kanonizo_file(&tmp.join("doc.atd")).unwrap();
+    for (target, quotation) in [
+        ("at-html", "@,word,@.quotation"),
+        ("at-docbook", "@\"\"word\"\"@"),
+        ("at-tei", "@,word,@.q"),
+    ] {
+        let m = atrep::morph::resolve_morph(&tmp, "litogramma", target).unwrap();
+        let out = atrep::morph::apply(&kanon.document, &m).unwrap();
+        let s = atrep::dendron::serialize(&out);
+        assert!(s.contains("@><https://example.org/x><@"), "{target}: {s}");
+        assert!(s.contains(quotation), "{target}: {s}");
     }
 }

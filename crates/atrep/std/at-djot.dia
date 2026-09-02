@@ -12,6 +12,11 @@
 @"level-1 heading; flat, does not nest content"@
 ===@
 
+@=== link
+@>< grammata ><@
+@"hyperlink; the grammata is the displayed URL"@
+===@
+
 @=== heading-2
 @## grammata ##@
 @"level-2 heading"@
@@ -66,4 +71,15 @@ grammata
 grammata
 .@
 @"enumerated list item (N. marker); items form flat runs"@
+===@
+
+@@/ The footnote extension ([^label] references, [^label]:
+@@/ definitions): the koine construction, shared symbol with
+@@/ at-markdown.
+
+@=== footnote
+@^
+grammata
+^@
+@"footnote body ([^label]: text); attached by deixis callouts"@
 ===@

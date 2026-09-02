@@ -6,7 +6,14 @@
 @@/ morphisms to and from other nested dialektoi (litogramma)
 @@/ need no flattening. Code maps to the core enlexis forms
 @@/ (programlisting language as a genos); footnotes are inline
-@@/ in DocBook and ride the deixis machinery.
+@@/ in DocBook and ride the deixis machinery. Inline quotation
+@@/ and the visible-URL link map onto quote and link; the root's
+@@/ title (bare or in info) is the koine-shaped document title.
+
+@=== title
+@= grammata =@
+@"document title: the article/book/chapter root's title, standing alone as the first paragraph"@
+===@
 
 @=== section
 @# lemma
@@ -23,6 +30,23 @@ grammata
 @=== strong
 @* grammata *@
 @"emphasis role=strong/bold"@
+===@
+
+@=== quotation
+@"" grammata ""@
+@"inline quotation (quote element)"@
+===@
+
+@=== link
+@>< grammata ><@
+@"hyperlink (link element, xlink:href); the grammata is the displayed URL"@
+@""
+The visible-URL link: a link whose text is its target (or none,
+or DocBook 4's ulink). Hidden-href links (display text distinct
+from the URL) are deferred pending F9; the endomorphosis
+meanwhile projects them as prose text with the visible URL
+beside it. An internal linkend link has no URL and stays prose.
+""@
 ===@
 
 @=== blockquote

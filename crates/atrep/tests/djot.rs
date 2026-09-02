@@ -91,3 +91,23 @@ fn std_iso_is_lossless_both_ways() {
         [("at-djot", "at-markdown"), ("at-markdown", "at-html")]
     );
 }
+
+/// The iso pair reads links identically: autolinks are the link
+/// sim, inline links project — and the djot exo re-emits the
+/// autolink.
+#[test]
+fn djot_links_import() {
+    let doc = endo::djot_to_document(
+        "See <https://quarb.org/spec> and [the guide](https://quarb.org/guide).\n",
+    )
+    .unwrap();
+    let atd = dendron::serialize(&doc);
+    assert!(
+        atd.contains("@><https://quarb.org/spec><@"),
+        "autolink: {atd}"
+    );
+    assert!(
+        atd.contains("the guide (@><https://quarb.org/guide><@)"),
+        "inline link projects: {atd}"
+    );
+}

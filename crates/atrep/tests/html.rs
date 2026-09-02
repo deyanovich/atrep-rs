@@ -265,3 +265,21 @@ fn verse_roundtrips_through_html() {
         dendron::serialize(&kanon.document)
     );
 }
+
+/// Anchors no longer refuse: a visible-URL anchor is the link
+/// sim, a hidden href projects as prose with the URL beside it.
+#[test]
+fn anchors_import_as_links() {
+    let html = "<html><body><p>See <a href=\"https://quarb.org/spec\">the spec</a> \
+                and <a href=\"https://quarb.org\">https://quarb.org</a>.</p></body></html>";
+    let doc = endo::html_to_document(html).unwrap();
+    let atd = dendron::serialize(&doc);
+    assert!(
+        atd.contains("the spec (@><https://quarb.org/spec><@)"),
+        "hidden href projects: {atd}"
+    );
+    assert!(
+        atd.contains("and @><https://quarb.org><@."),
+        "visible-URL anchor is the bare link sim: {atd}"
+    );
+}

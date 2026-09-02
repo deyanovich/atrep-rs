@@ -13,13 +13,21 @@
 
 @-> *document
 <?xml version="1.0" encoding="UTF-8"?>
-<article xmlns="http://docbook.org/ns/docbook" version="5.0">
+<article xmlns="http://docbook.org/ns/docbook" xmlns:xlink="http://www.w3.org/1999/xlink" version="5.0">
 @(grammata)
 </article>
 >-@
 
 @-> *paragraph
 <para>@(grammata)</para>
+>-@
+
+@-> *solo =
+<title>@(grammata)</title>
+>-@
+
+@-> =
+@(grammata)
 >-@
 
 @-> #
@@ -35,6 +43,14 @@
 
 @-> *
 <emphasis role="strong">@(grammata)</emphasis>
+>-@
+
+@-> ""
+<quote>@(grammata)</quote>
+>-@
+
+@-> ><
+<link xlink:href="@(grammata)">@(grammata)</link>
 >-@
 
 @-> >
