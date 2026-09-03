@@ -1,6 +1,6 @@
 [package]
 name = "atrep-cli"
-description = "atrep command-line tool (pilot implementation)"
+description = "atrep command-line tool and language server (pilot implementation)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,10 +9,22 @@ readme = "../../README.md"
 keywords = ["atrep", "markup", "semantic", "document", "cli"]
 categories = ["command-line-utilities", "text-processing"]
 
+# Two binaries, one crate, one release: the `atrep` CLI for
+# pipelines and the `atrep-lsp` language server for editors
+# (LSP.md). Both ride the crates.io publish and the PyPI wheel.
 [[bin]]
 name = "atrep"
 path = "src/main.rs"
 
+[[bin]]
+name = "atrep-lsp"
+path = "src/lsp/main.rs"
+
 [dependencies]
 atrep.workspace = true
 clap.workspace = true
+lsp-server.workspace = true
+lsp-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+unicode-normalization.workspace = true

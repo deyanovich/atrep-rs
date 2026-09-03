@@ -26,11 +26,15 @@ spec revision.
   classes), `dialektos` (`.lektos`/`.dia` definitions, local
   inheritance and import), `parser` (document to Dendron),
   `dendron` (AST + canonical serializer), `kanonizo`, `litosis`.
-- `crates/atrep-cli` — the `atrep` binary.
-- `crates/atrep-lsp` — the `atrep-lsp` language server:
-  diagnostics + semantic-token highlighting for `.atd`/`.atk`
-  documents and `.dia`/`.lektos` definitions (see its README
-  for editor configuration).
+- `crates/atrep-cli` — two binaries, one crate: the `atrep`
+  CLI, and the `atrep-lsp` language server (diagnostics +
+  semantic-token highlighting for `.atd`/`.atk` documents and
+  `.dia`/`.lektos` definitions, and — over the outline —
+  document symbols, folding, onym definition and references,
+  selection ranges, and sim hover for documents; see
+  `crates/atrep-cli/LSP.md` for editor configuration). Both
+  ship with `cargo install atrep-cli` and the PyPI `atrep-cli`
+  wheel.
 
 ## Usage
 

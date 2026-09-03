@@ -1,13 +1,17 @@
 //! atrep-lsp — language server for atrep documents (`.atd`/`.atk`)
 //! and dialektos definitions (`.dia`/`.lektos`).
 //!
-//! stdio transport. v1 surface: publish-diagnostics (first parse
-//! error, via atrep) and full-document semantic tokens
-//! (lexical highlighting; sim symbols checked against the resolved
-//! dialektos when resolution succeeds).
+//! stdio transport. Surface: publish-diagnostics (first parse
+//! error, via atrep), full-document semantic tokens (lexical
+//! highlighting; sim symbols checked against the resolved
+//! dialektos when resolution succeeds), and — for documents whose
+//! outline assembles — document symbols, folding ranges,
+//! go-to-definition and references over onyms, selection ranges,
+//! and hover on sim symbols (see `structure`).
 
 mod analysis;
 mod scan;
+mod structure;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -15,10 +19,13 @@ use std::path::{Path, PathBuf};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
 use lsp_types::{
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    PublishDiagnosticsParams, SemanticTokens, SemanticTokensFullOptions, SemanticTokensLegend,
-    SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
-    SemanticTokensServerCapabilities, ServerCapabilities, TextDocumentSyncCapability,
-    TextDocumentSyncKind, Uri,
+    DocumentSymbolParams, DocumentSymbolResponse, FoldingRangeParams,
+    FoldingRangeProviderCapability, GotoDefinitionParams, GotoDefinitionResponse, HoverParams,
+    HoverProviderCapability, Location, OneOf, PublishDiagnosticsParams, ReferenceParams,
+    SelectionRangeParams, SelectionRangeProviderCapability, SemanticTokens,
+    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams,
+    SemanticTokensResult, SemanticTokensServerCapabilities, ServerCapabilities,
+    TextDocumentSyncCapability, TextDocumentSyncKind, Uri,
 };
 
 type Docs = HashMap<String, String>;
@@ -38,6 +45,12 @@ fn main() -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
                 ..Default::default()
             },
         )),
+        document_symbol_provider: Some(OneOf::Left(true)),
+        folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
+        definition_provider: Some(OneOf::Left(true)),
+        references_provider: Some(OneOf::Left(true)),
+        selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
+        hover_provider: Some(HoverProviderCapability::Simple(true)),
         ..Default::default()
     })?;
     connection.initialize(capabilities)?;
@@ -92,6 +105,93 @@ fn handle_request(
             };
             connection.sender.send(Message::Response(response))?;
         }
+        "textDocument/documentSymbol" => {
+            let (id, params): (RequestId, DocumentSymbolParams) =
+                req.extract("textDocument/documentSymbol")?;
+            let value = with_structure(docs, &params.text_document.uri, |s, _| {
+                serde_json::to_value(DocumentSymbolResponse::Nested(s.document_symbols()))
+            })?;
+            connection
+                .sender
+                .send(Message::Response(Response::new_ok(id, value)))?;
+        }
+        "textDocument/foldingRange" => {
+            let (id, params): (RequestId, FoldingRangeParams) =
+                req.extract("textDocument/foldingRange")?;
+            let value = with_structure(docs, &params.text_document.uri, |s, _| {
+                serde_json::to_value(s.folding_ranges())
+            })?;
+            connection
+                .sender
+                .send(Message::Response(Response::new_ok(id, value)))?;
+        }
+        "textDocument/definition" => {
+            let (id, params): (RequestId, GotoDefinitionParams) =
+                req.extract("textDocument/definition")?;
+            let tdp = params.text_document_position_params;
+            let uri = tdp.text_document.uri.clone();
+            let value = with_structure(docs, &tdp.text_document.uri, |s, _| {
+                match s.definition(tdp.position) {
+                    Some(range) => serde_json::to_value(GotoDefinitionResponse::Scalar(Location {
+                        uri: uri.clone(),
+                        range,
+                    })),
+                    None => Ok(serde_json::Value::Null),
+                }
+            })?;
+            connection
+                .sender
+                .send(Message::Response(Response::new_ok(id, value)))?;
+        }
+        "textDocument/references" => {
+            let (id, params): (RequestId, ReferenceParams) =
+                req.extract("textDocument/references")?;
+            let tdp = params.text_document_position;
+            let uri = tdp.text_document.uri.clone();
+            let include = params.context.include_declaration;
+            let value = with_structure(docs, &tdp.text_document.uri, |s, _| {
+                let locs: Vec<Location> = s
+                    .references(tdp.position, include)
+                    .into_iter()
+                    .map(|range| Location {
+                        uri: uri.clone(),
+                        range,
+                    })
+                    .collect();
+                serde_json::to_value(locs)
+            })?;
+            connection
+                .sender
+                .send(Message::Response(Response::new_ok(id, value)))?;
+        }
+        "textDocument/selectionRange" => {
+            let (id, params): (RequestId, SelectionRangeParams) =
+                req.extract("textDocument/selectionRange")?;
+            let value = with_structure(docs, &params.text_document.uri, |s, _| {
+                let ranges: Vec<_> = params
+                    .positions
+                    .iter()
+                    .map(|p| s.selection_range(*p))
+                    .collect();
+                serde_json::to_value(ranges)
+            })?;
+            connection
+                .sender
+                .send(Message::Response(Response::new_ok(id, value)))?;
+        }
+        "textDocument/hover" => {
+            let (id, params): (RequestId, HoverParams) = req.extract("textDocument/hover")?;
+            let tdp = params.text_document_position_params;
+            let value = with_structure(docs, &tdp.text_document.uri, |s, text| {
+                match s.hover(text, tdp.position) {
+                    Some(h) => serde_json::to_value(h),
+                    None => Ok(serde_json::Value::Null),
+                }
+            })?;
+            connection
+                .sender
+                .send(Message::Response(Response::new_ok(id, value)))?;
+        }
         _ => {
             let response = Response::new_err(
                 req.id,
@@ -102,6 +202,24 @@ fn handle_request(
         }
     }
     Ok(())
+}
+
+/// Run a structural query over an open document. Null when the
+/// document is unknown, is a definition file, or does not parse
+/// (diagnostics carry the error; structure stays quiet).
+fn with_structure(
+    docs: &Docs,
+    uri: &Uri,
+    f: impl FnOnce(&structure::Structure, &str) -> serde_json::Result<serde_json::Value>,
+) -> Result<serde_json::Value, Box<dyn std::error::Error + Sync + Send>> {
+    let Some(text) = docs.get(uri.as_str()) else {
+        return Ok(serde_json::Value::Null);
+    };
+    let path = uri_to_path(uri);
+    match structure::analyze(text, &path) {
+        Some(s) => Ok(f(&s, text)?),
+        None => Ok(serde_json::Value::Null),
+    }
 }
 
 fn handle_notification(

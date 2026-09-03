@@ -60,7 +60,7 @@ dependencies = [
 
 [[package]]
 name = "atrep"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "flate2",
  "serde",
@@ -73,17 +73,10 @@ dependencies = [
 
 [[package]]
 name = "atrep-cli"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "atrep",
  "clap",
-]
-
-[[package]]
-name = "atrep-lsp"
-version = "0.3.1"
-dependencies = [
- "atrep",
  "lsp-server",
  "lsp-types",
  "serde",
