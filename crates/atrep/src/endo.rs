@@ -1507,14 +1507,14 @@ fn plain_text(inlines: &[Inline]) -> String {
 }
 
 /// The transmitted reading of a TEI `choice` as a paradosis value:
-/// whitespace runs become underscores (a parameter carries no
-/// whitespace; the parsing pack's convention), and a value that
-/// is empty or unbalanced in its parentheses has no spelling.
+/// whitespace runs collapse to single spaces (written escaped in
+/// the parameter), and a value that is empty or unbalanced in
+/// its parentheses has no spelling.
 fn paradosis_value(inlines: &[Inline]) -> Option<String> {
     let value: String = plain_text(inlines)
         .split_whitespace()
         .collect::<Vec<_>>()
-        .join("_");
+        .join(" ");
     (!value.is_empty() && crate::parser::balanced_parens(&value)).then_some(value)
 }
 
@@ -3066,8 +3066,9 @@ fn tei_blocks(
                 blocks.extend(bodies);
                 i = next;
             }
-            Tok::Open { name, .. } if name == "sp" => {
-                let (speech, next) = tei_speech(toks, i + 1, depth, notes)?;
+            Tok::Open { name, attrs, .. } if name == "sp" => {
+                let who = attr(attrs, "who").map(str::to_string);
+                let (speech, next) = tei_speech(toks, i + 1, who.as_deref(), depth, notes)?;
                 blocks.extend(speech);
                 i = next;
             }
@@ -3390,10 +3391,15 @@ fn tei_verse(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Block, Ve
 }
 
 /// An sp: speaker becomes the dialogue lemma; the speech body
-/// is block content.
+/// is block content. The printed prefix is the speaker; when
+/// the source also points at a character (sp/@who), the pointer
+/// rides as a prosopon first in the lemma, so the speech reaches
+/// its character by key. A speech without a pointer is attributed
+/// by its prefix alone.
 fn tei_speech(
     toks: &[Tok],
     mut i: usize,
+    who: Option<&str>,
     depth: usize,
     notes: &mut usize,
 ) -> Result<(Vec<Block>, usize)> {
@@ -3418,6 +3424,12 @@ fn tei_speech(
             }
             _ => break,
         }
+    }
+    // A speakerless <sp> stays speakerless (it splices bare
+    // below): the pointer annotates a printed prefix, it does
+    // not stand in for one.
+    if let Some(who) = who.filter(|_| !lemma.is_empty()) {
+        lemma.insert(0, aphanes(PROSOPON, who));
     }
     // Verse speeches (l children, the DraCor shape) become the
     // verse-dialogue form; prose and mixed speeches stay
@@ -3725,6 +3737,11 @@ fn tei_said_paragraph(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(
             },
             j,
         ));
+    }
+    // A printed label with a pointer: the drama block keeps its
+    // prefix and carries the pointer first in the lemma.
+    if let Some(who) = &who {
+        lemma.insert(0, aphanes(PROSOPON, who));
     }
     Ok((
         Block::Para {

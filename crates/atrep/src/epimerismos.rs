@@ -96,9 +96,12 @@ pub struct Corpus {
 }
 
 /// Whether a value can be a monosim parameter: non-empty, no
-/// whitespace, parentheses balanced (they nest inside a parameter).
+/// whitespace but the plain space (written escaped), parentheses
+/// balanced (they nest inside a parameter).
 fn param_ok(v: &str) -> bool {
-    !v.is_empty() && !v.contains(char::is_whitespace) && crate::parser::balanced_parens(v)
+    !v.is_empty()
+        && !v.chars().any(|c| c.is_whitespace() && c != ' ')
+        && crate::parser::balanced_parens(v)
 }
 
 fn mono(symbol: &str, value: &str) -> Option<Inline> {

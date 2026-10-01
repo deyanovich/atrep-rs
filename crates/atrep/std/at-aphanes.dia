@@ -38,8 +38,13 @@
 πρόσωπον, the person, the dramatic character (τὰ τοῦ δράματος
 πρόσωπα is the dramatis personae). Inside a prose dialogue line
 it names the speaker; inside a name span, the referent. TEI
-said/@who, q/@who, persName/@ref. Redundant in drama, where the
-speech prefix (the dialogue lemma) already carries the speaker.
+said/@who, q/@who, sp/@who, persName/@ref. In drama the speech
+prefix (the dialogue lemma) carries the speaker, and a speech
+without a prosopon is attributed by its prefix alone. Where the
+source points at a character the prosopon is written first in
+the lemma (@: @?:(barnardo)BARNARDO.) and gives the key the
+printed prefix cannot: prefixes are abbreviated, punctuated and
+respelled, keys are not.
 ""@
 ===@
 
@@ -99,11 +104,11 @@ per category; the sim-name slot joins them with spaces.
 παράδοσις, what is handed down, the transmitted text as
 against the emendation. TEI choice: the text carries expan,
 corr or reg, and the abbr, sic or orig it stands for is the
-paradosis of the diaphane around it (@@.@?~(ye_olde)the
-old.@@). Whitespace runs in the source value are written as
-underscores (a parameter carries no whitespace); an
-exomorphosis reading it restores them. The TEI exo renders the
-reading and records the transmitted form as a loss: a rule
-cannot open a choice only when the value is present.
+paradosis of the diaphane around it (@@.@?~(ye\ olde)the
+old.@@). A space in the value is written escaped, with the
+inactive sigil before it, and is a literal space to every
+reader. The TEI exo writes the pair back as a choice, the
+paradosis as orig and the reading as reg; which of abbr, sic
+or orig the source used is not kept.
 ""@
 ===@

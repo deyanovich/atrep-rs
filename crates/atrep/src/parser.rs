@@ -388,7 +388,7 @@ impl Parser {
                         self.loc(self.idx),
                     ));
                 };
-                self.check_param(param)?;
+                let param = &self.check_param(param)?;
                 self.idx += 1;
                 Ok(ParaStep::Block(Block::Enmedia {
                     param: param.to_string(),
@@ -546,7 +546,7 @@ impl Parser {
                         self.loc(start),
                     ));
                 };
-                self.check_param(param)?;
+                let param = &self.check_param(param)?;
                 self.idx += 1;
                 Ok(ParaStep::Block(match axioma_ref(param) {
                     Some(onym) => Block::AxiomaRefBlock {
@@ -568,7 +568,7 @@ impl Parser {
                         self.loc(start),
                     ));
                 };
-                self.check_param(param)?;
+                let param = &self.check_param(param)?;
                 self.idx += 1;
                 Ok(ParaStep::Block(match axioma_ref(param) {
                     Some(onym) => Block::AxiomaRefBlock {
@@ -918,20 +918,23 @@ impl Parser {
         })
     }
 
-    fn check_param(&self, param: &str) -> Result<()> {
-        if param.chars().any(char::is_whitespace) {
+    /// Validate a raw parameter and decode it: an escaped space
+    /// (inactive sigil, then the space) becomes a literal space;
+    /// bare whitespace and unbalanced parentheses are errors.
+    fn check_param(&self, raw: &str) -> Result<String> {
+        let Some(param) = decode_param(raw, self.sigil.inactive()) else {
             return Err(Error::at(
-                ErrorKind::MonosimWhitespace(param.to_string()),
+                ErrorKind::MonosimWhitespace(raw.to_string()),
                 self.loc(self.idx),
             ));
-        }
-        if !balanced_parens(param) {
+        };
+        if !balanced_parens(&param) {
             return Err(Error::at(
                 ErrorKind::Syntax("unbalanced parentheses in monosim parameter".into()),
                 self.loc(self.idx),
             ));
         }
-        Ok(())
+        Ok(param)
     }
 
     /// Scan a single-line (or paragraph) text into inlines.
@@ -965,6 +968,31 @@ impl Parser {
         let rest: String = scanner.chars[scanner.pos..].iter().collect();
         Ok((ann, rest))
     }
+}
+
+/// Decode a raw parameter: the inactive sigil before a space is
+/// the escape for a literal space. None when it holds bare
+/// whitespace.
+pub fn decode_param(raw: &str, inactive: char) -> Option<String> {
+    let mut out = String::new();
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == inactive && chars.peek() == Some(&' ') {
+            chars.next();
+            out.push(' ');
+        } else if c.is_whitespace() {
+            return None;
+        } else {
+            out.push(c);
+        }
+    }
+    Some(out)
+}
+
+/// A parameter as written in the canonical-sigil spelling: a
+/// literal space is escaped with the inactive sigil.
+pub fn encode_param(param: &str) -> String {
+    param.replace(' ', "\\ ")
 }
 
 /// Do the parentheses in a parameter nest and close? A parameter
@@ -1034,16 +1062,27 @@ impl Scanner {
     /// Parentheses inside the parameter nest: the parameter ends
     /// at the first unmatched `)`, so `@!=(οὕτω(ς))` and a URL
     /// ending in `_(city)` carry their parentheses verbatim.
-    fn take_param(&mut self) -> Option<String> {
+    /// A space is written escaped, with the inactive sigil before
+    /// it (`ye\ olde`), and decodes to a literal space; the flag
+    /// reports bare whitespace, which a parameter cannot hold.
+    fn take_param(&mut self) -> Option<(String, bool)> {
+        let inact = self.sigil.inactive();
         let mut out = String::new();
         let mut depth = 0usize;
+        let mut bare_whitespace = false;
         while self.pos < self.chars.len() {
             let c = self.chars[self.pos];
+            if c == inact && self.chars.get(self.pos + 1) == Some(&' ') {
+                out.push(' ');
+                self.pos += 2;
+                continue;
+            }
             self.pos += 1;
             match c {
                 '(' => depth += 1,
-                ')' if depth == 0 => return Some(out),
+                ')' if depth == 0 => return Some((out, bare_whitespace)),
                 ')' => depth -= 1,
+                c if c.is_whitespace() => bare_whitespace = true,
                 _ => {}
             }
             out.push(c);
@@ -1235,13 +1274,13 @@ impl Scanner {
                                 ));
                             }
                             self.pos += 1;
-                            let Some(param) = self.take_param() else {
+                            let Some((param, bare_whitespace)) = self.take_param() else {
                                 return Err(Error::at(
                                     ErrorKind::Syntax("unterminated monosim parameter".into()),
                                     self.loc(),
                                 ));
                             };
-                            if param.chars().any(char::is_whitespace) {
+                            if bare_whitespace {
                                 return Err(Error::at(
                                     ErrorKind::MonosimWhitespace(param),
                                     self.loc(),

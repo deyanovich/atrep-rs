@@ -52,6 +52,22 @@ fn monosim_whitespace() {
 }
 
 #[test]
+fn monosim_escaped_space() {
+    // A space in a parameter is written escaped, with the inactive
+    // sigil before it; it decodes to a literal space and the
+    // serializer writes the escape back. Bare whitespace stays an
+    // error (monosim_whitespace above).
+    let doc = parse("@@@!exempli\n\nSee @^(res\\ publica) here.\n").unwrap();
+    let atd = atrep::dendron::serialize(&doc);
+    assert!(atd.contains("See @^(res\\ publica) here."), "{atd}");
+    let has_space = format!("{doc:?}").contains("res publica");
+    assert!(has_space, "the decoded parameter holds a literal space");
+    // In an alias-sigil document the inactive sigil is `@`.
+    let doc = parse("\\\\\\!exempli\n\nSee \\^(res@ publica) here.\n").unwrap();
+    assert!(format!("{doc:?}").contains("res publica"));
+}
+
+#[test]
 fn monosim_nested_parentheses() {
     // The parameter ends at the first unmatched `)`: a URL ending
     // in `_(city)` keeps its parentheses and the text after the

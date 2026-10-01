@@ -227,6 +227,9 @@ enum Seg {
         name: SlotName,
         raw: bool,
         prefix: Option<String>,
+        /// A gate slot `@(?name)`: tested for the conditional
+        /// section it stands in, rendered as nothing.
+        gate: bool,
     },
     /// Conditional section `@[ ... ]@`: emitted only when every
     /// slot inside renders non-empty. No nesting.
@@ -914,6 +917,16 @@ fn parse_segs(
                 Some(&'(') => {
                     let raw = chars.get(i + 2) == Some(&'(');
                     let mut j = i + if raw { 3 } else { 2 };
+                    let gate = chars.get(j) == Some(&'?');
+                    if gate {
+                        if raw {
+                            return Err("a gate slot has no raw form".to_string());
+                        }
+                        if !in_group {
+                            return Err("gate slot outside a conditional section".to_string());
+                        }
+                        j += 1;
+                    }
                     let name_start = j;
                     while j < chars.len() && (chars[j].is_ascii_lowercase() || chars[j] == '-') {
                         j += 1;
@@ -941,12 +954,16 @@ fn parse_segs(
                     if !close_ok {
                         return Err(format!("malformed slot near `{name}`"));
                     }
+                    if gate && prefix.is_some() {
+                        return Err(format!("gate slot `{name}` takes no hanging prefix"));
+                    }
                     j += if raw { 2 } else { 1 };
                     flush(&mut lit, &mut segs);
                     segs.push(Seg::Slot {
                         name: slot,
                         raw,
                         prefix,
+                        gate,
                     });
                     i = j;
                 }
@@ -1238,7 +1255,12 @@ impl Renderer<'_> {
         for seg in segs {
             match seg {
                 Seg::Lit(text) => out.push_str(text),
-                Seg::Slot { name, raw, prefix } => {
+                Seg::Slot {
+                    name,
+                    raw,
+                    prefix,
+                    gate,
+                } => {
                     let (value, escapable) = match name {
                         SlotName::Lemma => (slots.lemma.clone(), false),
                         SlotName::Grammata => (slots.grammata.clone(), false),
@@ -1263,6 +1285,9 @@ impl Renderer<'_> {
                     };
                     if value.is_empty() {
                         all_nonempty = false;
+                    }
+                    if *gate {
+                        continue;
                     }
                     let value = if escapable && !*raw {
                         self.escape(&value)
@@ -1707,6 +1732,7 @@ impl Renderer<'_> {
                             grammata: Some(self.render_inlines(content)?),
                             onym: Some(ann.onym.as_deref().unwrap_or("")),
                             genoses: Some(ann.genoses.join(" ")),
+                            inlines: Some(content),
                             ..Slots::default()
                         };
                         self.fill(rule, &slots)
@@ -1841,7 +1867,8 @@ mod tests {
             Seg::Slot {
                 name: SlotName::Lemma,
                 raw: false,
-                prefix: None
+                prefix: None,
+                gate: false
             }
         ));
         assert!(matches!(
@@ -1849,10 +1876,19 @@ mod tests {
             Seg::Slot {
                 name: SlotName::Content,
                 raw: true,
-                prefix: Some(p)
+                prefix: Some(p),
+                gate: false
             } if p == "  "
         ));
         assert!(matches!(&segs[4], Seg::Lit(l) if l == " @(z)"));
+        // A gate slot is tested, not printed, and lives only in a
+        // conditional section, in the plain form.
+        let segs = parse_template("@[a@(?lemma)b]@", '@', &dial).unwrap();
+        assert!(matches!(&segs[0], Seg::Group(inner)
+            if matches!(&inner[1], Seg::Slot { name: SlotName::Lemma, gate: true, .. })));
+        assert!(parse_template("@(?lemma)", '@', &dial).is_err());
+        assert!(parse_template("@[@((?lemma))]@", '@', &dial).is_err());
+        assert!(parse_template("@[@(?lemma:  )]@", '@', &dial).is_err());
         assert!(parse_template("bare @ sigil", '@', &dial).is_err());
         assert!(parse_template("@(nope)", '@', &dial).is_err());
     }

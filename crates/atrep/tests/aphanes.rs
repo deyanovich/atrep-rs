@@ -192,8 +192,12 @@ with the <orgName ref="#temperance">Cadets of Temperance</orgName> on
         ),
         "{atd}"
     );
-    // Drama keeps its printed speaker and needs no pointer.
-    assert!(atd.contains("@: Socrates\nWhy have you come?\n:@"), "{atd}");
+    // Drama keeps its printed speaker, and the pointer rides first
+    // in the lemma.
+    assert!(
+        atd.contains("@: @?:(Socrates)Socrates\nWhy have you come?\n:@"),
+        "{atd}"
+    );
     // A name without a pointer stays transparent (reading text).
     assert!(atd.contains("Plain Huck stays transparent."), "{atd}");
 
@@ -407,14 +411,14 @@ fn tei_choice_carries_the_transmitted_reading() {
     let atd = dendron::serialize(&doc);
     assert!(
         atd.contains(
-            "See the @@.@?~(fig.)figure.@@ of @@.@?~(ye_olde)the old.@@ lyre; @@.@?~(teh)the.@@ end. A lone side and a bare one."
+            "See the @@.@?~(fig.)figure.@@ of @@.@?~(ye\\ olde)the old.@@ lyre; @@.@?~(teh)the.@@ end. A lone side and a bare one."
         ),
         "{atd}"
     );
     let tmp = tmp_dir("aphanes-choice");
     let kanon = kanon_of(&tmp, "choice", &atd);
     let atk = dendron::serialize(&kanon);
-    assert!(atk.contains("@@.@?~(ye_olde)the old.@@"), "{atk}");
+    assert!(atk.contains("@@.@?~(ye\\ olde)the old.@@"), "{atk}");
     let litos = litos_of(&kanon);
     assert!(
         litos.contains("See the figure of the old lyre; the end."),
@@ -424,15 +428,18 @@ fn tei_choice_carries_the_transmitted_reading() {
     // The plerographic spelling reads the glossa.
     let dial = dialektos::resolve(&tmp, "litogramma").unwrap();
     let plero = dendron::serialize_plerographic_in(&kanon, &dial, Some("en")).unwrap();
-    assert!(plero.contains("@{original}(ye_olde)"), "{plero}");
-    // TEI export renders the reading; the transmitted form is a
-    // recorded loss.
+    assert!(plero.contains("@{original}(ye\\ olde)"), "{plero}");
+    // TEI export writes the pair back as a choice (a gate slot
+    // closes the element only where a paradosis is present); a
+    // one-sided choice stays plain text.
     let route = morph::resolve_route(&tmp, "litogramma", "at-tei").unwrap();
     let at_tei = morph::apply_route(&kanon, &route).unwrap();
     let x = exo::resolve_exo(&tmp, "at-tei", "tei").unwrap();
     let out = exo::render(&at_tei, &x, &tmp).unwrap();
     assert!(
-        out.contains("See the figure of the old lyre; the end."),
+        out.contains(
+            "of <choice><orig>ye olde</orig><reg>the old</reg></choice> lyre; <choice><orig>teh</orig><reg>the</reg></choice> end. A lone side and a bare one."
+        ),
         "{out}"
     );
 }
@@ -507,4 +514,63 @@ fn tei_header_list_person_declares_the_cast() {
         atk.contains("@:!Tom Sawyer!:@(o1)") && atk.contains("@?:(o1)"),
         "{atk}"
     );
+}
+
+/// TEI sp/@who: the printed prefix stays the dialogue lemma, and
+/// the pointer rides as a prosopon first in it, so a speech
+/// reaches its character by key even where the prefix is
+/// abbreviated or punctuated. A speech without a pointer is
+/// attributed by its prefix alone, as before, and the two forms
+/// share one litos.
+#[test]
+fn tei_speech_carries_its_speaker_pointer() {
+    let tei = |who: &str| {
+        format!(
+            r##"<TEI xmlns="http://www.tei-c.org/ns/1.0">
+<teiHeader><fileDesc><titleStmt><title>Hamlet</title></titleStmt></fileDesc></teiHeader>
+<text><body><div type="scene">
+<sp{who}><speaker>BARNARDO.</speaker><p>Who’s there?</p></sp>
+<sp><speaker>FRANCISCO.</speaker><p>Nay, answer me.</p></sp>
+<sp{who}><speaker>BARNARDO.</speaker><l>Long live the King!</l></sp>
+<sp{who}><p>A speakerless continuation.</p></sp>
+</div></body></text></TEI>"##
+        )
+    };
+    let doc = endo::tei_to_document(&tei(r##" who="#barnardo""##)).unwrap();
+    let atd = dendron::serialize(&doc);
+    assert!(
+        atd.contains("@: @?:(barnardo)BARNARDO.\nWho\u{2019}s there?\n:@"),
+        "{atd}"
+    );
+    // No pointer in the source: the prefix alone, as before.
+    assert!(atd.contains("@: FRANCISCO.\nNay, answer me.\n:@"), "{atd}");
+    // The verse speech carries it in its lemma too.
+    assert!(
+        atd.contains("@:~ @?:(barnardo)BARNARDO.\nLong live the King!"),
+        "{atd}"
+    );
+    // A speakerless speech stays speakerless: the pointer annotates
+    // a printed prefix, it does not stand in for one.
+    assert!(atd.contains("\nA speakerless continuation.\n"), "{atd}");
+    assert_eq!(atd.matches("@?:(barnardo)").count(), 2, "{atd}");
+
+    // Same litos with and without the pointers.
+    let tmp = tmp_dir("aphanes-speech");
+    let kanon = kanon_of(&tmp, "who", &atd);
+    let bare = dendron::serialize(&endo::tei_to_document(&tei("")).unwrap());
+    assert!(!bare.contains("@?:"), "{bare}");
+    let bare_kanon = kanon_of(&tmp, "bare", &bare);
+    assert_eq!(litos_of(&kanon), litos_of(&bare_kanon));
+
+    // TEI export restores who on the speech; a speech without a
+    // pointer exports without the attribute.
+    let route = morph::resolve_route(&tmp, "litogramma", "at-tei").unwrap();
+    let at_tei = morph::apply_route(&kanon, &route).unwrap();
+    let x = exo::resolve_exo(&tmp, "at-tei", "tei").unwrap();
+    let out = exo::render(&at_tei, &x, &tmp).unwrap();
+    assert!(
+        out.contains("<sp who=\"#barnardo\">\n<speaker>BARNARDO.</speaker>"),
+        "{out}"
+    );
+    assert!(out.contains("<sp>\n<speaker>FRANCISCO.</speaker>"), "{out}");
 }

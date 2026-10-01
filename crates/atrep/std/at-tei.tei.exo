@@ -11,10 +11,11 @@
 @@/ prosopon, ref from prosopon/chora/syllogos, target from
 @@/ skopos, when from chronos, ana from eidos (one category per
 @@/ monosim; a TEI ana with several pointers is a recorded
-@@/ limitation of the slot join). The paradosis of a choice is
-@@/ a recorded loss: the diaphane renders its reading, and a
-@@/ conditional section cannot open <choice> only when the
-@@/ value is present.
+@@/ limitation of the slot join). A diaphane that holds a
+@@/ paradosis renders as <choice> with the transmitted form as
+@@/ <orig> and the reading as <reg> (a gate slot closes the
+@@/ element only when the value is present); which of abbr, sic
+@@/ or orig the source used is not kept.
 
 @%
 & &amp;
@@ -396,7 +397,7 @@
 >-@
 
 @-> :
-<sp>
+<sp@[ who="#@(prosopon)"]@>
 @[<speaker>@(lemma)</speaker>
 ]@@(grammata)
 </sp>
@@ -575,5 +576,5 @@
 >-@
 
 @-> *diaphane-inline
-@(grammata)
+@[<choice><orig>@(paradosis)</orig><reg>]@@(grammata)@[@(?paradosis)</reg></choice>]@
 >-@

@@ -330,7 +330,7 @@ fn serialize_block(block: &Block, out: &mut String) {
         }
         Block::Enmedia { param } => {
             out.push_str("@@@@(");
-            out.push_str(param);
+            out.push_str(&crate::parser::encode_param(param));
             out.push_str(")\n");
         }
         Block::EnmediaHashed { sha256 } => {
@@ -340,12 +340,12 @@ fn serialize_block(block: &Block, out: &mut String) {
         }
         Block::AnaphorEnglossis { target } => {
             out.push_str("@@@(");
-            out.push_str(target);
+            out.push_str(&crate::parser::encode_param(target));
             out.push_str(")\n");
         }
         Block::AnaphorEnlexis { target } => {
             out.push_str("@@@+(");
-            out.push_str(target);
+            out.push_str(&crate::parser::encode_param(target));
             out.push_str(")\n");
         }
         Block::ParaAxioma { onym, children } => {
@@ -464,7 +464,7 @@ fn push_inlines_in(
                 out.push('@');
                 out.push_str(symbol);
                 out.push('(');
-                out.push_str(param);
+                out.push_str(&crate::parser::encode_param(param));
                 out.push(')');
                 push_annotations(ann, out);
             }

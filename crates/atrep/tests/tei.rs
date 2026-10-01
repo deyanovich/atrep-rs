@@ -281,8 +281,9 @@ fn said_narration_interleave() {
         atd.contains(r#"@""For,""@.said said he, @""you and I have done many things.""@.said"#),
         "in:\n{atd}"
     );
-    // The whole-paragraph said keeps the dialogue-block form.
-    assert!(atd.contains("@: Socrates\nWhy have you come?\n:@"));
+    // The whole-paragraph said keeps the dialogue-block form, its
+    // pointer first in the lemma.
+    assert!(atd.contains("@: @?:(Socrates)Socrates\nWhy have you come?\n:@"));
 }
 
 /// Perseus latinLit tolerance: cast-list furniture, stray
@@ -394,8 +395,9 @@ fn corpus_tei_shapes() {
     // Stephanus milestone: the core coordinate form, the unit
     // riding as a presentation genos.
     assert!(atd.contains("@(\"stephanus:43\").page"));
-    // Dialogue with the label as the speech prefix.
-    assert!(atd.contains("@: Socrates\nWhy have you come, Crito?\n:@"));
+    // Dialogue with the label as the speech prefix, the pointer
+    // first in the lemma.
+    assert!(atd.contains("@: @?:(Socrates)Socrates\nWhy have you come, Crito?\n:@"));
     // The inline verse quote joins with the solidus.
     assert!(atd.contains("@\"\"to Phthia shalt thou go / on the third day\"\"@"));
     // The inline bibl citation text carries.

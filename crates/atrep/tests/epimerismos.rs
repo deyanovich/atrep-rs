@@ -229,6 +229,15 @@ fn proiel_lemma_with_parentheses_survives() {
     assert!(atk.contains("@!=(οὕτω(ς))@!/(Nb)"), "{atk}");
     let out = epimerismos::export(&kanon, "proiel").unwrap().unwrap();
     assert_eq!(out, src);
+    // A lemma of two words is carried with its space, written
+    // escaped, instead of being dropped.
+    let src = PROIEL.replace(r#"lemma="βίβλος""#, r#"lemma="res publica""#);
+    let doc = epimerismos::proiel_to_document(&src).unwrap();
+    let atd = dendron::serialize(&doc);
+    assert!(atd.contains(r"@!=(res\ publica)@!/(Nb)"), "{atd}");
+    let kanon = kanon_of(&tmp, "proiel-space", &atd);
+    let out = epimerismos::export(&kanon, "proiel").unwrap().unwrap();
+    assert_eq!(out, src);
     // An unbalanced value still cannot be spelled and is dropped.
     let src = PROIEL.replace(r#"lemma="βίβλος""#, r#"lemma="οὕτω)""#);
     let atd = dendron::serialize(&epimerismos::proiel_to_document(&src).unwrap());
