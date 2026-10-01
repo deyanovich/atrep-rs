@@ -13,8 +13,10 @@ pub mod atramento;
 pub mod dendron;
 pub mod dialektos;
 pub mod endo;
+pub mod epimerismos;
 pub mod error;
 pub mod exo;
+pub mod fb2;
 pub mod fetch;
 pub mod glossa;
 pub mod kanonizo;
@@ -102,5 +104,30 @@ pub fn check_source(source: &str, path: &Path) -> Result<Checked> {
     } else {
         let normalized: String = source.nfc().collect();
         parser::parse_document(&normalized, path).map(Checked::Document)
+    }
+}
+
+/// Export through a built-in exomorphosis, for targets whose
+/// output the template language cannot produce (generated ids,
+/// hoisted metadata, adjacency-derived attributes): FictionBook
+/// (`fb2`), the Russian National Corpus (`rnc`), OpenCorpora
+/// (`opencorpora`) and PROIEL (`proiel`). None for any other
+/// target, which resolves an `.exo` as usual.
+pub fn native_export(doc: &Document, target: &str) -> Option<Result<String>> {
+    match target {
+        "fb2" => Some(Ok(fb2::document_to_fb2(doc))),
+        "rnc" | "opencorpora" | "proiel" | "conllu" => epimerismos::export(doc, target),
+        _ => None,
+    }
+}
+
+/// [`native_export`] with the document's directory, from which
+/// the FB2 export reads the media its images refer to.
+pub fn native_export_in(doc: &Document, target: &str, dir: &Path) -> Option<Result<String>> {
+    match target {
+        "fb2" => Some(Ok(fb2::document_to_fb2_with(doc, &|param| {
+            std::fs::read(dir.join(param)).ok()
+        }))),
+        _ => native_export(doc, target),
     }
 }

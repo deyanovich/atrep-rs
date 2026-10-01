@@ -153,7 +153,10 @@ fn tei_endo_produces_litogramma() {
     assert!(atd.contains("above@>(fig-lyre)"));
     assert!(atd.contains("archive (@><https://example.org/pope><@)"));
     assert!(atd.contains("@\"\"retirement ideal\"\"@ as a @/topos/@.term"));
-    assert!(atd.contains("figure of Pope's lyre"));
+    assert!(
+        atd.contains("@@.@?~(fig.)figure.@@ of Pope's lyre"),
+        "{atd}"
+    );
     assert!(atd.contains("@@@@(lyre.svg)"));
     assert!(atd.contains("| Year | Printer |"));
     assert!(atd.contains("| 1717 | W. Bowyer |"));

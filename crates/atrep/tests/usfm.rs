@@ -56,7 +56,9 @@ fn usfm_endo_produces_canonical_atd() {
     assert!(atd.contains("@|(1) Now there was a man"));
     // Words of Jesus wrap the verse text, with the footnote
     // inline at its anchor and its reference as an .fr phrase.
-    assert!(atd.contains("@,For God so loved the world"));
+    // The red letters carry their constant speaker as an unseen
+    // prosopon (at-aphanes).
+    assert!(atd.contains("@,@?:(Jesus)For God so loved the world"));
     assert!(atd.contains("@^@,3:16,@.fr \"Only born\" renders the Greek \"monogenes\".^@.f"));
     assert!(atd.contains("@^@,3:17,@.xo John 12:47^@.x"));
     // Poetry: per-line q-level phrases, \b splits strophes.
@@ -399,4 +401,27 @@ fn redletter_exo_variant_overlays_the_base() {
     // An unknown variant is an error.
     let err = exo::resolve_exo_variant(&tmp, "at-usfm", "latex", Some("nope")).unwrap_err();
     assert!(err.to_string().contains("variant"));
+}
+
+/// OSIS verses in container form (no sID/eID) at block level
+/// gather into a paragraph, each opening with its milestone.
+#[test]
+fn osis_container_verses_import() {
+    let osis = r#"<?xml version="1.0"?>
+<osis xmlns="http://www.bibletechnologies.net/2003/OSIS/namespace">
+  <osisText osisIDWork="test">
+    <div type="book" osisID="John">
+      <chapter osisID="John.18">
+        <verse osisID="John.18.37">Pilate therefore said unto him, Art thou a king then?</verse>
+        <verse osisID="John.18.38">Pilate saith unto him, <q who="Pilate">What is truth?</q></verse>
+      </chapter>
+    </div>
+  </osisText>
+</osis>"#;
+    let doc = endo::osis_to_document(osis).unwrap();
+    let atd = dendron::serialize(&doc);
+    assert!(
+        atd.contains("@|(37) Pilate therefore said unto him, Art thou a king then? @|(38) Pilate saith unto him, @,@?:(Pilate)What is truth?,@.said"),
+        "{atd}"
+    );
 }

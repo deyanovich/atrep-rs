@@ -1037,8 +1037,8 @@ fn window_cut(
     let in_window = |sites: &[Site]| -> Vec<Site> {
         sites
             .iter()
+            .filter(|&s| s.pos > lo && s.pos < hi)
             .cloned()
-            .filter(|s| s.pos > lo && s.pos < hi)
             .collect()
     };
     let mid = lo + (hi - lo) / 2;
@@ -1166,7 +1166,7 @@ fn apply_cuts(
             SiteKind::Stichos { strophe, line } => (s.path.clone(), 1, strophe, line),
         }
     };
-    cuts.sort_by(|(_, a), (_, b)| key(b).cmp(&key(a)));
+    cuts.sort_by_key(|(_, s)| std::cmp::Reverse(key(s)));
     'cuts: for (value, site) in cuts {
         let last = *site.path.last().unwrap();
         let parent: &mut Vec<Block> = {

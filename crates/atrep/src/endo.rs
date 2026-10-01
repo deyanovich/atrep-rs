@@ -435,7 +435,7 @@ mod tests {
 use crate::error::{Error, ErrorKind};
 
 #[derive(Debug)]
-enum Tok {
+pub(crate) enum Tok {
     Open {
         name: String,
         attrs: Vec<(String, String)>,
@@ -567,7 +567,7 @@ fn parse_html_attrs(text: &str) -> Result<Vec<(String, String)>> {
     Ok(attrs)
 }
 
-fn attr<'a>(attrs: &'a [(String, String)], name: &str) -> Option<&'a str> {
+pub(crate) fn attr<'a>(attrs: &'a [(String, String)], name: &str) -> Option<&'a str> {
     attrs
         .iter()
         .find(|(n, _)| n == name)
@@ -581,7 +581,7 @@ fn class_genoses(attrs: &[(String, String)]) -> Vec<String> {
 }
 
 /// Decode the entities the at-html escape table produces.
-fn decode_entities(text: &str) -> String {
+pub(crate) fn decode_entities(text: &str) -> String {
     text.replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&amp;", "&")
@@ -1427,19 +1427,422 @@ fn rst_embedded_uri(inner: &[char]) -> Option<(String, String)> {
     Some((text, url))
 }
 
-fn tei_choice(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Vec<Inline>, usize)> {
+// ---------------------------------------------------------------
+// at-aphanes: the unseen annotations
+// ---------------------------------------------------------------
+//
+// Editorial metadata that never reaches the page rides the
+// at-aphanes monosims (std/at-aphanes.dia), written first inside
+// the span they annotate: the speaker of a prose dialogue line
+// (prosopon), the referent of a name (prosopon / chora /
+// syllogos), the target of a reference (skopos), the normalized
+// value of a date (chronos), an analytic category (eidos). The
+// importers below emit them where the source carries the
+// attribute; litosis strips them, so the litos is unchanged.
+
+const PROSOPON: &str = "?:";
+const CHORA: &str = "?.";
+const SYLLOGOS: &str = "?&";
+const SKOPOS: &str = "?>";
+const CHRONOS: &str = "?-";
+const EIDOS: &str = "?%";
+const PARADOSIS: &str = "?~";
+
+/// A key as a monosim parameter: a leading `#` (a TEI pointer)
+/// sheds, interior whitespace runs become hyphens (a parameter
+/// carries no whitespace), case is preserved so ids round-trip.
+fn aphanes_key(value: &str) -> String {
+    let mut out = String::new();
+    let mut pending = false;
+    for c in value.trim().trim_start_matches('#').chars() {
+        if c.is_whitespace() {
+            pending = true;
+        } else {
+            if pending && !out.is_empty() {
+                out.push('-');
+            }
+            pending = false;
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// One aphanes monosim.
+fn aphanes(symbol: &str, value: &str) -> Inline {
+    Inline::Monosim {
+        symbol: symbol.to_string(),
+        param: aphanes_key(value),
+        ann: Annotations::default(),
+    }
+}
+
+/// TEI `ana`: whitespace-separated pointers, one eidos each.
+fn aphanes_eidos(ana: &str) -> Vec<Inline> {
+    ana.split_whitespace().map(|a| aphanes(EIDOS, a)).collect()
+}
+
+/// Annotations first inside the span they annotate.
+fn with_aphanes(mut marks: Vec<Inline>, content: Vec<Inline>) -> Vec<Inline> {
+    marks.extend(content);
+    marks
+}
+
+/// The printed text of an inline run, monosims excluded.
+fn plain_text(inlines: &[Inline]) -> String {
+    fn walk(inlines: &[Inline], out: &mut String) {
+        for inline in inlines {
+            match inline {
+                Inline::Text(t) => out.push_str(t),
+                Inline::Endo { content, .. } | Inline::EndoDiaphane { content, .. } => {
+                    walk(content, out)
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut out = String::new();
+    walk(inlines, &mut out);
+    out
+}
+
+/// The transmitted reading of a TEI `choice` as a paradosis value:
+/// whitespace runs become underscores (a parameter carries no
+/// whitespace; the parsing pack's convention), and a value that
+/// is empty or unbalanced in its parentheses has no spelling.
+fn paradosis_value(inlines: &[Inline]) -> Option<String> {
+    let value: String = plain_text(inlines)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("_");
+    (!value.is_empty() && crate::parser::balanced_parens(&value)).then_some(value)
+}
+
+/// The reading text of a `choice` is the editor's form (expan,
+/// corr, reg); the page's form (abbr, sic, orig) rides along as
+/// the paradosis aphanes on a diaphane around the reading, so the
+/// litos stays the reading text and the kanon still answers what
+/// the page printed. One side alone is plain text.
+fn tei_choice_inlines(preferred: Vec<Inline>, fallback: Vec<Inline>) -> Vec<Inline> {
+    if preferred.is_empty() {
+        return fallback;
+    }
+    let Some(value) = paradosis_value(&fallback) else {
+        return preferred;
+    };
+    let mut content = vec![Inline::Monosim {
+        symbol: PARADOSIS.to_string(),
+        param: value,
+        ann: Annotations::default(),
+    }];
+    content.extend(preferred);
+    vec![Inline::EndoDiaphane {
+        content,
+        ann: Annotations::default(),
+    }]
+}
+
+/// The unseen marks of a TEI `said`/`q`: the speaker (prosopon)
+/// and the analytic categories (eidos).
+fn tei_said_marks(attrs: &[(String, String)]) -> Vec<Inline> {
+    let mut marks = Vec::new();
+    if let Some(who) = attr(attrs, "who") {
+        marks.push(aphanes(PROSOPON, who));
+    }
+    if let Some(ana) = attr(attrs, "ana") {
+        marks.extend(aphanes_eidos(ana));
+    }
+    marks
+}
+
+/// Speech mode is a class, not a value: `direct="false"` is the
+/// `indirect` genos, `aloud="false"` the `thought` genos, on the
+/// quotation span (TEI's defaults, direct and aloud, are silent).
+fn tei_said_mode(attrs: &[(String, String)]) -> Vec<String> {
+    let mut genoses = Vec::new();
+    if attr(attrs, "direct") == Some("false") {
+        genoses.push("indirect".to_string());
+    }
+    if attr(attrs, "aloud") == Some("false") {
+        genoses.push("thought".to_string());
+    }
+    genoses
+}
+
+/// A TEI name, date, or seg that carries an unseen attribute
+/// becomes an annotation span (genos = the element name) with
+/// the marks first inside; one that carries none stays
+/// transparent (the reading-text policy). Returns the genos and
+/// the marks, or None when there is nothing unseen to keep.
+fn tei_aphanes_span(name: &str, attrs: &[(String, String)]) -> Option<(String, Vec<Inline>)> {
+    let pointer = attr(attrs, "ref").or_else(|| attr(attrs, "key"));
+    let mut marks: Vec<Inline> = Vec::new();
+    match name {
+        "persName" => marks.extend(pointer.map(|p| aphanes(PROSOPON, p))),
+        "placeName" => marks.extend(pointer.map(|p| aphanes(CHORA, p))),
+        "orgName" => marks.extend(pointer.map(|p| aphanes(SYLLOGOS, p))),
+        "name" | "rs" => {
+            let symbol = match attr(attrs, "type") {
+                Some("person") | Some("persName") | Some("pers") => Some(PROSOPON),
+                Some("place") | Some("placeName") => Some(CHORA),
+                Some("org") | Some("orgName") | Some("organisation") | Some("organization") => {
+                    Some(SYLLOGOS)
+                }
+                _ => None,
+            };
+            if let (Some(sym), Some(p)) = (symbol, pointer) {
+                marks.push(aphanes(sym, p));
+            }
+        }
+        "date" | "dateRange" => {
+            if let Some(when) = attr(attrs, "when") {
+                marks.push(aphanes(CHRONOS, when));
+            } else if let (Some(from), Some(to)) = (attr(attrs, "from"), attr(attrs, "to")) {
+                marks.push(aphanes(CHRONOS, &format!("{from}/{to}")));
+            } else if let Some(from) = attr(attrs, "from") {
+                marks.push(aphanes(CHRONOS, &format!("{from}/")));
+            } else if let Some(to) = attr(attrs, "to") {
+                marks.push(aphanes(CHRONOS, &format!("/{to}")));
+            }
+        }
+        _ => {}
+    }
+    if let Some(ana) = attr(attrs, "ana") {
+        marks.extend(aphanes_eidos(ana));
+    }
+    if marks.is_empty() {
+        return None;
+    }
+    let genos = match name {
+        "dateRange" => "date".to_string(),
+        other => other.to_ascii_lowercase(),
+    };
+    Some((genos, marks))
+}
+
+thread_local! {
+    /// Running number for TEI sentences without an id, reset per
+    /// import.
+    static TEI_SENTENCES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Whether a TEI `w`, `pc` or `s` carries a parsing (or is a
+/// sentence): then it becomes an at-epimerismos diaphane rather
+/// than a transparent wrapper.
+fn tei_parsing_span(name: &str, attrs: &[(String, String)]) -> bool {
+    match name {
+        "s" => true,
+        _ => ["lemma", "pos", "type", "msd", "ana"]
+            .iter()
+            .any(|a| attr(attrs, a).is_some()),
+    }
+}
+
+/// The diaphane for a TEI `w`/`pc` (a token: lemma, pos, msd as
+/// lexema, meros, parepomena; ana as eidos) or `s` (a sentence:
+/// the periodos marker with xml:id, n, or a running number).
+fn tei_parsing_inline(name: &str, attrs: &[(String, String)], content: Vec<Inline>) -> Inline {
+    use crate::epimerismos::{LEXEMA, MEROS, PAREPOMENA, PERIODOS};
+    let mut marks: Vec<Inline> = Vec::new();
+    if name == "s" {
+        let id = attr(attrs, "xml:id")
+            .or_else(|| attr(attrs, "n"))
+            .map(aphanes_key)
+            .filter(|id| !id.is_empty())
+            .unwrap_or_else(|| {
+                TEI_SENTENCES.with(|c| {
+                    c.set(c.get() + 1);
+                    c.get().to_string()
+                })
+            });
+        marks.push(aphanes(PERIODOS, &id));
+    } else {
+        if let Some(l) = attr(attrs, "lemma") {
+            marks.push(aphanes(LEXEMA, l));
+        }
+        if let Some(p) = attr(attrs, "pos").or_else(|| attr(attrs, "type")) {
+            marks.push(aphanes(MEROS, p));
+        }
+        if let Some(m) = attr(attrs, "msd") {
+            marks.push(aphanes(PAREPOMENA, &m.replace('|', ",")));
+        }
+    }
+    if let Some(ana) = attr(attrs, "ana") {
+        marks.extend(aphanes_eidos(ana));
+    }
+    Inline::EndoDiaphane {
+        content: with_aphanes(marks, content),
+        ann: Annotations::default(),
+    }
+}
+
+/// USFM book codes to OSIS book ids, for the OSIS spelling of a
+/// reference target (USX `loc="GEN 1:1-3"` -> `Gen.1.1-Gen.1.3`).
+const OSIS_BOOKS: &[(&str, &str)] = &[
+    ("GEN", "Gen"),
+    ("EXO", "Exod"),
+    ("LEV", "Lev"),
+    ("NUM", "Num"),
+    ("DEU", "Deut"),
+    ("JOS", "Josh"),
+    ("JDG", "Judg"),
+    ("RUT", "Ruth"),
+    ("1SA", "1Sam"),
+    ("2SA", "2Sam"),
+    ("1KI", "1Kgs"),
+    ("2KI", "2Kgs"),
+    ("1CH", "1Chr"),
+    ("2CH", "2Chr"),
+    ("EZR", "Ezra"),
+    ("NEH", "Neh"),
+    ("EST", "Esth"),
+    ("JOB", "Job"),
+    ("PSA", "Ps"),
+    ("PRO", "Prov"),
+    ("ECC", "Eccl"),
+    ("SNG", "Song"),
+    ("ISA", "Isa"),
+    ("JER", "Jer"),
+    ("LAM", "Lam"),
+    ("EZK", "Ezek"),
+    ("DAN", "Dan"),
+    ("HOS", "Hos"),
+    ("JOL", "Joel"),
+    ("AMO", "Amos"),
+    ("OBA", "Obad"),
+    ("JON", "Jonah"),
+    ("MIC", "Mic"),
+    ("NAM", "Nah"),
+    ("HAB", "Hab"),
+    ("ZEP", "Zeph"),
+    ("HAG", "Hag"),
+    ("ZEC", "Zech"),
+    ("MAL", "Mal"),
+    ("MAT", "Matt"),
+    ("MRK", "Mark"),
+    ("LUK", "Luke"),
+    ("JHN", "John"),
+    ("ACT", "Acts"),
+    ("ROM", "Rom"),
+    ("1CO", "1Cor"),
+    ("2CO", "2Cor"),
+    ("GAL", "Gal"),
+    ("EPH", "Eph"),
+    ("PHP", "Phil"),
+    ("COL", "Col"),
+    ("1TH", "1Thess"),
+    ("2TH", "2Thess"),
+    ("1TI", "1Tim"),
+    ("2TI", "2Tim"),
+    ("TIT", "Titus"),
+    ("PHM", "Phlm"),
+    ("HEB", "Heb"),
+    ("JAS", "Jas"),
+    ("1PE", "1Pet"),
+    ("2PE", "2Pet"),
+    ("1JN", "1John"),
+    ("2JN", "2John"),
+    ("3JN", "3John"),
+    ("JUD", "Jude"),
+    ("REV", "Rev"),
+    ("TOB", "Tob"),
+    ("JDT", "Jdt"),
+    ("ESG", "EsthGr"),
+    ("WIS", "Wis"),
+    ("SIR", "Sir"),
+    ("BAR", "Bar"),
+    ("LJE", "EpJer"),
+    ("S3Y", "PrAzar"),
+    ("SUS", "Sus"),
+    ("BEL", "Bel"),
+    ("1MA", "1Macc"),
+    ("2MA", "2Macc"),
+    ("3MA", "3Macc"),
+    ("4MA", "4Macc"),
+    ("1ES", "1Esd"),
+    ("2ES", "2Esd"),
+    ("MAN", "PrMan"),
+    ("PS2", "AddPs"),
+    ("ODA", "Odes"),
+    ("PSS", "PssSol"),
+    ("DAG", "DanGr"),
+];
+
+/// A USX `loc` in OSIS spelling: `GEN 1:1-3` -> `Gen.1.1-Gen.1.3`,
+/// `GEN 1:1-2:3` -> `Gen.1.1-Gen.2.3`, `GEN 1` -> `Gen.1`; several
+/// references (`;`-separated) join with commas, which the OSIS
+/// grammar does not read but which keep the parameter whole. An
+/// unrecognized shape falls back to the raw text as a key.
+fn usx_loc_to_osis(loc: &str) -> String {
+    fn one(part: &str) -> Option<String> {
+        let part = part.trim();
+        let (code, rest) = match part.split_once(' ') {
+            Some((c, r)) => (c.trim(), r.trim()),
+            None => (part, ""),
+        };
+        let book = OSIS_BOOKS
+            .iter()
+            .find(|(usfm, _)| usfm.eq_ignore_ascii_case(code))
+            .map(|(_, osis)| *osis)?;
+        if rest.is_empty() {
+            return Some(book.to_string());
+        }
+        let (start, end) = match rest.split_once('-') {
+            Some((a, b)) => (a.trim(), Some(b.trim())),
+            None => (rest, None),
+        };
+        let (chapter, verse) = match start.split_once(':') {
+            Some((c, v)) => (c.trim(), Some(v.trim())),
+            None => (start, None),
+        };
+        if chapter.is_empty() || !chapter.chars().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        let mut out = format!("{book}.{chapter}");
+        if let Some(v) = verse {
+            out.push('.');
+            out.push_str(v);
+        }
+        if let Some(end) = end {
+            out.push('-');
+            out.push_str(book);
+            out.push('.');
+            match end.split_once(':') {
+                Some((c, v)) => {
+                    out.push_str(c.trim());
+                    out.push('.');
+                    out.push_str(v.trim());
+                }
+                None => {
+                    // `1:1-3`: the end is a verse of the same chapter;
+                    // `1-3` with no verse: a chapter range.
+                    if verse.is_some() {
+                        out.push_str(chapter);
+                        out.push('.');
+                    }
+                    out.push_str(end);
+                }
+            }
+        }
+        Some(out)
+    }
+    let parts: Option<Vec<String>> = loc.split(';').map(one).collect();
+    match parts {
+        Some(parts) if !parts.is_empty() => parts.join(","),
+        _ => aphanes_key(loc),
+    }
+}
+
+fn tei_choice(
+    toks: &[Tok],
+    mut i: usize,
+    notes: &mut usize,
+) -> Result<(Vec<Inline>, Vec<Inline>, usize)> {
     let mut preferred: Vec<Inline> = Vec::new();
     let mut fallback: Vec<Inline> = Vec::new();
     while i < toks.len() {
         match &toks[i] {
-            Tok::Close(name) if name == "choice" => {
-                let picked = if preferred.is_empty() {
-                    fallback
-                } else {
-                    preferred
-                };
-                return Ok((picked, i + 1));
-            }
+            Tok::Close(name) if name == "choice" => return Ok((preferred, fallback, i + 1)),
             Tok::Text(t) if t.trim().is_empty() => i += 1,
             Tok::Open { name, .. } if matches!(name.as_str(), "expan" | "corr" | "reg") => {
                 let n = name.clone();
@@ -1476,13 +1879,13 @@ fn trim_run(inlines: &mut Vec<Inline>) {
     }
 }
 
-fn tei_err(msg: String) -> Error {
+pub(crate) fn tei_err(msg: String) -> Error {
     Error::new(ErrorKind::MissingResource(format!("tei import: {msg}")))
 }
 
 /// Tokenize XML: like the HTML tokenizer, but case-preserving
 /// (TEI is case-sensitive) and skipping the XML declaration.
-fn tokenize_xml(xml: &str) -> Result<Vec<Tok>> {
+pub(crate) fn tokenize_xml(xml: &str) -> Result<Vec<Tok>> {
     let mut toks = Vec::new();
     let mut rest = xml;
     while !rest.is_empty() {
@@ -1617,6 +2020,7 @@ pub fn tei_to_document(xml: &str) -> Result<Document> {
 /// first inline (value `{book}.{N}` under the innermost numeric
 /// book div, else `{N}`).
 pub fn tei_to_document_lines(xml: &str, line_milestones: Option<&str>) -> Result<Document> {
+    TEI_SENTENCES.with(|c| c.set(0));
     let mut toks = tokenize_xml(xml)?;
     // TEI P4 numbered divisions (div1..div7, Perseus P4 files)
     // normalize to the P5 nested div: depth is recomputed from
@@ -1709,7 +2113,7 @@ pub fn tei_to_document_lines(xml: &str, line_milestones: Option<&str>) -> Result
 }
 
 /// Skip an element wholesale (front and back matter).
-fn skip_element(toks: &[Tok], mut i: usize, name: String) -> Result<usize> {
+pub(crate) fn skip_element(toks: &[Tok], mut i: usize, name: String) -> Result<usize> {
     let mut depth = 1;
     while i < toks.len() {
         match &toks[i] {
@@ -1732,7 +2136,8 @@ fn skip_element(toks: &[Tok], mut i: usize, name: String) -> Result<usize> {
 }
 
 /// teiHeader: titleStmt children become litogramma front
-/// matter; the rest of the header is skipped.
+/// matter and a particDesc listPerson the cast; the rest of the
+/// header is skipped.
 fn tei_header(toks: &[Tok], mut i: usize, blocks: &mut Vec<Block>) -> Result<usize> {
     // When any title carries type="main", untyped and
     // bibliographic siblings are catalogue noise: main becomes
@@ -1791,8 +2196,33 @@ fn tei_header(toks: &[Tok], mut i: usize, blocks: &mut Vec<Block>) -> Result<usi
                 name,
                 self_closing: false,
                 ..
-            } if name == "fileDesc" || name == "titleStmt" => i += 1,
-            Tok::Close(name) if name == "fileDesc" || name == "titleStmt" => i += 1,
+            } if matches!(
+                name.as_str(),
+                "fileDesc" | "titleStmt" | "profileDesc" | "particDesc"
+            ) =>
+            {
+                i += 1
+            }
+            Tok::Close(name)
+                if matches!(
+                    name.as_str(),
+                    "fileDesc" | "titleStmt" | "profileDesc" | "particDesc"
+                ) =>
+            {
+                i += 1
+            }
+            Tok::Open {
+                name,
+                self_closing: false,
+                ..
+            } if name == "listPerson" => {
+                // The edition's cast (profileDesc/particDesc):
+                // the same dramatis-persona lines as a body-level
+                // list, after the front matter.
+                let (items, next) = tei_list_person(toks, i + 1, &mut 0)?;
+                blocks.extend(items);
+                i = next;
+            }
             Tok::Open {
                 name, self_closing, ..
             } => {
@@ -2373,12 +2803,26 @@ fn tei_ab_lines(
 }
 
 fn solo_endo(symbol: &str, content: Vec<Inline>) -> Block {
+    solo_endo_onym(symbol, content, None)
+}
+
+fn solo_endo_onym(symbol: &str, content: Vec<Inline>, onym: Option<String>) -> Block {
     Block::Paragraph(vec![Inline::Endo {
         symbol: symbol.to_string(),
         content,
         bracket_matching: true,
-        ann: Annotations::default(),
+        ann: Annotations {
+            onym,
+            genoses: Vec::new(),
+        },
     }])
+}
+
+/// An xml:id as an onym, when it is one.
+fn xml_id_onym(attrs: &[(String, String)]) -> Option<String> {
+    attr(attrs, "xml:id")
+        .filter(|id| crate::sigil::is_valid_onym(id))
+        .map(str::to_string)
 }
 
 /// The litogramma sectioning ladder. A div's level is set by
@@ -2497,12 +2941,23 @@ fn tei_blocks(
             }
             Tok::Open {
                 name, self_closing, ..
-            } if name == "app" || name == "listPerson" => {
+            } if name == "app" => {
                 if *self_closing {
                     i += 1;
                 } else {
                     let n2 = name.clone();
                     i = skip_element(toks, i + 1, n2)?;
+                }
+            }
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "listPerson" => {
+                if *self_closing {
+                    i += 1;
+                } else {
+                    let (items, next) = tei_list_person(toks, i + 1, notes)?;
+                    blocks.extend(items);
+                    i = next;
                 }
             }
             Tok::Open {
@@ -2564,13 +3019,16 @@ fn tei_blocks(
                 i = next;
             }
             Tok::Open {
-                name, self_closing, ..
+                name,
+                attrs,
+                self_closing,
             } if name == "p" => {
                 if *self_closing {
                     // <p/>: an empty paragraph — nothing to emit
                     i += 1;
                     continue;
                 }
+                let ana = attr(attrs, "ana").map(aphanes_eidos);
                 let mut probe = i + 1;
                 while matches!(&toks.get(probe), Some(Tok::Text(t)) if t.trim().is_empty()) {
                     probe += 1;
@@ -2591,6 +3049,12 @@ fn tei_blocks(
                 let ((content, bodies), next) = {
                     let (run, next) = tei_inline_run(toks, i + 1, "p", notes)?;
                     (run, next)
+                };
+                // A paragraph-level ana annotates the paragraph:
+                // its eidos marks come first inside it.
+                let content = match ana {
+                    Some(marks) => with_aphanes(marks, content),
+                    None => content,
                 };
                 blocks.push(Block::Paragraph(content));
                 blocks.extend(bodies);
@@ -2735,11 +3199,7 @@ fn tei_blocks(
             }
             Tok::Open {
                 name, self_closing, ..
-            } if matches!(
-                name.as_str(),
-                "listPerson" | "pb" | "space" | "desc" | "docAuthor"
-            ) =>
-            {
+            } if matches!(name.as_str(), "pb" | "space" | "desc" | "docAuthor") => {
                 let sc = *self_closing;
                 let n2 = name.clone();
                 i += 1;
@@ -3169,12 +3629,11 @@ fn tei_said_spans_paragraph(toks: &[Tok], i: usize) -> bool {
 
 fn tei_said_paragraph(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Block, usize)> {
     // i points at the <said> open.
-    let who = match &toks[i] {
-        Tok::Open { attrs, .. } => {
-            attr(attrs, "who").map(|w| w.trim_start_matches('#').to_string())
-        }
-        _ => None,
+    let said_attrs: Vec<(String, String)> = match &toks[i] {
+        Tok::Open { attrs, .. } => attrs.clone(),
+        _ => Vec::new(),
     };
+    let who = attr(&said_attrs, "who").map(|w| w.trim_start_matches('#').to_string());
     i += 1;
     let mut lemma: Vec<Inline> = Vec::new();
     // Milestones may precede the label inside <said> (the
@@ -3217,8 +3676,6 @@ fn tei_said_paragraph(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(
         }
         lemma = content;
         i = next;
-    } else if let Some(w) = who {
-        lemma = vec![Inline::Text(w)];
     }
     let ((mut content, bodies), next) = tei_inline_run(toks, i, "said", notes)?;
     trim_inline_edges(&mut content);
@@ -3233,6 +3690,29 @@ fn tei_said_paragraph(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(
     }
     if matches!(&toks.get(j), Some(Tok::Close(name)) if name == "p") {
         j += 1;
+    }
+    if lemma.is_empty() && (who.is_some() || attr(&said_attrs, "ana").is_some()) {
+        // Prose fiction: a speech paragraph attributed by pointer
+        // alone (no printed speaker) is a dialogue line, the
+        // speaker riding as an unseen prosopon first inside it.
+        let line = Inline::Endo {
+            symbol: ":-".to_string(),
+            content: with_aphanes(tei_said_marks(&said_attrs), content),
+            bracket_matching: true,
+            ann: Annotations {
+                onym: None,
+                genoses: tei_said_mode(&said_attrs),
+            },
+        };
+        let mut children = vec![Block::Paragraph(vec![line])];
+        children.extend(bodies);
+        return Ok((
+            Block::ParaDiaphane {
+                children,
+                ann: Annotations::default(),
+            },
+            j,
+        ));
     }
     let mut children = vec![Block::Paragraph(content)];
     children.extend(bodies);
@@ -3625,16 +4105,170 @@ fn tei_cast_list(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Vec<B
         match &toks[i] {
             Tok::Close(name) if name == "castList" => return Ok((items, i + 1)),
             Tok::Text(t) if t.trim().is_empty() => i += 1,
-            Tok::Open { name, .. } if name == "castItem" || name == "head" => {
+            Tok::Open { name, attrs, .. } if name == "castItem" || name == "head" => {
                 let n = name.clone();
+                let onym = if n == "castItem" {
+                    xml_id_onym(attrs)
+                } else {
+                    None
+                };
                 let ((content, _), next) = tei_inline_run(toks, i + 1, &n, notes)?;
-                items.push(solo_endo(if n == "head" { "#_" } else { ":!" }, content));
+                items.push(solo_endo_onym(
+                    if n == "head" { "#_" } else { ":!" },
+                    content,
+                    onym,
+                ));
                 i = next;
             }
             other => return Err(tei_err(format!("unsupported {other:?} in <castList>"))),
         }
     }
     Err(tei_err("unterminated <castList>".into()))
+}
+
+/// A listPerson: each person becomes a dramatis-persona line -
+/// the persName as the name, the xml:id as the onym every
+/// prosopon key resolves against - or, when it carries a note, a
+/// character entry whose description is the note. A head is a
+/// run-in heading; nested lists flatten. The prosopographic
+/// detail (birth, death, sex, occupation, ...) is recorded loss.
+fn tei_list_person(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Vec<Block>, usize)> {
+    let mut items: Vec<Block> = Vec::new();
+    while i < toks.len() {
+        match &toks[i] {
+            Tok::Close(name) if name == "listPerson" => return Ok((items, i + 1)),
+            Tok::Text(_) => i += 1,
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "listPerson" => {
+                if *self_closing {
+                    i += 1;
+                    continue;
+                }
+                let (inner, next) = tei_list_person(toks, i + 1, notes)?;
+                items.extend(inner);
+                i = next;
+            }
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "head" => {
+                if *self_closing {
+                    i += 1;
+                    continue;
+                }
+                let ((mut content, bodies), next) = tei_inline_run(toks, i + 1, "head", notes)?;
+                trim_run(&mut content);
+                items.push(solo_endo("#_", content));
+                items.extend(bodies);
+                i = next;
+            }
+            Tok::Open {
+                name,
+                attrs,
+                self_closing,
+                ..
+            } if name == "person" || name == "personGrp" => {
+                if *self_closing {
+                    i += 1;
+                    continue;
+                }
+                let n2 = name.clone();
+                let onym = xml_id_onym(attrs);
+                let (block, next) = tei_person(toks, i + 1, &n2, onym, notes)?;
+                items.extend(block);
+                i = next;
+            }
+            Tok::Open {
+                name, self_closing, ..
+            } => {
+                let sc = *self_closing;
+                let n2 = name.clone();
+                i += 1;
+                if !sc {
+                    i = skip_element(toks, i, n2)?;
+                }
+            }
+            other => return Err(tei_err(format!("unsupported {other:?} in <listPerson>"))),
+        }
+    }
+    Err(tei_err("unterminated <listPerson>".into()))
+}
+
+/// One person (or personGrp) of a listPerson: the first persName
+/// is the name, the first note the description; the rest is
+/// skipped. Without a name there is nothing to declare.
+fn tei_person(
+    toks: &[Tok],
+    mut i: usize,
+    until: &str,
+    onym: Option<String>,
+    notes: &mut usize,
+) -> Result<(Vec<Block>, usize)> {
+    let mut name: Option<Vec<Inline>> = None;
+    let mut description: Vec<Block> = Vec::new();
+    while i < toks.len() {
+        match &toks[i] {
+            Tok::Close(n) if n == until => {
+                let Some(mut name) = name else {
+                    return Ok((Vec::new(), i + 1));
+                };
+                trim_run(&mut name);
+                if name.is_empty() {
+                    return Ok((Vec::new(), i + 1));
+                }
+                let block = if description.is_empty() {
+                    solo_endo_onym(":!", name, onym)
+                } else {
+                    Block::Para {
+                        symbol: ":!!".to_string(),
+                        taxis: None,
+                        lemma: name,
+                        children: description,
+                        hypograph: Vec::new(),
+                        bracket_matching: true,
+                        ann: Annotations {
+                            onym,
+                            genoses: Vec::new(),
+                        },
+                    }
+                };
+                return Ok((vec![block], i + 1));
+            }
+            Tok::Text(_) => i += 1,
+            Tok::Open {
+                name: n,
+                self_closing,
+                ..
+            } if n == "persName" && name.is_none() && !*self_closing => {
+                let ((content, _), next) = tei_inline_run(toks, i + 1, "persName", notes)?;
+                name = Some(content);
+                i = next;
+            }
+            Tok::Open {
+                name: n,
+                self_closing,
+                ..
+            } if n == "note" && description.is_empty() && !*self_closing => {
+                let (children, next) = tei_note_body(toks, i + 1, notes)?;
+                description = children;
+                i = next;
+            }
+            Tok::Open {
+                name: n,
+                self_closing,
+                ..
+            } => {
+                let sc = *self_closing;
+                let n2 = n.clone();
+                i += 1;
+                if !sc {
+                    i = skip_element(toks, i, n2)?;
+                }
+            }
+            other => return Err(tei_err(format!("unsupported {other:?} in <{until}>"))),
+        }
+    }
+    Err(tei_err(format!("unterminated <{until}>")))
 }
 
 /// Parse an inline run until the closing tag `until`. Returns
@@ -3741,16 +4375,18 @@ fn tei_inline_run(
                     i += 1;
                     continue;
                 }
-                let genoses = if name == "said" || attr(attrs, "who").is_some() {
+                let mut genoses = if name == "said" || attr(attrs, "who").is_some() {
                     vec!["said".to_string()]
                 } else {
                     Vec::new()
                 };
+                genoses.extend(tei_said_mode(attrs));
+                let marks = tei_said_marks(attrs);
                 let n = name.clone();
                 let ((content, inner_bodies), next) = tei_inline_run(toks, i + 1, &n, notes)?;
                 inlines.push(Inline::Endo {
                     symbol: "\"\"".to_string(),
-                    content,
+                    content: with_aphanes(marks, content),
                     bracket_matching: true,
                     ann: Annotations {
                         onym: None,
@@ -3857,10 +4493,10 @@ fn tei_inline_run(
                 i = next;
             }
             Tok::Open { name, .. } if name == "choice" => {
-                // Reading text: prefer expan/corr/reg over
-                // abbr/sic/orig.
-                let (preferred, next) = tei_choice(toks, i + 1, notes)?;
-                inlines.extend(preferred);
+                // Reading text: expan/corr/reg, with abbr/sic/orig
+                // as the paradosis aphanes.
+                let (preferred, fallback, next) = tei_choice(toks, i + 1, notes)?;
+                inlines.extend(tei_choice_inlines(preferred, fallback));
                 i = next;
             }
             Tok::Open {
@@ -3903,6 +4539,56 @@ fn tei_inline_run(
                     ann: Annotations {
                         onym: None,
                         genoses: vec!["del".to_string()],
+                    },
+                });
+                bodies.extend(inner);
+                i = next;
+            }
+            Tok::Open {
+                name,
+                attrs,
+                self_closing,
+            } if matches!(name.as_str(), "w" | "pc" | "s") && tei_parsing_span(name, attrs) => {
+                // Tokens and sentences with a parsing: the parsing
+                // pack's diaphanes (at-epimerismos); litosis
+                // unwraps them.
+                if *self_closing {
+                    i += 1;
+                    continue;
+                }
+                let n = name.clone();
+                let ((content, inner), next) = tei_inline_run(toks, i + 1, &n, notes)?;
+                inlines.push(tei_parsing_inline(&n, attrs, content));
+                bodies.extend(inner);
+                i = next;
+            }
+            Tok::Open {
+                name,
+                attrs,
+                self_closing,
+            } if matches!(
+                name.as_str(),
+                "name" | "persName" | "placeName" | "orgName" | "rs" | "date" | "dateRange" | "seg"
+            ) && tei_aphanes_span(name, attrs).is_some() =>
+            {
+                // A name, date, or seg carrying an unseen
+                // attribute (ref, key, when, ana): the span stays,
+                // the attribute rides first inside it as an
+                // at-aphanes monosim.
+                let (genos, marks) = tei_aphanes_span(name, attrs).unwrap();
+                if *self_closing {
+                    i += 1;
+                    continue;
+                }
+                let n = name.clone();
+                let ((content, inner), next) = tei_inline_run(toks, i + 1, &n, notes)?;
+                inlines.push(Inline::Endo {
+                    symbol: ",".to_string(),
+                    content: with_aphanes(marks, content),
+                    bracket_matching: true,
+                    ann: Annotations {
+                        onym: None,
+                        genoses: vec![genos],
                     },
                 });
                 bodies.extend(inner);
@@ -6740,10 +7426,18 @@ fn usfm_inlines(text: &str) -> Result<Vec<Inline>> {
                 }
             }
             m => {
-                // A paired character marker.
+                // A paired character marker. The red letters (\wj)
+                // carry their constant speaker as prosopon, as the
+                // USX and OSIS importers do.
+                let content = usfm_inlines(body.trim())?;
+                let content = if m == "wj" {
+                    with_aphanes(vec![aphanes(PROSOPON, "Jesus")], content)
+                } else {
+                    content
+                };
                 inlines.push(Inline::Endo {
                     symbol: ",".to_string(),
-                    content: usfm_inlines(body.trim())?,
+                    content,
                     bracket_matching: true,
                     ann: Annotations {
                         onym: None,
@@ -7036,7 +7730,7 @@ pub fn tanzil_to_document(src: &str, scheme: &str) -> Result<Document> {
                     return Err(tanzil_err(format!("sura {s} after {prev}")));
                 }
             } else if s != 1 {
-                return Err(tanzil_err(format!("text does not start at sura 1")));
+                return Err(tanzil_err("text does not start at sura 1".to_string()));
             }
             flush(&mut lines, &mut content);
             cur_sura = Some(s);
@@ -7206,11 +7900,107 @@ pub fn usx_to_document(xml: &str) -> Result<Document> {
 }
 
 /// Inline USX content up to the named closing tag.
+/// Sentinels for USX quotation milestones inside one inline run;
+/// `usx_fold_quotes` replaces them before the run is returned, so
+/// they never reach a document.
+const USX_QT_START: &str = "\u{0}qt-s";
+const USX_QT_END: &str = "\u{0}qt-e";
+
+/// Fold qt-s ... qt-e sentinels into said spans carrying the
+/// speaker as prosopon. A start without an end in this run closes
+/// at the run's end (the attribution does not carry into the next
+/// block: a recorded limitation of the span model); an end without
+/// a start drops.
+fn usx_fold_quotes(inlines: Vec<Inline>) -> Vec<Inline> {
+    if !inlines
+        .iter()
+        .any(|x| matches!(x, Inline::Monosim { symbol, .. } if symbol == USX_QT_START || symbol == USX_QT_END))
+    {
+        return inlines;
+    }
+    let mut out: Vec<Inline> = Vec::new();
+    let mut open: Option<(String, Vec<Inline>)> = None;
+    let close = |out: &mut Vec<Inline>, who: String, mut content: Vec<Inline>| {
+        trim_inline_edges(&mut content);
+        if content.is_empty() {
+            return;
+        }
+        let marks = if who.is_empty() {
+            Vec::new()
+        } else {
+            vec![Inline::Monosim {
+                symbol: PROSOPON.to_string(),
+                param: who,
+                ann: Annotations::default(),
+            }]
+        };
+        out.push(Inline::Endo {
+            symbol: ",".to_string(),
+            content: with_aphanes(marks, content),
+            bracket_matching: true,
+            ann: Annotations {
+                onym: None,
+                genoses: vec!["said".to_string()],
+            },
+        });
+    };
+    for inline in inlines {
+        match inline {
+            Inline::Monosim { symbol, param, .. } if symbol == USX_QT_START => {
+                if let Some((who, content)) = open.take() {
+                    close(&mut out, who, content);
+                }
+                open = Some((param, Vec::new()));
+            }
+            Inline::Monosim { symbol, .. } if symbol == USX_QT_END => {
+                if let Some((who, content)) = open.take() {
+                    close(&mut out, who, content);
+                }
+            }
+            other => match &mut open {
+                Some((_, content)) => content.push(other),
+                None => out.push(other),
+            },
+        }
+    }
+    if let Some((who, content)) = open.take() {
+        close(&mut out, who, content);
+    }
+    out
+}
+
+/// A USX `<ref>`: with a target, a ref span carrying it as
+/// skopos; without, its text.
+fn usx_push_ref(inlines: &mut Vec<Inline>, loc: Option<String>, mut inner: Vec<Inline>) {
+    match loc {
+        Some(target) => {
+            trim_inline_edges(&mut inner);
+            inlines.push(Inline::Endo {
+                symbol: ",".to_string(),
+                content: with_aphanes(
+                    vec![Inline::Monosim {
+                        symbol: SKOPOS.to_string(),
+                        param: target,
+                        ann: Annotations::default(),
+                    }],
+                    inner,
+                ),
+                bracket_matching: true,
+                ann: Annotations {
+                    onym: None,
+                    genoses: vec!["ref".to_string()],
+                },
+            });
+        }
+        None => inlines.extend(inner),
+    }
+}
+
 fn usx_inlines(toks: &[Tok], mut i: usize, until: &str) -> Result<(Vec<Inline>, usize)> {
     let mut inlines: Vec<Inline> = Vec::new();
     while i < toks.len() {
         match &toks[i] {
-            Tok::Close(name) if name == until => return Ok((inlines, i + 1)),
+            Tok::Close(name) if name == until => return Ok((usx_fold_quotes(inlines), i + 1)),
             Tok::Text(t) => {
                 let text = collapse_ws(&decode_entities(t));
                 if after_milestone(&inlines) && !text.starts_with(' ') {
@@ -7248,6 +8038,16 @@ fn usx_inlines(toks: &[Tok], mut i: usize, until: &str) -> Result<(Vec<Inline>, 
                 match style.as_str() {
                     // Wordlist/gloss wrappers unwrap to their text.
                     "w" | "wh" | "wg" | "wa" | "rb" => inlines.extend(inner),
+                    // The red letters carry their constant speaker.
+                    "wj" => inlines.push(Inline::Endo {
+                        symbol: ",".to_string(),
+                        content: with_aphanes(vec![aphanes(PROSOPON, "Jesus")], inner),
+                        bracket_matching: true,
+                        ann: Annotations {
+                            onym: None,
+                            genoses: vec![style],
+                        },
+                    }),
                     _ => inlines.push(Inline::Endo {
                         symbol: ",".to_string(),
                         content: inner,
@@ -7286,19 +8086,54 @@ fn usx_inlines(toks: &[Tok], mut i: usize, until: &str) -> Result<(Vec<Inline>, 
                 });
             }
             Tok::Open {
-                name, self_closing, ..
+                name,
+                attrs,
+                self_closing,
             } if name == "ref" || name == "optbreak" => {
-                // <ref loc> unwraps to its text; <optbreak/> is a
-                // discretionary break.
+                // <ref loc> keeps its span with the target riding as
+                // skopos (OSIS spelling); a bare <ref> unwraps to its
+                // text; <optbreak/> is a discretionary break.
                 if name == "optbreak" {
                     inlines.push(Inline::Text(" ".to_string()));
                 }
                 if !*self_closing {
+                    let loc = attr(attrs, "loc").map(usx_loc_to_osis);
                     let (inner, next) = usx_inlines(toks, i + 1, name)?;
-                    inlines.extend(inner);
+                    usx_push_ref(&mut inlines, loc, inner);
                     i = next;
                 } else {
                     i += 1;
+                }
+            }
+            Tok::Open { name, attrs, .. } if name == "ms" => {
+                // Milestones: a quotation start (qt-s, with its
+                // speaker) and end (qt-e) become sentinels that fold
+                // into a said span at the end of this run; other
+                // milestones (ts, zaln-s, ...) carry nothing here.
+                let style = attr(attrs, "style").unwrap_or("");
+                let self_closing = matches!(
+                    &toks[i],
+                    Tok::Open {
+                        self_closing: true,
+                        ..
+                    }
+                );
+                if style.starts_with("qt") && style.ends_with("-s") {
+                    inlines.push(Inline::Monosim {
+                        symbol: USX_QT_START.to_string(),
+                        param: attr(attrs, "who").map(aphanes_key).unwrap_or_default(),
+                        ann: Annotations::default(),
+                    });
+                } else if style.starts_with("qt") && style.ends_with("-e") {
+                    inlines.push(Inline::Monosim {
+                        symbol: USX_QT_END.to_string(),
+                        param: String::new(),
+                        ann: Annotations::default(),
+                    });
+                }
+                i += 1;
+                if !self_closing {
+                    i = skip_element(toks, i, "ms".to_string())?;
                 }
             }
             Tok::Close(name) if name == "ref" => i += 1,
@@ -7361,11 +8196,14 @@ fn usx_note_inlines(toks: &[Tok], mut i: usize) -> Result<(Vec<Inline>, usize)> 
                 }
             }
             Tok::Open {
-                name, self_closing, ..
+                name,
+                attrs,
+                self_closing,
             } if name == "ref" => {
                 if !*self_closing {
+                    let loc = attr(attrs, "loc").map(usx_loc_to_osis);
                     let (inner, next) = usx_inlines(toks, i + 1, "ref")?;
-                    note.extend(inner);
+                    usx_push_ref(&mut note, loc, inner);
                     i = next;
                 } else {
                     i += 1;
@@ -7592,6 +8430,58 @@ fn osis_blocks(toks: &[Tok], mut i: usize, until: &str) -> Result<(Vec<Block>, u
                     });
                 }
             }
+            Tok::Open { name, .. } if name == "verse" => {
+                // Verses at block level (the container form
+                // `<verse osisID>text</verse>`, or milestones
+                // followed by bare text): consecutive ones gather
+                // into one paragraph, each opening with its
+                // milestone.
+                let mut inlines: Vec<Inline> = Vec::new();
+                while i < toks.len() {
+                    match &toks[i] {
+                        Tok::Open {
+                            name,
+                            attrs,
+                            self_closing,
+                        } if name == "verse" => {
+                            if attr(attrs, "eid").is_none()
+                                && let Some(n) = osis_number(attrs)
+                            {
+                                push_verse_milestone(&mut inlines, n);
+                            }
+                            let container = !*self_closing;
+                            i += 1;
+                            if container {
+                                let (inner, next) = osis_inlines(toks, i, "verse")?;
+                                // The milestone and the verse text
+                                // are separated by a space, as in
+                                // the milestone form.
+                                if after_milestone(&inlines)
+                                    && matches!(inner.first(), Some(Inline::Text(t)) if !t.starts_with(' '))
+                                {
+                                    inlines.push(Inline::Text(" ".to_string()));
+                                }
+                                inlines.extend(inner);
+                                i = next;
+                            }
+                        }
+                        Tok::Text(t) if t.trim().is_empty() => i += 1,
+                        Tok::Text(t) => {
+                            let text = collapse_ws(&decode_entities(t));
+                            if after_milestone(&inlines) && !text.starts_with(' ') {
+                                inlines.push(Inline::Text(" ".to_string()));
+                            }
+                            inlines.push(Inline::Text(text));
+                            i += 1;
+                        }
+                        _ => break,
+                    }
+                }
+                trim_inline_edges(&mut inlines);
+                if !inlines.is_empty() {
+                    content.push(Block::Paragraph(inlines));
+                }
+            }
             Tok::Open { name, .. } if name == "div" => {
                 // Section groupings unwrap into the flow.
                 i += 1;
@@ -7714,6 +8604,11 @@ fn osis_inlines(toks: &[Tok], mut i: usize, until: &str) -> Result<(Vec<Inline>,
                 let (mut note, next) = osis_note_inlines(toks, i + 1, is_x)?;
                 i = next;
                 trim_inline_edges(&mut note);
+                // What the note is about (note/@osisRef) rides as
+                // skopos first inside the note.
+                if let Some(target) = attr(attrs, "osisref") {
+                    note = with_aphanes(vec![aphanes(SKOPOS, target)], note);
+                }
                 inlines.push(Inline::Endo {
                     symbol: "^".to_string(),
                     content: note,
@@ -7744,14 +8639,31 @@ fn osis_inlines(toks: &[Tok], mut i: usize, until: &str) -> Result<(Vec<Inline>,
                 let (inner, next) = osis_inlines(toks, i + 1, &name)?;
                 i = next;
                 match name.as_str() {
-                    "q" => {
-                        if attr(&attrs, "who") == Some("Jesus") {
-                            phrase(&mut inlines, "wj".to_string(), inner);
-                        } else {
-                            // A generic quotation container.
-                            inlines.extend(inner);
+                    "q" => match attr(&attrs, "who") {
+                        // The red letters: a constant speaker, who
+                        // also rides as prosopon for the readers
+                        // that do not know the wj convention.
+                        Some("Jesus") => {
+                            let mut inner = inner;
+                            trim_inline_edges(&mut inner);
+                            phrase(
+                                &mut inlines,
+                                "wj".to_string(),
+                                with_aphanes(vec![aphanes(PROSOPON, "Jesus")], inner),
+                            );
                         }
-                    }
+                        Some(who) => {
+                            let mut inner = inner;
+                            trim_inline_edges(&mut inner);
+                            phrase(
+                                &mut inlines,
+                                "said".to_string(),
+                                with_aphanes(vec![aphanes(PROSOPON, who)], inner),
+                            );
+                        }
+                        // A generic quotation container.
+                        None => inlines.extend(inner),
+                    },
                     "divineName" => phrase(&mut inlines, "nd".to_string(), inner),
                     "transChange" => phrase(&mut inlines, "add".to_string(), inner),
                     "foreign" => phrase(&mut inlines, "tl".to_string(), inner),
@@ -7786,9 +8698,22 @@ fn osis_inlines(toks: &[Tok], mut i: usize, until: &str) -> Result<(Vec<Inline>,
                             inlines.extend(inner);
                         }
                     }
-                    // Wordlist and reference wrappers unwrap in
-                    // running text.
-                    "w" | "reference" | "a" => inlines.extend(inner),
+                    // A reference with a target keeps its span, the
+                    // target riding as skopos; wordlist wrappers and
+                    // bare references unwrap in running text.
+                    "reference" => match attr(&attrs, "osisref") {
+                        Some(target) => {
+                            let mut inner = inner;
+                            trim_inline_edges(&mut inner);
+                            phrase(
+                                &mut inlines,
+                                "ref".to_string(),
+                                with_aphanes(vec![aphanes(SKOPOS, target)], inner),
+                            );
+                        }
+                        None => inlines.extend(inner),
+                    },
+                    "w" | "a" => inlines.extend(inner),
                     "catchWord" | "rdg" => inlines.extend(inner),
                     other => {
                         return Err(osis_err(format!("unsupported inline element <{other}>")));
@@ -7805,7 +8730,7 @@ fn osis_inlines(toks: &[Tok], mut i: usize, until: &str) -> Result<(Vec<Inline>,
 
 /// XML text with insignificant line breaks: collapse every
 /// whitespace run to a single space.
-fn collapse_ws(text: &str) -> String {
+pub(crate) fn collapse_ws(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut in_ws = false;
     for c in text.chars() {
@@ -7845,7 +8770,7 @@ fn push_verse_milestone(inlines: &mut Vec<Inline>, n: String) {
 }
 
 /// Trim leading/trailing whitespace-only text runs.
-fn trim_inline_edges(inlines: &mut Vec<Inline>) {
+pub(crate) fn trim_inline_edges(inlines: &mut Vec<Inline>) {
     while matches!(inlines.first(), Some(Inline::Text(t)) if t.trim().is_empty()) {
         inlines.remove(0);
     }
@@ -7873,15 +8798,19 @@ fn osis_note_inlines(toks: &[Tok], mut i: usize, is_x: bool) -> Result<(Vec<Inli
                 i += 1;
             }
             Tok::Open {
-                name, self_closing, ..
+                name,
+                attrs,
+                self_closing,
             } if name == "reference" => {
                 if *self_closing {
                     i += 1;
                     continue;
                 }
+                let target = attr(attrs, "osisref").map(|t| aphanes(SKOPOS, t));
                 let (mut inner, next) = osis_inlines(toks, i + 1, "reference")?;
                 i = next;
                 trim_inline_edges(&mut inner);
+                let inner = with_aphanes(target.into_iter().collect(), inner);
                 note.push(Inline::Endo {
                     symbol: ",".to_string(),
                     content: inner,

@@ -1,0 +1,28 @@
+@@@!atrep-exo
+@=at-epimerismos=>epub
+
+@@/ The parsing pack renders nothing in place: a token's parsing
+@@/ is analysis, not text. Hosts inherit these empty rules
+@@/ through the lineage; the token and sentence diaphanes render
+@@/ through the *diaphane-inline rule as transparent wrappers.
+
+@-> !.
+>-@
+
+@-> !=
+>-@
+
+@-> !/
+>-@
+
+@-> !%
+>-@
+
+@-> !&
+>-@
+
+@-> !>
+>-@
+
+@-> !-
+>-@

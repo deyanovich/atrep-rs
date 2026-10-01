@@ -32,7 +32,9 @@
 @:: / , .emph
 @:: * , .hi
 @:: */ , .emph
-@:: , , .seg
+@@/ The annotation span keeps its own genos (persname, date, ...)
+@@/ so the tei exo can name the element; a bare span falls to seg.
+@:: , ,
 @:: $ , .formula
 @:: $$ _ .formula
 
@@ -83,3 +85,13 @@
 @:: >: , .name
 @:: % , .term
 @-- %%
+
+@@/ The parsing pack (at-epimerismos) has no counterpart here: its
+@@/ monosims drop; the token and sentence diaphanes pass through.
+@-- !.
+@-- !=
+@-- !/
+@-- !%
+@-- !&
+@-- !>
+@-- !-

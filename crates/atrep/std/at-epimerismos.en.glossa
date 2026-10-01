@@ -1,0 +1,12 @@
+@@@!atrep-glossa
+@=at-epimerismos=>en
+
+@@/ English names for the parsing pack (lexeme, not lemma:
+@@/ litogramma already has a lemma sim, the mathematical one).
+@!. sentence
+@!= lexeme
+@!/ part-of-speech
+@!% features
+@!& semantics
+@!> head
+@!- relation

@@ -52,6 +52,30 @@ fn monosim_whitespace() {
 }
 
 #[test]
+fn monosim_nested_parentheses() {
+    // The parameter ends at the first unmatched `)`: a URL ending
+    // in `_(city)` keeps its parentheses and the text after the
+    // monosim is untouched.
+    let doc = parse("@@@!exempli\n\nSee @^(https://x.org/wiki/Foo_(bar)) here.\n").unwrap();
+    let atd = atrep::dendron::serialize(&doc);
+    assert!(
+        atd.contains("@^(https://x.org/wiki/Foo_(bar)) here."),
+        "{atd}"
+    );
+}
+
+#[test]
+fn monosim_unbalanced_parameter() {
+    // The parameter ends at the first unmatched `)`; an opening
+    // parenthesis that never closes leaves the monosim unterminated.
+    let err = parse("@@@!exempli\n\nSee @^(a(b) here.\n").unwrap_err();
+    assert!(
+        matches!(err.kind, ErrorKind::Syntax(ref m) if m.contains("unterminated")),
+        "{err}"
+    );
+}
+
+#[test]
 fn para_sim_in_endo_context() {
     let err = parse("@@@!exempli\n\ntext @# heading misuse\n").unwrap_err();
     assert!(matches!(err.kind, ErrorKind::EndoMimicsPara));

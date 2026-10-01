@@ -386,6 +386,8 @@ const STD_DIALEKTOI: &[(&str, &str)] = &[
     ("at-prosa", include_str!("../std/at-prosa.dia")),
     ("at-poesia", include_str!("../std/at-poesia.dia")),
     ("at-drama", include_str!("../std/at-drama.dia")),
+    ("at-aphanes", include_str!("../std/at-aphanes.dia")),
+    ("at-epimerismos", include_str!("../std/at-epimerismos.dia")),
     ("at-docbook", include_str!("../std/at-docbook.dia")),
     ("at-html", include_str!("../std/at-html.dia")),
     ("at-markdown", include_str!("../std/at-markdown.dia")),
@@ -395,6 +397,32 @@ const STD_DIALEKTOI: &[(&str, &str)] = &[
     ("at-usfm", include_str!("../std/at-usfm.dia")),
     ("litogramma", include_str!("../std/litogramma.dia")),
     ("bibliogramma", include_str!("../std/bibliogramma.dia")),
+];
+
+/// Embedded standard-library glossae: (dialektos, language, source).
+/// A pack's glossae travel with it through inheritance, so a
+/// litogramma document may spell `@{person}` or `@{лицо}`.
+const STD_GLOSSAE: &[(&str, &str, &str)] = &[
+    (
+        "at-aphanes",
+        "en",
+        include_str!("../std/at-aphanes.en.glossa"),
+    ),
+    (
+        "at-aphanes",
+        "ru",
+        include_str!("../std/at-aphanes.ru.glossa"),
+    ),
+    (
+        "at-epimerismos",
+        "en",
+        include_str!("../std/at-epimerismos.en.glossa"),
+    ),
+    (
+        "at-epimerismos",
+        "ru",
+        include_str!("../std/at-epimerismos.ru.glossa"),
+    ),
 ];
 
 /// The identifiers of the embedded standard-library dialektoi.
@@ -424,7 +452,18 @@ fn resolve_inner(source: &dyn Source, id: &str, stack: &mut Vec<String>) -> Resu
                     stack.push(id.to_string());
                     let result = parse_definition(src, &pseudo, id, source, stack);
                     stack.pop();
-                    return result;
+                    let mut dial = result?;
+                    for (d, lang, text) in STD_GLOSSAE {
+                        if *d == id {
+                            let names = crate::glossa::parse_glossa_source(text, &dial, lang)?;
+                            dial.glossae.insert((*lang).to_string(), names);
+                        }
+                    }
+                    // Sibling glossae in the resolution context
+                    // add to (or replace, per language) the
+                    // embedded ones.
+                    load_glossae(source, &mut dial)?;
+                    return Ok(dial);
                 }
                 return Err(Error::new(ErrorKind::UnresolvableDialektos(id.to_string())));
             }
@@ -665,6 +704,12 @@ fn apply_inheritance(
         ..e
     })?;
 
+    // The parent's glossae follow the sims brought in: (parent
+    // symbol, symbol here), so localized names keep working in
+    // the inheriting dialektos's plerographic spelling.
+    let parent_glossae = parent.glossae.clone();
+    let mut brought: Vec<(String, String)> = Vec::new();
+
     let mut merge = |def: SimDef| -> Result<()> {
         if dialektos.sims.contains_key(&def.symbol) {
             return Err(Error::at(ErrorKind::SimConflict(def.symbol), loc.clone()));
@@ -676,6 +721,7 @@ fn apply_inheritance(
     let recorded = match op {
         None => {
             for def in parent.sims.into_values() {
+                brought.push((def.symbol.clone(), def.symbol.clone()));
                 merge(def)?;
             }
             InheritKind::Full
@@ -684,6 +730,7 @@ fn apply_inheritance(
             let excluded = parse_symbol_list(list, &loc)?;
             for def in parent.sims.into_values() {
                 if !excluded.contains(&def.symbol) {
+                    brought.push((def.symbol.clone(), def.symbol.clone()));
                     merge(def)?;
                 }
             }
@@ -697,6 +744,7 @@ fn apply_inheritance(
                     let def = parent.sims.get(sym).cloned().ok_or_else(|| {
                         Error::at(ErrorKind::UndefinedSim(sym.clone()), loc.clone())
                     })?;
+                    brought.push((sym.clone(), sym.clone()));
                     merge(def)?;
                 }
                 InheritKind::ImportList(symbols)
@@ -717,12 +765,21 @@ fn apply_inheritance(
                 if let Some(alias) = &alias {
                     def.symbol = alias.clone();
                 }
+                brought.push((sym.clone(), def.symbol.clone()));
                 merge(def)?;
                 InheritKind::Import { symbol: sym, alias }
             }
         }
         _ => unreachable!(),
     };
+    for (lang, names) in &parent_glossae {
+        let entry = dialektos.glossae.entry(lang.clone()).or_default();
+        for (psym, csym) in &brought {
+            if let Some(name) = names.get(psym) {
+                entry.entry(csym.clone()).or_insert_with(|| name.clone());
+            }
+        }
+    }
     dialektos.lineage.push(InheritOp {
         source: source_id.to_string(),
         kind: recorded,

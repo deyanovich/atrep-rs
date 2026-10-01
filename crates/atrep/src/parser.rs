@@ -925,6 +925,12 @@ impl Parser {
                 self.loc(self.idx),
             ));
         }
+        if !balanced_parens(param) {
+            return Err(Error::at(
+                ErrorKind::Syntax("unbalanced parentheses in monosim parameter".into()),
+                self.loc(self.idx),
+            ));
+        }
         Ok(())
     }
 
@@ -959,6 +965,22 @@ impl Parser {
         let rest: String = scanner.chars[scanner.pos..].iter().collect();
         Ok((ann, rest))
     }
+}
+
+/// Do the parentheses in a parameter nest and close? A parameter
+/// ends at the first unmatched `)`, so one that is unbalanced can
+/// never be written.
+pub fn balanced_parens(param: &str) -> bool {
+    let mut depth = 0usize;
+    for c in param.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' if depth == 0 => return false,
+            ')' => depth -= 1,
+            _ => {}
+        }
+    }
+    depth == 0
 }
 
 /// `(:r:)` parameter content? Return the onym of an axioma reference.
@@ -1006,6 +1028,27 @@ impl Scanner {
         s.chars()
             .enumerate()
             .all(|(i, c)| self.chars.get(self.pos + i) == Some(&c))
+    }
+
+    /// Scan a monosim parameter up to its closing parenthesis.
+    /// Parentheses inside the parameter nest: the parameter ends
+    /// at the first unmatched `)`, so `@!=(οὕτω(ς))` and a URL
+    /// ending in `_(city)` carry their parentheses verbatim.
+    fn take_param(&mut self) -> Option<String> {
+        let mut out = String::new();
+        let mut depth = 0usize;
+        while self.pos < self.chars.len() {
+            let c = self.chars[self.pos];
+            self.pos += 1;
+            match c {
+                '(' => depth += 1,
+                ')' if depth == 0 => return Some(out),
+                ')' => depth -= 1,
+                _ => {}
+            }
+            out.push(c);
+        }
+        None
     }
 
     fn take_until_str(&mut self, term: &str) -> Option<String> {
@@ -1192,7 +1235,7 @@ impl Scanner {
                                 ));
                             }
                             self.pos += 1;
-                            let Some(param) = self.take_until_str(")") else {
+                            let Some(param) = self.take_param() else {
                                 return Err(Error::at(
                                     ErrorKind::Syntax("unterminated monosim parameter".into()),
                                     self.loc(),

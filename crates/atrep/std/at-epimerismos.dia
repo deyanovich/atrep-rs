@@ -1,0 +1,101 @@
+@@@!atrep
+
+@@/ at-epimerismos: the parsing pack (ἐπιμερισμός, the Byzantine
+@@/ schoolroom's word-by-word grammatical parsing of a text: for
+@@/ each word its lemma, its part of speech, its accidents) -
+@@/ token-level linguistic annotation, the layer corpora and
+@@/ treebanks carry: the Russian National Corpus, OpenCorpora,
+@@/ PROIEL, TEI's w element, Strong's-tagged scripture.
+@@/ Like at-aphanes, every sim is a monosim, so litosis strips the
+@@/ whole pack; unlike at-aphanes it needs a span for every word,
+@@/ and that span must not enter the text's identity either. The
+@@/ span is therefore the endo-diaphane, the transparent wrapper
+@@/ litosis unwraps and kanonizo keeps only while it carries
+@@/ something - an onym, a genos, or (this pack's case) an
+@@/ annotation monosim written first inside it:
+@@/
+@@/   @@.@!=(школа)@!/(S)@!%(f,inan=sg,nom)Школа.@@
+@@/
+@@/ is a token: the parsing first, then the form. Several
+@@/ parsings (an ambiguous token) repeat from lexema. A sentence
+@@/ is an endo-diaphane opened by the periodos marker, holding
+@@/ its tokens and the untokenized text between them; when
+@@/ syntax points from token to token (PROIEL heads), the tokens
+@@/ carry onyms and kephale points at them (kanonizo keeps the
+@@/ referenced ones and renumbers both sides); a citation
+@@/ coordinate that changes between tokens is a core milestone.
+@@/ An annotated text and the bare text have the same litos: the
+@@/ parsing is analysis, not text.
+@@/ Values are free tokens in the source's own tagset (RNC's gr,
+@@/ OpenCorpora's grammemes, PROIEL's morphology code): the pack
+@@/ carries the analysis, it does not translate it.
+@@/ Part of the standard library; composes with koine and its
+@@/ sibling packs.
+
+@=== periodos
+@!.(id)
+@"opens a sentence: the diaphane it heads is one sentence"@
+@""
+περίοδος, the sentence. Written first inside an endo-diaphane
+that spans the sentence; the parameter is the source's sentence
+id (OpenCorpora, PROIEL) or a running number. Tokens nest inside.
+""@
+===@
+
+@=== lexema
+@!=(lemma)
+@"the lexeme the token belongs to, named by its lemma"@
+@""
+λέξημα. RNC ana/@lex, OpenCorpora l/@t, PROIEL token/@lemma, TEI
+w/@lemma. Opens a parsing: a second lexema on the same token
+opens a second, alternative parsing.
+""@
+===@
+
+@=== meros
+@!/(pos)
+@"the part of speech (μέρος λόγου)"@
+@""
+The first item of an RNC gr string, the first grammeme of an
+OpenCorpora analysis, PROIEL part-of-speech, TEI w/@pos.
+""@
+===@
+
+@=== parepomena
+@!%(features)
+@"the accidents: the grammatical features beyond the part of speech"@
+@""
+Dionysius Thrax's παρεπόμενα - gender, number, case, tense, mood,
+voice and the rest - in the source's own spelling: the remainder
+of an RNC gr string (`f,inan=sg,nom`, keeping a leading `=` when
+the string had one), OpenCorpora grammemes after the first, joined
+with commas, PROIEL's morphology code, TEI w/@msd.
+""@
+===@
+
+@=== semasia
+@!&(class)
+@"a semantic class of the lexeme"@
+@""
+σημασία. RNC ana/@sem; spaces in the source value are written as
+underscores (a parameter carries no whitespace).
+""@
+===@
+
+@=== kephale
+@!>(onym)
+@"the syntactic head: the onym of the token this one depends on"@
+@""
+κεφαλή. PROIEL head-id, any dependency treebank. Points at a token
+diaphane's onym; kanonizo renumbers both together.
+""@
+===@
+
+@=== schesis
+@!-(relation)
+@"the dependency relation to the head"@
+@""
+σχέσις. PROIEL relation (pred, sub, obj, ...), Universal
+Dependencies deprel.
+""@
+===@

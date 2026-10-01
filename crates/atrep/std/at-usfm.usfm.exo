@@ -248,6 +248,14 @@
 \bk @(grammata)\bk*
 >-@
 
+@-> ,.said
+\qt-s@[ |who="@(prosopon)"]@\*@(grammata)\qt-e\*
+>-@
+
+@-> ,.ref
+@(grammata)
+>-@
+
 @-> ,
 @(grammata)
 >-@

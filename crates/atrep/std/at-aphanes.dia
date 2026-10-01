@@ -1,0 +1,109 @@
+@@@!atrep
+
+@@/ at-aphanes: the unseen pack (ἀφανής, not appearing) -
+@@/ editorial metadata that never reaches the page: who speaks a
+@@/ line of prose dialogue, whom or what a name denotes, the
+@@/ canonical target of a reference, the normalized value of a
+@@/ date, the analytic category of a span. TEI's attributes in
+@@/ atrep's grammar: the key is the sim, the value the
+@@/ parameter, one monosim per fact - never key=value inside a
+@@/ parameter.
+@@/ Every sim is a monosim, so litosis strips the whole pack: a
+@@/ kanon composed with at-aphanes has the same litos as the
+@@/ bare kanon. Anything that would need grammata is by
+@@/ definition not aphanes material. Where content is printed
+@@/ (an apparatus, a note, a speech prefix) the host dialektos
+@@/ owns it; aphanes carries only what the eye never sees.
+@@/ Placement: an aphanes monosim annotates the simmere whose
+@@/ inline content directly holds it - written first inside the
+@@/ grammata of an endo-simmere or paragraph, or in a
+@@/ para-simmere's lemma. Exomorphoses read it from there
+@@/ through the sim-name slot: @(prosopon) in a rule template
+@@/ fills who="..." on the element the rule emits, and the
+@@/ monosim's own rule renders nothing.
+@@/ Values are free keys in this edition (the index-hidden
+@@/ model); a document that declares dramatis personae may
+@@/ validate prosopon keys against them (host-side constraint).
+@@/ Keys live in the onym namespace: kanonizo rewrites a key that
+@@/ names a declared numbered onym, and leaves autonyms and free
+@@/ keys alone.
+@@/ Part of the standard library; composes with koine and its
+@@/ sibling packs. The pair of the diaphane: a diaphane shows
+@@/ its content through, aphanes shows nothing at all.
+
+@=== prosopon
+@?:(who)
+@"the person: who speaks this line, or whom this name denotes"@
+@""
+πρόσωπον, the person, the dramatic character (τὰ τοῦ δράματος
+πρόσωπα is the dramatis personae). Inside a prose dialogue line
+it names the speaker; inside a name span, the referent. TEI
+said/@who, q/@who, persName/@ref. Redundant in drama, where the
+speech prefix (the dialogue lemma) already carries the speaker.
+""@
+===@
+
+@=== chora
+@?.(where)
+@"the place a name denotes"@
+@""
+χώρα, place, land, country. TEI placeName/@ref.
+""@
+===@
+
+@=== syllogos
+@?&(which)
+@"the body (organisation, group, institution) a name denotes"@
+@""
+σύλλογος, an assembly, association, society. TEI orgName/@ref.
+""@
+===@
+
+@=== skopos
+@?>(target)
+@"the canonical target of a reference: a coordinate, an address"@
+@""
+σκοπός, the mark aimed at. The pointer's target in a citation
+scheme rather than an onym of this document: a scripture
+reference in OSIS spelling (Gen.1.1-Gen.1.3), a URI, a
+canonical section address. TEI ref/@target, USX ref/@loc,
+OSIS reference/@osisRef. One per span; the wording of the
+reference stays printed text.
+""@
+===@
+
+@=== chronos
+@?-(when)
+@"the normalized value of a date or time (ISO 8601)"@
+@""
+χρόνος, time. TEI date/@when. An ISO 8601 date, datetime, or
+interval (1813-01-28/1813-02-01) - no whitespace. The date's
+wording stays printed text.
+""@
+===@
+
+@=== eidos
+@?%(category)
+@"an analytic category the annotated span belongs to"@
+@""
+εἶδος, kind, class. TEI @ana: stylometric and discourse
+categories, standoff interpretation. Repeatable: one monosim
+per category; the sim-name slot joins them with spaces.
+""@
+===@
+
+@=== paradosis
+@?~(reading)
+@"the transmitted reading: what the page prints where the text gives the editor's form"@
+@""
+παράδοσις, what is handed down, the transmitted text as
+against the emendation. TEI choice: the text carries expan,
+corr or reg, and the abbr, sic or orig it stands for is the
+paradosis of the diaphane around it (@@.@?~(ye_olde)the
+old.@@). Whitespace runs in the source value are written as
+underscores (a parameter carries no whitespace); an
+exomorphosis reading it restores them. The TEI exo renders the
+reading and records the transmitted form as a loss: a rule
+cannot open a choice only when the value is present.
+""@
+===@

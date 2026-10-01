@@ -252,6 +252,14 @@
 <char style="xo">@(grammata)</char>
 >-@
 
+@-> ,.said
+<ms style="qt-s"@[ who="@(prosopon)"]@/>@(grammata)<ms style="qt-e"/>
+>-@
+
+@-> ,.ref
+<ref@[ loc="@(skopos)"]@>@(grammata)</ref>
+>-@
+
 @-> ,
 <char style="@(genoses)">@(grammata)</char>
 >-@

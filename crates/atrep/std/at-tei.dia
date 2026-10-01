@@ -12,6 +12,11 @@
 @@/ litogramma awaits genos-dispatched morphism rules
 @@/ (spec follow-up); litogramma INTO at-tei works today via
 @@/ renames with genoses.
+@@/ The unseen attributes (who, ref, target, when, ana) ride
+@@/ the at-aphanes monosims inside the annotated span; the tei
+@@/ exo reads them through sim-name slots.
+
+@@::at-aphanes
 
 @=== division
 @#[(taxis)] [lemma]
@@ -171,6 +176,7 @@ supplied:
 seg:
 code:
 formula:
+ref:
 %==@
 
 @==% blocks

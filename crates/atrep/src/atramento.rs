@@ -190,12 +190,12 @@ impl Compiler {
 
         // Explicit episim of a sugar-opened block: the author
         // closed it; pop without inserting.
-        if let Some(top) = self.open.last() {
-            if trimmed == top.episim() {
-                self.open.pop();
-                self.out.push(trimmed.to_string());
-                return Ok(i + 1);
-            }
+        if let Some(top) = self.open.last()
+            && trimmed == top.episim()
+        {
+            self.open.pop();
+            self.out.push(trimmed.to_string());
+            return Ok(i + 1);
         }
 
         // Verse dialogue content: stichoi until a boundary.
@@ -503,11 +503,11 @@ impl Compiler {
             body.push(content.to_string());
             j += 1;
         }
-        if let Some(last) = body.last() {
-            if let Some(attr) = last.strip_prefix("--") {
-                hypograph = Some(attr.trim().to_string());
-                body.pop();
-            }
+        if let Some(last) = body.last()
+            && let Some(attr) = last.strip_prefix("--")
+        {
+            hypograph = Some(attr.trim().to_string());
+            body.pop();
         }
         while body.last().is_some_and(|l| l.trim().is_empty()) {
             body.pop();
@@ -532,10 +532,10 @@ impl Compiler {
                 pending.param = Some(param.trim().to_string());
             } else {
                 for (head, _) in [("@--", "--@"), ("@..", "..@"), ("@::;", ";::@")] {
-                    if let Some(g) = t.strip_prefix(head) {
-                        if !g.is_empty() {
-                            pending.genos = Some(g.to_string());
-                        }
+                    if let Some(g) = t.strip_prefix(head)
+                        && !g.is_empty()
+                    {
+                        pending.genos = Some(g.to_string());
                     }
                 }
             }
@@ -647,7 +647,7 @@ impl Compiler {
             .unwrap_or("")
             .trim()
             .to_string();
-        let param = pending.param.clone().or_else(|| {
+        let param = pending.param.clone().or({
             if first_ord.is_empty() {
                 None
             } else {
@@ -971,26 +971,26 @@ impl Compiler {
             }
 
             // Autolinks.
-            if c == '<' {
-                if let Some((url, end)) = autolink(&chars, i) {
-                    out.push_str("@><");
-                    out.push_str(&url);
-                    out.push_str("><@");
-                    i = end;
-                    continue;
-                }
+            if c == '<'
+                && let Some((url, end)) = autolink(&chars, i)
+            {
+                out.push_str("@><");
+                out.push_str(&url);
+                out.push_str("><@");
+                i = end;
+                continue;
             }
 
             // Reserved: links with text.
-            if c == '[' {
-                if let Some(end) = link_with_text(&chars, i) {
-                    let snippet: String = chars[i..end.min(i + 30)].iter().collect();
-                    return Err(syntax(&format!(
-                        "`{snippet}…`: [text](url) links are reserved pending atrep F9 \
+            if c == '['
+                && let Some(end) = link_with_text(&chars, i)
+            {
+                let snippet: String = chars[i..end.min(i + 30)].iter().collect();
+                return Err(syntax(&format!(
+                    "`{snippet}…`: [text](url) links are reserved pending atrep F9 \
                          (litogramma has no hidden-href sim yet); write the URL as an \
                          autolink <url> or escape the bracket"
-                    )));
-                }
+                )));
             }
 
             // `@`-tokens: strict sims are skip regions; note sugar
@@ -1127,17 +1127,16 @@ impl Compiler {
         // Inline asides are a pilot gap.
         if matches_at(chars, i, "@|") {
             let rest: String = chars[i + 2..].iter().collect();
-            if let Some((kind, _)) = rest.split_once('|') {
-                if !kind.is_empty()
-                    && kind
-                        .chars()
-                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-                {
-                    return Err(syntax(
-                        "inline asides are not supported by the pilot compiler; \
+            if let Some((kind, _)) = rest.split_once('|')
+                && !kind.is_empty()
+                && kind
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+            {
+                return Err(syntax(
+                    "inline asides are not supported by the pilot compiler; \
                          use the block form",
-                    ));
-                }
+                ));
             }
             return Ok(None);
         }
@@ -1149,18 +1148,15 @@ impl Compiler {
                 continue;
             }
             let from = i + marker.chars().count();
-            match chars.get(from) {
-                // Strict callout monosim: copy through `)`.
-                Some('(') => {
-                    if let Some(end) = find_char(chars, from, ')') {
-                        let name: String = chars[from + 1..end].iter().collect();
-                        self.record_callout(fi, &name);
-                        out.push_str(&chars[i..=end].iter().collect::<String>());
-                        return Ok(Some(end + 1));
-                    }
-                    return Ok(None);
+            // Strict callout monosim: copy through `)`.
+            if chars.get(from) == Some(&'(') {
+                if let Some(end) = find_char(chars, from, ')') {
+                    let name: String = chars[from + 1..end].iter().collect();
+                    self.record_callout(fi, &name);
+                    out.push_str(&chars[i..=end].iter().collect::<String>());
+                    return Ok(Some(end + 1));
                 }
-                _ => {}
+                return Ok(None);
             }
             // An episim before the next note opener means an
             // inline note.
@@ -1170,21 +1166,22 @@ impl Compiler {
                 .min();
             let eol = find_char(chars, from, '\n').unwrap_or(chars.len());
             let close = find_str(chars, from, episim);
-            if let Some(end) = close {
-                if end < eol && next_open.is_none_or(|n| end < n) {
-                    let content: String = chars[from..end].iter().collect();
-                    self.inline_note_n[fi] += 1;
-                    let name = format!("{prefix}-{}", self.inline_note_n[fi]);
-                    let content = self.inline(&content)?.text;
-                    self.record_callout(fi, &name);
-                    self.notes.push(NoteDef {
-                        family: fi,
-                        name: name.clone(),
-                        content: vec![content],
-                    });
-                    out.push_str(&format!("{marker}({name})"));
-                    return Ok(Some(end + episim.chars().count()));
-                }
+            if let Some(end) = close
+                && end < eol
+                && next_open.is_none_or(|n| end < n)
+            {
+                let content: String = chars[from..end].iter().collect();
+                self.inline_note_n[fi] += 1;
+                let name = format!("{prefix}-{}", self.inline_note_n[fi]);
+                let content = self.inline(&content)?.text;
+                self.record_callout(fi, &name);
+                self.notes.push(NoteDef {
+                    family: fi,
+                    name: name.clone(),
+                    content: vec![content],
+                });
+                out.push_str(&format!("{marker}({name})"));
+                return Ok(Some(end + episim.chars().count()));
             }
             // Callout sugar: a bare alphanumeric name.
             let mut end = from;
@@ -1291,14 +1288,7 @@ fn closer_ahead(chars: &[char], from: usize, kind: Emph) -> bool {
 }
 
 fn matches_at(chars: &[char], i: usize, s: &str) -> bool {
-    let mut j = i;
-    for c in s.chars() {
-        if chars.get(j) != Some(&c) {
-            return false;
-        }
-        j += 1;
-    }
-    true
+    (i..).zip(s.chars()).all(|(j, c)| chars.get(j) == Some(&c))
 }
 
 fn find_str(chars: &[char], from: usize, s: &str) -> Option<usize> {
@@ -1451,10 +1441,11 @@ fn list_kind(t: &str) -> Option<ListKind> {
     if t.starts_with(". ") {
         return Some(ListKind::Ordered);
     }
-    if let Some((n, _)) = t.split_once(". ") {
-        if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) {
-            return Some(ListKind::Ordered);
-        }
+    if let Some((n, _)) = t.split_once(". ")
+        && !n.is_empty()
+        && n.chars().all(|c| c.is_ascii_digit())
+    {
+        return Some(ListKind::Ordered);
     }
     if t.starts_with(": ") && (t.contains(" :: ") || t.ends_with(" ::")) {
         return Some(ListKind::Definition);

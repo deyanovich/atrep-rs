@@ -45,7 +45,7 @@ fn metagraphe_round_trips_and_preserves_identity() {
     assert_eq!(dendron::serialize(&re), dendron::serialize(&doc));
 
     // Brachygrapho (plain serialize) closes the loop.
-    assert_eq!(dendron::serialize(&re), DOC.replace("@@@!demo", "@@@!demo"));
+    assert_eq!(dendron::serialize(&re), DOC);
 
     // Identical kanon and litos ID from either spelling.
     let k1 = kanonizo::kanonizo_file(&tmp.join("doc.atd")).unwrap();

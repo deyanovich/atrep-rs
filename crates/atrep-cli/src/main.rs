@@ -400,13 +400,21 @@ fn run() -> atrep::Result<()> {
                 .parent()
                 .unwrap_or(std::path::Path::new("."))
                 .to_path_buf();
-            let exo = atrep::exo::resolve_exo_variant(
-                &dir,
-                &doc.dialect_id,
-                &target,
-                variant.as_deref(),
-            )?;
-            let (rendered, aux) = atrep::exo::render_with_aux(&doc, &exo, &dir)?;
+            // Built-in exomorphoses (fb2, rnc, opencorpora, proiel):
+            // formats whose output the template language cannot
+            // produce.
+            let (rendered, aux) = match atrep::native_export_in(&doc, &target, &dir) {
+                Some(rendered) => (rendered?, Vec::new()),
+                None => {
+                    let exo = atrep::exo::resolve_exo_variant(
+                        &dir,
+                        &doc.dialect_id,
+                        &target,
+                        variant.as_deref(),
+                    )?;
+                    atrep::exo::render_with_aux(&doc, &exo, &dir)?
+                }
+            };
             let out = output.unwrap_or_else(|| file.with_extension(&target));
             std::fs::write(&out, rendered)?;
             println!("{}", out.display());
@@ -550,6 +558,15 @@ fn run() -> atrep::Result<()> {
                 println!("{}", out.display());
                 return Ok(());
             }
+            let out = output.clone().unwrap_or_else(|| file.with_extension("atd"));
+            // FictionBook binaries land beside the document as
+            // media/<id>, where its image blocks point.
+            let mut media: Vec<atrep::fb2::Fb2Media> = Vec::new();
+            let mut fb2_import = |source: &str| -> atrep::Result<atrep::Document> {
+                let (doc, m) = atrep::fb2::fb2_to_document_with_media(source)?;
+                media = m;
+                Ok(doc)
+            };
             let doc = match ext.as_str() {
                 "html" | "htm" => atrep::endo::html_to_document(&source)?,
                 "rst" => atrep::endo::rst_to_document(&source)?,
@@ -565,18 +582,40 @@ fn run() -> atrep::Result<()> {
                 )?,
                 "usx" => atrep::endo::usx_to_document(&source)?,
                 "osis" => atrep::endo::osis_to_document(&source)?,
-                "xml" | "tei" => {
-                    atrep::endo::tei_to_document_lines(&source, line_milestones.as_deref())?
-                }
+                "fb2" => fb2_import(&source)?,
+                "rnc" => atrep::epimerismos::rnc_to_document(&source)?,
+                "opencorpora" | "oc" => atrep::epimerismos::opencorpora_to_document(&source)?,
+                "proiel" => atrep::epimerismos::proiel_to_document(&source)?,
+                "conllu" | "conll" => atrep::epimerismos::conllu_to_document(&source)?,
+                "xml" | "tei" => match xml_root(&source) {
+                    "FictionBook" => fb2_import(&source)?,
+                    "proiel" => atrep::epimerismos::proiel_to_document(&source)?,
+                    "annotation" => atrep::epimerismos::opencorpora_to_document(&source)?,
+                    "html" if source.contains("<ana ") || source.contains("<se>") => {
+                        atrep::epimerismos::rnc_to_document(&source)?
+                    }
+                    _ => atrep::endo::tei_to_document_lines(&source, line_milestones.as_deref())?,
+                },
                 _ => atrep::endo::markdown_to_document(&source)?,
             };
             let mut doc = doc;
             if let Some(scheme) = &milestone_scheme {
                 atrep::endo::usfm_apply_scheme(&mut doc, scheme);
             }
-            let out = output.unwrap_or_else(|| file.with_extension("atd"));
             std::fs::write(&out, atrep::dendron::serialize(&doc))?;
             println!("{}", out.display());
+            if !media.is_empty() {
+                let dir = out
+                    .parent()
+                    .unwrap_or(std::path::Path::new("."))
+                    .join("media");
+                std::fs::create_dir_all(&dir)?;
+                for m in &media {
+                    let path = dir.join(&m.id);
+                    std::fs::write(&path, &m.bytes)?;
+                    println!("{}", path.display());
+                }
+            }
         }
         Command::Morph {
             file,
@@ -687,4 +726,33 @@ fn collect_schemes(blocks: &[atrep::dendron::Block], out: &mut std::collections:
             _ => {}
         }
     }
+}
+
+/// The root element's name of an XML source: the first tag that is
+/// not a declaration, processing instruction or comment.
+fn xml_root(source: &str) -> &str {
+    let mut rest = source;
+    while let Some(lt) = rest.find('<') {
+        rest = &rest[lt..];
+        if rest.starts_with("<!--") {
+            match rest.find("-->") {
+                Some(end) => rest = &rest[end + 3..],
+                None => return "",
+            }
+            continue;
+        }
+        if rest.starts_with("<?") || rest.starts_with("<!") {
+            match rest.find('>') {
+                Some(end) => rest = &rest[end + 1..],
+                None => return "",
+            }
+            continue;
+        }
+        let name_end = rest[1..]
+            .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
+            .map(|i| i + 1)
+            .unwrap_or(rest.len());
+        return &rest[1..name_end];
+    }
+    ""
 }

@@ -58,12 +58,20 @@ atrep litos <file> [--save-litos-file]
 atrep exo <file> <target> [-o out]
                                    render a kanon to an external
                                    format via <dialektos>.<target>.exo
-                                   (.atd input is kanonized first)
+                                   (.atd input is kanonized first);
+                                   fb2, rnc, opencorpora, proiel and
+                                   conllu are built-in exporters
 atrep endo <file> [-o out]         import Markdown (.md), HTML
                                    (.html), reStructuredText
-                                   (.rst), or TEI (.xml/.tei) as
-                                   at-markdown/at-html/at-rst/
-                                   litogramma documents
+                                   (.rst), TEI (.xml/.tei),
+                                   FictionBook (.fb2), the Russian
+                                   National Corpus (.rnc),
+                                   OpenCorpora (.opencorpora),
+                                   PROIEL (.proiel) or CoNLL-U
+                                   (.conllu) as at-markdown/
+                                   at-html/at-rst/litogramma
+                                   documents; a .xml is told apart
+                                   by its root element
 ```
 
 Dialektoi resolve local-only, per the v0.10 spec: the parser looks

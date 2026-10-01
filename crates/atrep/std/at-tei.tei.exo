@@ -6,6 +6,15 @@
 @@/ the header is schema-loose (strict titleStmt grouping is a
 @@/ follow-up). Unknown genoses fall back to seg/ab with a type
 @@/ attribute, so free genoses survive the trip.
+@@/ The unseen attributes come from at-aphanes monosims held
+@@/ inside the span, read through sim-name slots: who from
+@@/ prosopon, ref from prosopon/chora/syllogos, target from
+@@/ skopos, when from chronos, ana from eidos (one category per
+@@/ monosim; a TEI ana with several pointers is a recorded
+@@/ limitation of the slot join). The paradosis of a choice is
+@@/ a recorded loss: the diaphane renders its reading, and a
+@@/ conditional section cannot open <choice> only when the
+@@/ value is present.
 
 @%
 & &amp;
@@ -21,7 +30,7 @@
 >-@
 
 @-> *paragraph
-<p>@(grammata)</p>
+<p@[ ana="#@(eidos)"]@>@(grammata)</p>
 >-@
 
 @-> _.teiheader
@@ -222,35 +231,70 @@
 >-@
 
 @-> ,.said
-<said>@(grammata)</said>
+<said@[ who="#@(prosopon)"]@@[ ana="#@(eidos)"]@>@(grammata)</said>
+>-@
+
+@-> ,.said.indirect
+<said direct="false"@[ who="#@(prosopon)"]@@[ ana="#@(eidos)"]@>@(grammata)</said>
+>-@
+
+@-> ,.said.thought
+<said aloud="false"@[ who="#@(prosopon)"]@@[ ana="#@(eidos)"]@>@(grammata)</said>
+>-@
+
+@-> ,.said.indirect.thought
+<said direct="false" aloud="false"@[ who="#@(prosopon)"]@@[ ana="#@(eidos)"]@>@(grammata)</said>
+>-@
+
+@@/ Litogramma's quotation arrives as `.q` with `.said` already
+@@/ on it when it is speech; the two-genos variants break the tie
+@@/ in favour of said.
+@-> ,.said.q
+<said@[ who="#@(prosopon)"]@@[ ana="#@(eidos)"]@>@(grammata)</said>
+>-@
+
+@-> ,.said.q.indirect
+<said direct="false"@[ who="#@(prosopon)"]@@[ ana="#@(eidos)"]@>@(grammata)</said>
+>-@
+
+@-> ,.said.q.thought
+<said aloud="false"@[ who="#@(prosopon)"]@@[ ana="#@(eidos)"]@>@(grammata)</said>
+>-@
+
+@-> ,.said.q.indirect.thought
+<said direct="false" aloud="false"@[ who="#@(prosopon)"]@@[ ana="#@(eidos)"]@>@(grammata)</said>
 >-@
 
 @-> ,.q
-<q>@(grammata)</q>
+<q@[ who="#@(prosopon)"]@@[ ana="#@(eidos)"]@>@(grammata)</q>
 >-@
 
 @-> ,.persname
-<persName>@(grammata)</persName>
+<persName@[ ref="#@(prosopon)"]@>@(grammata)</persName>
 >-@
 
 @-> ,.placename
-<placeName>@(grammata)</placeName>
+<placeName@[ ref="#@(chora)"]@>@(grammata)</placeName>
 >-@
 
 @-> ,.orgname
-<orgName>@(grammata)</orgName>
+<orgName@[ ref="#@(syllogos)"]@>@(grammata)</orgName>
 >-@
 
 @-> ,.name
-<name>@(grammata)</name>
+<name@[ ref="#@(prosopon)"]@@[ ref="#@(chora)"]@@[ ref="#@(syllogos)"]@>@(grammata)</name>
 >-@
 
 @-> ,.rs
-<rs>@(grammata)</rs>
+<rs@[ ref="#@(prosopon)"]@@[ ref="#@(chora)"]@@[ ref="#@(syllogos)"]@>@(grammata)</rs>
 >-@
 
 @-> ,.date
-<date>@(grammata)</date>
+<date@[ when="@(chronos)"]@>@(grammata)</date>
+>-@
+
+@-> ,.ref
+<ref@[ target="@(skopos)"]@>@(grammata)</ref>
 >-@
 
 @-> ,.time
@@ -318,7 +362,7 @@
 >-@
 
 @-> ,.seg
-<seg>@(grammata)</seg>
+<seg@[ ana="#@(eidos)"]@>@(grammata)</seg>
 >-@
 
 @-> ,.code
@@ -330,7 +374,7 @@
 >-@
 
 @-> ,
-<seg@[ type="@(genoses)"]@>@(grammata)</seg>
+<seg@[ type="@(genoses)"]@@[ ana="#@(eidos)"]@>@(grammata)</seg>
 >-@
 
 @-> ~

@@ -204,11 +204,19 @@
 >-@
 
 @-> ,.fr
-<reference>@(grammata)</reference>
+<reference@[ osisRef="@(skopos)"]@>@(grammata)</reference>
 >-@
 
 @-> ,.xo
-<reference>@(grammata)</reference>
+<reference@[ osisRef="@(skopos)"]@>@(grammata)</reference>
+>-@
+
+@-> ,.said
+<q@[ who="@(prosopon)"]@ marker="">@(grammata)</q>
+>-@
+
+@-> ,.ref
+<reference@[ osisRef="@(skopos)"]@>@(grammata)</reference>
 >-@
 
 @-> ,
@@ -216,11 +224,11 @@
 >-@
 
 @-> ^.x
-<note type="crossReference">@(grammata)</note>
+<note type="crossReference"@[ osisRef="@(skopos)"]@>@(grammata)</note>
 >-@
 
 @-> ^
-<note type="translation">@(grammata)</note>
+<note type="translation"@[ osisRef="@(skopos)"]@>@(grammata)</note>
 >-@
 
 @-> *verbatim

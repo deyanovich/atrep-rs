@@ -12,6 +12,11 @@
 @@/ verse boundaries, the classic overlapping hierarchy.
 @@/ Poetry lines wrap in per-line q-level phrases so indent
 @@/ levels survive the round trip.
+@@/ Speaker attribution (OSIS q/@who, USX qt-s/@who, the red
+@@/ letters) and reference targets (USX ref/@loc, OSIS
+@@/ @osisRef) ride the at-aphanes monosims inside the span.
+
+@@::at-aphanes
 
 @=== book
 @# lemma=books

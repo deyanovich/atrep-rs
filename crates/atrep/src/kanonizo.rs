@@ -1426,7 +1426,13 @@ fn unwrap_empty_diaphanes_inline(inlines: &mut Vec<Inline>) {
     let mut i = 0;
     while i < inlines.len() {
         match &mut inlines[i] {
-            Inline::EndoDiaphane { content, ann } if ann.is_empty() => {
+            // A diaphane with nothing on its episim is unwrapped -
+            // unless it scopes an annotation monosim written first
+            // inside it (the at-epimerismos token): the diaphane
+            // then delimits what the monosim annotates and stays.
+            Inline::EndoDiaphane { content, ann }
+                if ann.is_empty() && !matches!(content.first(), Some(Inline::Monosim { .. })) =>
+            {
                 let content = std::mem::take(content);
                 inlines.splice(i..=i, content);
                 continue;

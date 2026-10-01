@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::dendron::{Block, Document, Inline, Taxis};
-use crate::dialektos::{self, Dialektos, InheritKind};
+use crate::dialektos::{self, Dialektos, InheritKind, SimForm};
 use crate::error::{Error, ErrorKind, Location, Result};
 use crate::sigil::{self, Sigil};
 use crate::source::{DirSource, Source, fetch_normalized};
@@ -25,6 +25,93 @@ use crate::source::{DirSource, Source, fetch_normalized};
 /// Embedded standard-library exomorphoses: (dialektos, target,
 /// source).
 const STD_EXOS: &[(&str, &str, &str)] = &[
+    // The unseen pack renders nothing in place, for every host
+    // target; hosts inherit these through the lineage.
+    (
+        "at-aphanes",
+        "latex",
+        include_str!("../std/at-aphanes.latex.exo"),
+    ),
+    (
+        "at-aphanes",
+        "html",
+        include_str!("../std/at-aphanes.html.exo"),
+    ),
+    (
+        "at-aphanes",
+        "gemtext",
+        include_str!("../std/at-aphanes.gemtext.exo"),
+    ),
+    (
+        "at-aphanes",
+        "epub",
+        include_str!("../std/at-aphanes.epub.exo"),
+    ),
+    (
+        "at-aphanes",
+        "kindle",
+        include_str!("../std/at-aphanes.kindle.exo"),
+    ),
+    (
+        "at-aphanes",
+        "tei",
+        include_str!("../std/at-aphanes.tei.exo"),
+    ),
+    (
+        "at-aphanes",
+        "usfm",
+        include_str!("../std/at-aphanes.usfm.exo"),
+    ),
+    (
+        "at-aphanes",
+        "usx",
+        include_str!("../std/at-aphanes.usx.exo"),
+    ),
+    (
+        "at-aphanes",
+        "osis",
+        include_str!("../std/at-aphanes.osis.exo"),
+    ),
+    (
+        "at-aphanes",
+        "docbook",
+        include_str!("../std/at-aphanes.docbook.exo"),
+    ),
+    (
+        "at-epimerismos",
+        "latex",
+        include_str!("../std/at-epimerismos.latex.exo"),
+    ),
+    (
+        "at-epimerismos",
+        "html",
+        include_str!("../std/at-epimerismos.html.exo"),
+    ),
+    (
+        "at-epimerismos",
+        "gemtext",
+        include_str!("../std/at-epimerismos.gemtext.exo"),
+    ),
+    (
+        "at-epimerismos",
+        "epub",
+        include_str!("../std/at-epimerismos.epub.exo"),
+    ),
+    (
+        "at-epimerismos",
+        "kindle",
+        include_str!("../std/at-epimerismos.kindle.exo"),
+    ),
+    (
+        "at-epimerismos",
+        "tei",
+        include_str!("../std/at-epimerismos.tei.exo"),
+    ),
+    (
+        "at-epimerismos",
+        "docbook",
+        include_str!("../std/at-epimerismos.docbook.exo"),
+    ),
     ("at-html", "html", include_str!("../std/at-html.html.exo")),
     ("at-html", "xhtml", include_str!("../std/at-html.xhtml.exo")),
     (
@@ -89,7 +176,7 @@ const STD_EXOS: &[(&str, &str, &str)] = &[
 ];
 
 /// Slot component names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum SlotName {
     Lemma,
     Grammata,
@@ -103,6 +190,13 @@ enum SlotName {
     Cells,
     Scheme,
     Value,
+    /// A sim-name slot (spec: Slots and Templates): the name of a
+    /// monosim-form sim of the source dialektos, resolved to its
+    /// symbol at parse time. Renders the parameters of the node's
+    /// own monosim children of that sim, space-joined — the
+    /// mechanism by which an unseen annotation (at-aphanes)
+    /// becomes an attribute of the element its host emits.
+    Named(String),
 }
 
 impl SlotName {
@@ -604,7 +698,7 @@ pub fn parse_exo_source(
                 ));
             }
             let body = lines[start..end].join("\n");
-            let template = parse_template(&body, sig).map_err(|msg| invalid(i + 1, msg))?;
+            let template = parse_template(&body, sig, dial).map_err(|msg| invalid(i + 1, msg))?;
             let variants = exo.rules.entry(key.clone()).or_default();
             if variants.iter().any(|r| r.genoses == genoses) {
                 return Err(invalid(
@@ -752,11 +846,35 @@ fn parse_pattern(
 
 /// Parse a template body into segments. `\@` yields a literal `@`;
 /// any other active sigil must open a slot.
-fn parse_template(body: &str, sig: char) -> std::result::Result<Vec<Seg>, String> {
+fn parse_template(
+    body: &str,
+    sig: char,
+    dial: &Dialektos,
+) -> std::result::Result<Vec<Seg>, String> {
     let chars: Vec<char> = body.chars().collect();
-    let (segs, end) = parse_segs(&chars, 0, sig, false)?;
+    let (segs, end) = parse_segs(&chars, 0, sig, false, dial)?;
     debug_assert_eq!(end, chars.len());
     Ok(segs)
+}
+
+/// Resolve a slot name that is not a built-in component: the name
+/// of a monosim-form sim of the source dialektos (a sim-name
+/// slot), resolved to its symbol.
+fn named_slot(name: &str, dial: &Dialektos) -> std::result::Result<SlotName, String> {
+    match dial.sim_named(name) {
+        dialektos::NamedLookup::One(def) if matches!(def.form, SimForm::Mono { .. }) => {
+            Ok(SlotName::Named(def.symbol.clone()))
+        }
+        dialektos::NamedLookup::One(_) => Err(format!(
+            "slot `{name}` names a sim of dialektos `{}` that is not a monosim",
+            dial.id
+        )),
+        dialektos::NamedLookup::Ambiguous => Err(format!(
+            "slot `{name}` is ambiguous in dialektos `{}` (several sims share the name)",
+            dial.id
+        )),
+        dialektos::NamedLookup::None => Err(format!("unknown slot `{name}`")),
+    }
 }
 
 /// Parse template segments from `i`. Inside a conditional section
@@ -766,6 +884,7 @@ fn parse_segs(
     mut i: usize,
     sig: char,
     in_group: bool,
+    dial: &Dialektos,
 ) -> std::result::Result<(Vec<Seg>, usize), String> {
     let inactive = if sig == sigil::CANONICAL {
         sigil::ALIAS
@@ -800,8 +919,9 @@ fn parse_segs(
                         j += 1;
                     }
                     let name: String = chars[name_start..j].iter().collect();
-                    let Some(slot) = SlotName::parse(&name) else {
-                        return Err(format!("unknown slot `{name}`"));
+                    let slot = match SlotName::parse(&name) {
+                        Some(slot) => slot,
+                        None => named_slot(&name, dial)?,
                     };
                     let prefix = if chars.get(j) == Some(&':') {
                         j += 1;
@@ -834,7 +954,7 @@ fn parse_segs(
                     if in_group {
                         return Err("conditional sections do not nest".to_string());
                     }
-                    let (inner, next) = parse_segs(chars, i + 2, sig, true)?;
+                    let (inner, next) = parse_segs(chars, i + 2, sig, true, dial)?;
                     if !inner.iter().any(|seg| matches!(seg, Seg::Slot { .. })) {
                         return Err("conditional section contains no slot".to_string());
                     }
@@ -924,6 +1044,10 @@ struct Slots<'a> {
     cells: Option<String>,
     scheme: Option<&'a str>,
     value: Option<&'a str>,
+    /// The node's own inline content, for sim-name slots: the
+    /// grammata of an endo-simmere or paragraph, the lemma of a
+    /// para-simmere.
+    inlines: Option<&'a [Inline]>,
 }
 
 impl<'a> Slots<'a> {
@@ -1055,12 +1179,33 @@ impl Renderer<'_> {
 
     /// Whether the rule's template uses `@((name))` — the raw
     /// spelling — for this slot.
-    fn wants_raw(segs: &[Seg], slot: SlotName) -> bool {
+    fn wants_raw(segs: &[Seg], slot: &SlotName) -> bool {
         segs.iter().any(|seg| match seg {
-            Seg::Slot { name, raw, .. } => *raw && *name == slot,
+            Seg::Slot { name, raw, .. } => *raw && name == slot,
             Seg::Group(inner) => Self::wants_raw(inner, slot),
             Seg::Lit(_) => false,
         })
+    }
+
+    /// A sim-name slot's value: the parameters of the node's own
+    /// monosim children of the named sim, in document order,
+    /// joined with single spaces. Empty when the node kind has no
+    /// inline content of its own.
+    fn named_value(inlines: Option<&[Inline]>, symbol: &str) -> String {
+        let mut out = String::new();
+        for inline in inlines.unwrap_or(&[]) {
+            if let Inline::Monosim {
+                symbol: s, param, ..
+            } = inline
+                && s == symbol
+            {
+                if !out.is_empty() {
+                    out.push(' ');
+                }
+                out.push_str(param);
+            }
+        }
+        out
     }
 
     /// Run `render` with the escape table suspended.
@@ -1079,7 +1224,7 @@ impl Renderer<'_> {
         slot: SlotName,
         inlines: &[Inline],
     ) -> Result<String> {
-        if Self::wants_raw(&rule.template, slot) {
+        if Self::wants_raw(&rule.template, &slot) {
             self.render_raw(|| self.render_inlines(inlines))
         } else {
             self.render_inlines(inlines)
@@ -1107,6 +1252,9 @@ impl Renderer<'_> {
                         SlotName::Cells => (slots.cells.clone(), false),
                         SlotName::Scheme => (slots.scheme.map(str::to_string), true),
                         SlotName::Value => (slots.value.map(str::to_string), true),
+                        SlotName::Named(symbol) => {
+                            (Some(Self::named_value(slots.inlines, symbol)), true)
+                        }
                     };
                     let Some(value) = value else {
                         return Err(Error::new(ErrorKind::InvalidExo(format!(
@@ -1249,6 +1397,7 @@ impl Renderer<'_> {
                         grammata: Some(self.render_inlines(content)?),
                         onym: Some(ann.onym.as_deref().unwrap_or("")),
                         genoses: Some(ann.genoses.join(" ")),
+                        inlines: Some(content),
                         ..Slots::default()
                     };
                     return self.fill(rule, &slots);
@@ -1271,6 +1420,7 @@ impl Renderer<'_> {
                 };
                 let slots = Slots {
                     grammata: Some(self.render_inlines(inlines)?),
+                    inlines: Some(inlines),
                     ..Slots::default()
                 };
                 self.fill(rule, &slots)
@@ -1305,7 +1455,7 @@ impl Renderer<'_> {
                 };
                 let slots = Slots {
                     lemma: Some(self.render_inlines_for(rule, SlotName::Lemma, lemma)?),
-                    grammata: Some(if Self::wants_raw(&rule.template, SlotName::Grammata) {
+                    grammata: Some(if Self::wants_raw(&rule.template, &SlotName::Grammata) {
                         self.render_raw(|| self.render_blocks(children))?
                     } else {
                         self.render_blocks(children)?
@@ -1319,6 +1469,7 @@ impl Renderer<'_> {
                         Some(Taxis::Explicit(n)) => n.to_string(),
                         _ => String::new(),
                     }),
+                    inlines: Some(lemma),
                     onym: Some(ann.onym.as_deref().unwrap_or("")),
                     genoses: Some(ann.genoses.join(" ")),
                     ..Slots::default()
@@ -1530,6 +1681,7 @@ impl Renderer<'_> {
                     grammata: Some(self.render_inlines_for(rule, SlotName::Grammata, content)?),
                     onym: Some(ann.onym.as_deref().unwrap_or("")),
                     genoses: Some(ann.genoses.join(" ")),
+                    inlines: Some(content),
                     ..Slots::default()
                 };
                 self.fill(rule, &slots)
@@ -1669,9 +1821,20 @@ mod tests {
         assert_eq!(hanging_prefix("a\n", "> "), "a\n");
     }
 
+    fn empty_dial() -> Dialektos {
+        Dialektos {
+            id: "t".to_string(),
+            sims: Default::default(),
+            lineage: Vec::new(),
+            vocabularies: Default::default(),
+            glossae: Default::default(),
+        }
+    }
+
     #[test]
     fn template_parsing() {
-        let segs = parse_template("x @(lemma) y @((content:  )) \\@(z)", '@').unwrap();
+        let dial = empty_dial();
+        let segs = parse_template("x @(lemma) y @((content:  )) \\@(z)", '@', &dial).unwrap();
         assert_eq!(segs.len(), 5);
         assert!(matches!(
             &segs[1],
@@ -1690,7 +1853,7 @@ mod tests {
             } if p == "  "
         ));
         assert!(matches!(&segs[4], Seg::Lit(l) if l == " @(z)"));
-        assert!(parse_template("bare @ sigil", '@').is_err());
-        assert!(parse_template("@(nope)", '@').is_err());
+        assert!(parse_template("bare @ sigil", '@', &dial).is_err());
+        assert!(parse_template("@(nope)", '@', &dial).is_err());
     }
 }
