@@ -9,7 +9,12 @@
 @@/ family) ride through the at-tei fallbacks. The reverse
 @@/ direction awaits genos-dispatched morphism rules.
 
-@@/ Front matter.
+@@/ Front matter. The title opens the document: standing alone
+@@/ (as canonical litogramma has it) it groups everything after
+@@/ it into the text block and rides as that block's lemma, from
+@@/ which the tei exo writes the header; a title inside running
+@@/ text stays a phrase.
+@># = _ .text
 @:: = , .title
 @:: =_ , .title
 @:: =: , .persname
@@ -81,7 +86,7 @@
 @:: >> >
 @:: >>> >
 @:: >>>> >
-@:: >[ >
+@:: >[ >[
 @:: >: , .name
 @:: % , .term
 @-- %%

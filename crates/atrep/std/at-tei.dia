@@ -106,6 +106,16 @@ grammata
 @"internal pointer to an onymized element"@
 ===@
 
+@=== cite
+@>[(key)
+@"bibliographic pointer (ref/ptr typed bibr) to a listBibl entry"@
+@""
+Written first inside an inline diaphane, it annotates the span:
+the printed reference (a locator, a short citation) is the
+content of the ref element, the key its target.
+""@
+===@
+
 @=== milestone
 @|(n)
 @% milestones

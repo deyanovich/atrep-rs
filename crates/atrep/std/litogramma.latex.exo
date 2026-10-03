@@ -486,7 +486,7 @@ _ \_
 >-@
 
 @-> *diaphane-inline
-@(grammata)
+@[\ltcitespan{@(cite)}{]@@(grammata)@[@(?cite)}]@
 >-@
 
 @-> *media
@@ -628,6 +628,7 @@ _ \_
 \newcommand\ltref[1]{\ref{#1}}
 \newcommand\ltpageref[1]{\pageref{#1}}
 \newcommand\ltcite[1]{\cite{#1}}
+\newcommand\ltcitespan[2]{\cite[#2]{#1}}
 \newcommand\lturl[1]{\url{#1}}
 \newcommand\ltstd[1]{\textsc{#1}}
 \newcommand\ltindexed[1]{#1\index{#1}}

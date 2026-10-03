@@ -1448,7 +1448,14 @@ fn scan_unmapped_blocks(blocks: &[Block], morph: &Morph, out: &mut Vec<String>) 
                 }
                 scan_unmapped_inlines(hypograph, morph, out);
             }
-            Block::ParaDiaphane { children, .. } | Block::MonadEnglossis { children, .. } => {
+            Block::ParaDiaphane { children, .. } => {
+                scan_unmapped_blocks(children, morph, out);
+            }
+            // An englossis of another dialektos is not the
+            // morphism's to map: it rides through as written.
+            Block::MonadEnglossis {
+                dialect, children, ..
+            } if *dialect == morph.source => {
                 scan_unmapped_blocks(children, morph, out);
             }
             _ => {}
@@ -1819,7 +1826,12 @@ fn transform_blocks_table(blocks: &mut Vec<Block>, morph: &Morph) {
                     }
                     transform_inlines(hypograph, morph);
                 }
-                Block::ParaDiaphane { children, .. } | Block::MonadEnglossis { children, .. } => {
+                Block::ParaDiaphane { children, .. } => {
+                    transform_blocks(children, morph);
+                }
+                Block::MonadEnglossis {
+                    dialect, children, ..
+                } if *dialect == morph.source => {
                     transform_blocks(children, morph);
                 }
                 _ => {}

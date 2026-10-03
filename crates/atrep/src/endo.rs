@@ -2047,6 +2047,18 @@ pub fn tei_to_document_lines(xml: &str, line_milestones: Option<&str>) -> Result
     }
     let mut blocks: Vec<Block> = Vec::new();
     let mut notes = 0usize;
+    // The bibliography is read ahead of the text, so a ref that
+    // points at one of its entries imports as a cite.
+    let entries = tei_bibliography(&toks)?;
+    TEI_BIB_KEYS.with(|c| {
+        *c.borrow_mut() = entries
+            .iter()
+            .filter_map(|e| match e {
+                Block::Para { lemma, .. } => Some(plain_text(lemma)),
+                _ => None,
+            })
+            .collect();
+    });
     let mut i = 0;
     while i < toks.len() {
         match &toks[i] {
@@ -2105,11 +2117,242 @@ pub fn tei_to_document_lines(xml: &str, line_milestones: Option<&str>) -> Result
     };
     tei_compose_bekker(&mut blocks, &mut ms_state);
     tei_settle_heads(&mut blocks);
+    TEI_BIB_KEYS.with(|c| c.borrow_mut().clear());
+    if !entries.is_empty() {
+        blocks.push(Block::MonadEnglossis {
+            dialect: "bibliogramma".to_string(),
+            children: entries,
+            ann: Annotations::default(),
+        });
+    }
     Ok(Document {
         dialect_id: "litogramma".to_string(),
         dialect_version: None,
         blocks,
     })
+}
+
+thread_local! {
+    /// The keys of the bibliography being imported: the xml:id of
+    /// every listBibl entry of the current TEI document.
+    static TEI_BIB_KEYS: std::cell::RefCell<std::collections::HashSet<String>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+/// The bibliography of a TEI text: every bibl or biblStruct that
+/// carries an xml:id inside a listBibl, wherever the list sits in
+/// the text (a bibliography div, the back matter), as bibliogramma
+/// entries in document order. The header's listBibl describes the
+/// sources of the edition and is not read.
+fn tei_bibliography(toks: &[Tok]) -> Result<Vec<Block>> {
+    let mut entries: Vec<Block> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut in_header = false;
+    let mut lists = 0usize;
+    let mut i = 0;
+    while i < toks.len() {
+        match &toks[i] {
+            Tok::Open {
+                name,
+                self_closing: false,
+                ..
+            } if name == "teiHeader" => in_header = true,
+            Tok::Close(name) if name == "teiHeader" => in_header = false,
+            Tok::Open {
+                name,
+                self_closing: false,
+                ..
+            } if name == "listBibl" => lists += 1,
+            Tok::Close(name) if name == "listBibl" => lists = lists.saturating_sub(1),
+            Tok::Open {
+                name,
+                attrs,
+                self_closing: false,
+            } if (name == "bibl" || name == "biblStruct") && lists > 0 && !in_header => {
+                if let Some(key) = attr(attrs, "xml:id").or_else(|| attr(attrs, "id"))
+                    && seen.insert(key.to_string())
+                {
+                    let (entry, next) = tei_bibl_entry(toks, i + 1, name, attrs, key)?;
+                    entries.push(entry);
+                    i = next;
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    Ok(entries)
+}
+
+/// One listBibl entry: author, editor, title, date, publisher,
+/// pubPlace and biblScope map onto bibliogramma fields, at any
+/// depth (biblStruct's analytic, monogr and imprint are read
+/// through). An entry with no such children keeps its printed
+/// text as a note field.
+fn tei_bibl_entry(
+    toks: &[Tok],
+    mut i: usize,
+    until: &str,
+    attrs: &[(String, String)],
+    key: &str,
+) -> Result<(Block, usize)> {
+    let (printed, _) = tei_text_of(toks, i, until)?;
+    let mut authors: Vec<String> = Vec::new();
+    let mut editors: Vec<String> = Vec::new();
+    let mut titles: Vec<(String, String)> = Vec::new();
+    let mut rest: Vec<(String, String)> = Vec::new();
+    let mut depth = 0usize;
+    let end = loop {
+        match toks.get(i) {
+            None => return Err(tei_err(format!("unterminated <{until}>"))),
+            Some(Tok::Close(name)) if name == until => {
+                if depth == 0 {
+                    break i + 1;
+                }
+                depth -= 1;
+                i += 1;
+            }
+            Some(Tok::Open {
+                name,
+                self_closing: false,
+                ..
+            }) if name == until => {
+                depth += 1;
+                i += 1;
+            }
+            Some(Tok::Open {
+                name,
+                attrs: a,
+                self_closing: false,
+            }) if matches!(
+                name.as_str(),
+                "author"
+                    | "editor"
+                    | "title"
+                    | "date"
+                    | "publisher"
+                    | "pubPlace"
+                    | "biblScope"
+                    | "note"
+            ) =>
+            {
+                let (text, next) = tei_text_of(toks, i + 1, name)?;
+                i = next;
+                match name.as_str() {
+                    "author" => authors.push(text),
+                    "editor" => editors.push(text),
+                    "title" => {
+                        titles.push((attr(a, "level").unwrap_or("").to_string(), text));
+                    }
+                    "date" => {
+                        let when = attr(a, "when").unwrap_or(&text).to_string();
+                        let year = when.strip_prefix('-').unwrap_or(&when);
+                        let field = if !year.is_empty() && year.chars().all(|c| c.is_ascii_digit())
+                        {
+                            "year"
+                        } else {
+                            "date"
+                        };
+                        rest.push((field.to_string(), when));
+                    }
+                    "publisher" => rest.push(("publisher".to_string(), text)),
+                    // A typed note is the field its type names
+                    // (the bibliogramma tei exo writes the
+                    // fields TEI has no element for this way).
+                    "note" => rest.push((attr(a, "type").unwrap_or("note").to_string(), text)),
+                    "pubPlace" => rest.push(("location".to_string(), text)),
+                    _ => match attr(a, "unit").or_else(|| attr(a, "type")) {
+                        Some("page" | "pp" | "pages") => rest.push(("pages".to_string(), text)),
+                        Some("volume" | "vol") => rest.push(("volume".to_string(), text)),
+                        _ => {}
+                    },
+                }
+            }
+            Some(_) => i += 1,
+        }
+    };
+    // The levels name the genus: an analytic title in a journal is
+    // an article, in a monograph a contribution; a lone title is
+    // the entry's title whatever its level.
+    // Beside a journal or monograph title, an unlevelled first
+    // title is the analytic one.
+    let analytic = titles.iter().position(|(l, _)| l == "a").or_else(|| {
+        (titles.len() > 1
+            && titles[0].0.is_empty()
+            && titles[1..].iter().any(|(l, _)| !l.is_empty()))
+        .then_some(0)
+    });
+    let mut kind = "misc";
+    let mut fields: Vec<(String, String)> = Vec::new();
+    if !authors.is_empty() {
+        fields.push(("author".to_string(), authors.join(" and ")));
+    }
+    for (n, (level, text)) in titles.into_iter().enumerate() {
+        let field = match (analytic, level.as_str()) {
+            (Some(a), _) if a == n => "title",
+            (Some(_), "j") => {
+                kind = "article";
+                "journal"
+            }
+            (Some(_), "m") => {
+                kind = "incollection";
+                "booktitle"
+            }
+            (None, level) if !fields.iter().any(|(f, _)| f == "title") => {
+                match level {
+                    "m" => kind = "book",
+                    "j" => kind = "periodical",
+                    _ => {}
+                }
+                "title"
+            }
+            _ => continue,
+        };
+        if !fields.iter().any(|(f, _)| f == field) {
+            fields.push((field.to_string(), text));
+        }
+    }
+    if !editors.is_empty() {
+        fields.push(("editor".to_string(), editors.join(" and ")));
+    }
+    for (field, text) in rest {
+        if !fields.iter().any(|(f, _)| *f == field) {
+            fields.push((field, text));
+        }
+    }
+    if fields.is_empty() {
+        fields.push(("note".to_string(), printed));
+    }
+    let kind = attr(attrs, "type").unwrap_or(kind).to_string();
+    let children = fields
+        .into_iter()
+        .filter(|(_, v)| !v.is_empty())
+        .map(|(name, value)| Block::Para {
+            symbol: ":".to_string(),
+            taxis: None,
+            lemma: vec![Inline::Text(name)],
+            children: vec![Block::Paragraph(vec![Inline::Text(value)])],
+            hypograph: Vec::new(),
+            bracket_matching: true,
+            ann: Annotations::default(),
+        })
+        .collect();
+    Ok((
+        Block::Para {
+            symbol: "&".to_string(),
+            taxis: None,
+            lemma: vec![Inline::Text(key.to_string())],
+            children,
+            hypograph: Vec::new(),
+            bracket_matching: true,
+            ann: Annotations {
+                onym: None,
+                genoses: vec![kind],
+            },
+        },
+        end,
+    ))
 }
 
 /// Skip an element wholesale (front and back matter).
@@ -2958,6 +3201,17 @@ fn tei_blocks(
                     let (items, next) = tei_list_person(toks, i + 1, notes)?;
                     blocks.extend(items);
                     i = next;
+                }
+            }
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "listBibl" => {
+                // The bibliography was read ahead of the text
+                // (tei_bibliography) and closes the document.
+                if *self_closing {
+                    i += 1;
+                } else {
+                    i = skip_element(toks, i + 1, "listBibl".to_string())?;
                 }
             }
             Tok::Open {
@@ -4476,14 +4730,40 @@ fn tei_inline_run(
                     (c, next)
                 };
                 if let Some(id) = target.strip_prefix('#') {
-                    // Internal reference: the text stays, the ref
-                    // mono follows it.
-                    inlines.extend(content);
-                    inlines.push(Inline::Monosim {
-                        symbol: ">".to_string(),
-                        param: id.to_string(),
-                        ann: Annotations::default(),
-                    });
+                    // A pointer at a bibliography entry is a cite,
+                    // and so is one typed bibr whose entry is
+                    // missing. The cite annotates its printed
+                    // reference: it opens a diaphane over the
+                    // ref's text; an empty pointer is the bare
+                    // mark.
+                    let cited = attr(attrs, "type") == Some("bibr")
+                        || TEI_BIB_KEYS.with(|c| c.borrow().contains(id));
+                    if cited {
+                        let cite = Inline::Monosim {
+                            symbol: ">[".to_string(),
+                            param: id.to_string(),
+                            ann: Annotations::default(),
+                        };
+                        if content.is_empty() {
+                            inlines.push(cite);
+                        } else {
+                            let mut span = vec![cite];
+                            span.extend(content);
+                            inlines.push(Inline::EndoDiaphane {
+                                content: span,
+                                ann: Annotations::default(),
+                            });
+                        }
+                    } else {
+                        // Internal reference: the text stays, the
+                        // ref mono follows it.
+                        inlines.extend(content);
+                        inlines.push(Inline::Monosim {
+                            symbol: ">".to_string(),
+                            param: id.to_string(),
+                            ann: Annotations::default(),
+                        });
+                    }
                 } else if !target.is_empty() {
                     // External link.
                     if !content.is_empty() {

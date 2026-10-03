@@ -15,7 +15,9 @@
 @@/ paradosis renders as <choice> with the transmitted form as
 @@/ <orig> and the reading as <reg> (a gate slot closes the
 @@/ element only when the value is present); which of abbr, sic
-@@/ or orig the source used is not kept.
+@@/ or orig the source used is not kept. A diaphane opened by a
+@@/ cite renders as a ref typed bibr around the printed
+@@/ reference; a bare cite is a ptr typed bibr.
 
 @%
 & &amp;
@@ -42,8 +44,26 @@
 </teiHeader>
 >-@
 
+@@/ A text block that carries a lemma is a whole document come
+@@/ through a morphism (the litogramma hom groups the document
+@@/ under its title): the lemma is the title, and the header TEI
+@@/ requires is written around it. A native text block has no
+@@/ lemma and follows its own teiheader block.
 @-> _.text
-<text>
+@[<teiHeader>
+<fileDesc>
+<titleStmt>
+<title>@(lemma)</title>
+</titleStmt>
+<publicationStmt>
+<p>Exported from an atrep document.</p>
+</publicationStmt>
+<sourceDesc>
+<p>An atrep document.</p>
+</sourceDesc>
+</fileDesc>
+</teiHeader>
+]@<text>
 <body>
 @(grammata)
 </body>
@@ -463,6 +483,10 @@
 <ptr target="#@(param)"/>
 >-@
 
+@-> >[
+<ptr type="bibr" target="#@(param)"/>
+>-@
+
 @-> |.lb
 <lb/>
 >-@
@@ -575,6 +599,14 @@
 @(grammata)
 >-@
 
+@@/ An embedded dialektos renders through its own tei exo; the
+@@/ one that has one is bibliogramma, the bibliography.
+@-> *englossis
+<listBibl>
+@(grammata)
+</listBibl>
+>-@
+
 @-> *diaphane-inline
-@[<choice><orig>@(paradosis)</orig><reg>]@@(grammata)@[@(?paradosis)</reg></choice>]@
+@[<ref type="bibr" target="#@(cite)">]@@[<choice><orig>@(paradosis)</orig><reg>]@@(grammata)@[@(?paradosis)</reg></choice>]@@[@(?cite)</ref>]@
 >-@

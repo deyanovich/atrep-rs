@@ -170,6 +170,11 @@ const STD_EXOS: &[(&str, &str, &str)] = &[
     ),
     (
         "bibliogramma",
+        "tei",
+        include_str!("../std/bibliogramma.tei.exo"),
+    ),
+    (
+        "bibliogramma",
         "bibtex",
         include_str!("../std/bibliogramma.bibtex.exo"),
     ),
@@ -1225,6 +1230,43 @@ impl Renderer<'_> {
         out
     }
 
+    /// The monosim symbols a template names through sim-name
+    /// slots (gate slots included).
+    fn named_symbols<'s>(segs: &'s [Seg], out: &mut Vec<&'s str>) {
+        for seg in segs {
+            match seg {
+                Seg::Slot {
+                    name: SlotName::Named(symbol),
+                    ..
+                } => out.push(symbol),
+                Seg::Group(inner) => Self::named_symbols(inner, out),
+                _ => {}
+            }
+        }
+    }
+
+    /// Render the inline content a rule's node holds directly. A
+    /// monosim the rule names through a sim-name slot is taken
+    /// over by the rule: the host emits its parameter, so the
+    /// monosim's own rule does not render it a second time.
+    fn render_held(&self, rule: &Rule, inlines: &[Inline]) -> Result<String> {
+        let mut named = Vec::new();
+        Self::named_symbols(&rule.template, &mut named);
+        if named.is_empty() {
+            return self.render_inlines(inlines);
+        }
+        let mut out = String::new();
+        for inline in inlines {
+            if let Inline::Monosim { symbol, .. } = inline
+                && named.contains(&symbol.as_str())
+            {
+                continue;
+            }
+            out.push_str(&self.render_inline(inline)?);
+        }
+        Ok(out)
+    }
+
     /// Run `render` with the escape table suspended.
     fn render_raw<T>(&self, render: impl FnOnce() -> Result<T>) -> Result<T> {
         self.raw_depth.set(self.raw_depth.get() + 1);
@@ -1241,10 +1283,16 @@ impl Renderer<'_> {
         slot: SlotName,
         inlines: &[Inline],
     ) -> Result<String> {
+        // Sim-name slots read the lemma of a para-simmere, never
+        // its hypograph.
+        let render = || match slot {
+            SlotName::Hypograph => self.render_inlines(inlines),
+            _ => self.render_held(rule, inlines),
+        };
         if Self::wants_raw(&rule.template, &slot) {
-            self.render_raw(|| self.render_inlines(inlines))
+            self.render_raw(render)
         } else {
-            self.render_inlines(inlines)
+            render()
         }
     }
 
@@ -1419,7 +1467,7 @@ impl Renderer<'_> {
                         self.find_rule(&PatternKey::Solo(symbol.clone()), &ann.genoses)?
                 {
                     let slots = Slots {
-                        grammata: Some(self.render_inlines(content)?),
+                        grammata: Some(self.render_held(rule, content)?),
                         onym: Some(ann.onym.as_deref().unwrap_or("")),
                         genoses: Some(ann.genoses.join(" ")),
                         inlines: Some(content),
@@ -1444,7 +1492,7 @@ impl Renderer<'_> {
                     return Err(unhandled("*paragraph"));
                 };
                 let slots = Slots {
-                    grammata: Some(self.render_inlines(inlines)?),
+                    grammata: Some(self.render_held(rule, inlines)?),
                     inlines: Some(inlines),
                     ..Slots::default()
                 };
@@ -1729,7 +1777,7 @@ impl Renderer<'_> {
                 match self.find_rule(&key, &ann.genoses)? {
                     Some(rule) => {
                         let slots = Slots {
-                            grammata: Some(self.render_inlines(content)?),
+                            grammata: Some(self.render_held(rule, content)?),
                             onym: Some(ann.onym.as_deref().unwrap_or("")),
                             genoses: Some(ann.genoses.join(" ")),
                             inlines: Some(content),

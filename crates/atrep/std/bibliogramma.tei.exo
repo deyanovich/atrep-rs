@@ -1,0 +1,83 @@
+@@@!atrep-exo
+@=bibliogramma=>tei
+
+@@/ TEI export of a bibliography: each entry a bibl carrying its
+@@/ key as xml:id and its genus as type, the campi TEI has an
+@@/ element for as that element (author, editor, title, date,
+@@/ publisher, pubPlace, biblScope), every other field a note
+@@/ typed with the field name, so nothing is lost and the TEI
+@@/ importer reads the entry back. The enclosing listBibl is
+@@/ written by the host exo's englossis rule.
+
+@%
+& &amp;
+< &lt;
+> &gt;
+%@
+
+@-> *document
+<listBibl>
+@(grammata)
+</listBibl>
+>-@
+
+@-> *paragraph
+@(grammata)
+>-@
+
+@-> &
+<bibl xml:id="@(lemma)"@[ type="@(genoses)"]@>
+@(grammata)</bibl>
+>-@
+
+@-> :(auctor)
+<author>@(grammata)</author>
+>-@
+
+@-> :(editor)
+<editor>@(grammata)</editor>
+>-@
+
+@-> :(titulus)
+<title>@(grammata)</title>
+>-@
+
+@-> :(titulus-libri)
+<title level="m">@(grammata)</title>
+>-@
+
+@-> :(ephemeris)
+<title level="j">@(grammata)</title>
+>-@
+
+@-> :(annus)
+<date>@(grammata)</date>
+>-@
+
+@-> :(datum)
+<date>@(grammata)</date>
+>-@
+
+@-> :(officina)
+<publisher>@(grammata)</publisher>
+>-@
+
+@-> :(locus)
+<pubPlace>@(grammata)</pubPlace>
+>-@
+
+@-> :(volumen)
+<biblScope unit="volume">@(grammata)</biblScope>
+>-@
+
+@-> :(paginae)
+<biblScope unit="page">@(grammata)</biblScope>
+>-@
+
+@-> :(nota)
+<note>@(grammata)</note>
+>-@
+
+@-> :
+<note type="@(lemma)">@(grammata)</note>
+>-@

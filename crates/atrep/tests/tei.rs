@@ -559,3 +559,306 @@ fn tei_line_milestones_bookless() {
         );
     }
 }
+
+/// A listBibl is the bibliography: its entries import as an
+/// embedded bibliogramma, and a ref or ptr that points at one is
+/// a cite, opening a diaphane over the ref's printed text (a ptr
+/// is the bare mark). A ref typed bibr is a cite even when its entry is
+/// missing; an untyped pointer at nothing stays a plain ref. The
+/// header's listBibl (the sources of the edition) is not read.
+#[test]
+fn tei_bibliography_and_cites() {
+    let tei = r##"<TEI xmlns="http://www.tei-c.org/ns/1.0">
+<teiHeader><fileDesc><titleStmt><title>On Fences and Empires</title></titleStmt>
+<sourceDesc><listBibl><bibl xml:id="src">The printed edition.</bibl></listBibl></sourceDesc>
+</fileDesc></teiHeader>
+<text><body>
+<p>Rome fell slowly <ref target="#gibbon1776">Gibbon, ch. 15</ref> and Persia
+was vast <ptr target="#herodotus"/>, while a fence may be whitewashed in an
+afternoon <ref target="#twain1876">Twain</ref>. Nobody has found the lost
+second volume <ref type="bibr" target="#aristotle-comedy">Aristotle</ref>, see
+<ref target="#nowhere">above</ref>.</p>
+<div type="bibliography"><head>Bibliography</head>
+<listBibl>
+<bibl xml:id="gibbon1776"><author>Gibbon, Edward</author>. <title level="m">The
+History of the Decline and Fall of the Roman Empire</title>.
+<pubPlace>London</pubPlace>: <publisher>Strahan and Cadell</publisher>,
+<date when="1776">MDCCLXXVI</date>.</bibl>
+<bibl xml:id="herodotus"><author>Herodotus</author>. <title>The Histories</title>.</bibl>
+<biblStruct xml:id="twain1876"><monogr><author>Twain, Mark</author>
+<title level="m">The Adventures of Tom Sawyer</title>
+<imprint><pubPlace>Hartford</pubPlace><date>1876</date></imprint></monogr></biblStruct>
+<biblStruct xml:id="pope1711"><analytic><author>Pope, Alexander</author>
+<title level="a">An Essay on Criticism</title></analytic>
+<monogr><title level="j">Miscellanies</title>
+<imprint><biblScope unit="volume">2</biblScope><biblScope unit="page">1-43</biblScope>
+<date>1711</date></imprint></monogr></biblStruct>
+<bibl xml:id="austen1813">Austen, Jane. Pride and Prejudice. London, 1813.</bibl>
+<bibl>An entry without an id cannot be cited.</bibl>
+</listBibl></div>
+</body></text></TEI>"##;
+    let atd = dendron::serialize(&endo::tei_to_document(tei).unwrap());
+    assert!(atd.contains("@@.@>[(gibbon1776)Gibbon, ch. 15.@@"), "{atd}");
+    assert!(atd.contains("vast @>[(herodotus),"), "{atd}");
+    assert!(atd.contains("@@.@>[(twain1876)Twain.@@"), "{atd}");
+    assert!(
+        atd.contains("@@.@>[(aristotle-comedy)Aristotle.@@"),
+        "{atd}"
+    );
+    assert!(atd.contains("above@>(nowhere)"), "{atd}");
+    assert!(atd.contains("@@@!(bibliogramma)"), "{atd}");
+    assert!(
+        atd.contains(
+            "@& gibbon1776\n@: author\nGibbon, Edward\n:@\n\n@: title\nThe History of the \
+             Decline and Fall of the Roman Empire\n:@\n\n@: location\nLondon\n:@\n\n\
+             @: publisher\nStrahan and Cadell\n:@\n\n@: year\n1776\n:@\n&@.book"
+        ),
+        "{atd}"
+    );
+    assert!(
+        atd.contains(
+            "@& herodotus\n@: author\nHerodotus\n:@\n\n@: title\nThe Histories\n:@\n&@.misc"
+        ),
+        "{atd}"
+    );
+    assert!(
+        atd.contains("@: location\nHartford\n:@\n\n@: year\n1876\n:@\n&@.book"),
+        "{atd}"
+    );
+    assert!(
+        atd.contains(
+            "@& pope1711\n@: author\nPope, Alexander\n:@\n\n@: title\nAn Essay on Criticism\n:@\n\n\
+             @: journal\nMiscellanies\n:@\n\n@: volume\n2\n:@\n\n@: pages\n1-43\n:@\n\n\
+             @: year\n1711\n:@\n&@.article"
+        ),
+        "{atd}"
+    );
+    assert!(
+        atd.contains(
+            "@& austen1813\n@: note\nAusten, Jane. Pride and Prejudice. London, 1813.\n:@\n&@.misc"
+        ),
+        "{atd}"
+    );
+    assert!(!atd.contains("src"), "{atd}");
+    assert!(!atd.contains("without an id"), "{atd}");
+    // The import is a valid litogramma document.
+    atrep::check_source(&atd, std::path::Path::new("<memory>.atd")).unwrap();
+}
+
+/// A listBibl in the back matter is read the same way.
+#[test]
+fn tei_bibliography_in_back() {
+    let tei = r##"<TEI xmlns="http://www.tei-c.org/ns/1.0">
+<teiHeader><fileDesc><titleStmt><title>Notes</title></titleStmt></fileDesc></teiHeader>
+<text><body><p>See <ref target="#homer">the Iliad</ref>.</p></body>
+<back><div><listBibl><bibl xml:id="homer"><author>Homer</author>,
+<title>Iliad</title></bibl></listBibl></div></back></text></TEI>"##;
+    let atd = dendron::serialize(&endo::tei_to_document(tei).unwrap());
+    assert!(atd.contains("@@.@>[(homer)the Iliad.@@"), "{atd}");
+    assert!(
+        atd.contains("@& homer\n@: author\nHomer\n:@\n\n@: title\nIliad\n:@\n&@.misc"),
+        "{atd}"
+    );
+}
+
+/// A cite that opens a diaphane annotates the span: its printed
+/// reference (a locator, a short citation). The LaTeX export
+/// writes the span as the citation's optional argument, the TEI
+/// export as the content of a ref typed bibr, and the TEI import
+/// reads that ref back as the same span — a round trip. A bare
+/// cite and a plain diaphane are untouched, and the span leaves
+/// the litos as its text alone.
+#[test]
+fn cite_span_round_trips() {
+    use atrep::{exo, kanonizo, litosis, morph};
+    use std::path::Path;
+
+    let atd = "\
+@@@!litogramma
+
+@=On Fences and Empires=@
+
+Rome fell slowly @@.@>[(gibbon1776)ch. 15.@@ and Persia was vast @@.@>[(herodotus)I.1.@@, as every schoolboy knows @>[(twain1876), in a @@.plain span.@@(o1) too @>(o1).
+";
+    let tmp = Path::new(env!("CARGO_TARGET_TMPDIR")).join("cite-span");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let path = tmp.join("doc.atd");
+    std::fs::write(&path, atd).unwrap();
+    let kanon = kanonizo::kanonizo_file(&path).unwrap().document;
+    let atk = dendron::serialize(&kanon);
+    assert!(atk.contains("@@.@>[(gibbon1776)ch. 15.@@"), "{atk}");
+
+    let litos = litosis::litosis(&kanon, &|_| Ok(Vec::new())).unwrap().litos;
+    assert!(
+        litos.contains("Rome fell slowly ch. 15 and Persia was vast I.1, as"),
+        "{litos}"
+    );
+
+    let x = exo::resolve_exo(&tmp, "litogramma", "latex").unwrap();
+    let latex = exo::render(&kanon, &x, &tmp).unwrap();
+    assert!(
+        latex.contains(
+            r"slowly \ltcitespan{gibbon1776}{ch. 15} and Persia was vast \ltcitespan{herodotus}{I.1}, as every schoolboy knows \ltcite{twain1876}, in a plain span"
+        ),
+        "{latex}"
+    );
+    // The class asset compiles the span into \cite's optional
+    // argument.
+    assert!(
+        x.assets
+            .iter()
+            .any(|(_, body)| body.contains(r"\newcommand\ltcitespan[2]{\cite[#2]{#1}}"))
+    );
+
+    let route = morph::resolve_route(&tmp, "litogramma", "at-tei").unwrap();
+    let at_tei = morph::apply_route(&kanon, &route).unwrap();
+    let x = exo::resolve_exo(&tmp, "at-tei", "tei").unwrap();
+    let tei = exo::render(&at_tei, &x, &tmp).unwrap();
+    assert!(
+        tei.contains(
+            r##"slowly <ref type="bibr" target="#gibbon1776">ch. 15</ref> and Persia was vast <ref type="bibr" target="#herodotus">I.1</ref>, as every schoolboy knows <ptr type="bibr" target="#twain1876"/>, in a "##
+        ),
+        "{tei}"
+    );
+
+    // The hom groups the document under its title, so the export
+    // is a whole TEI file - header, text, body - and reads back.
+    assert!(
+        tei.contains("<titleStmt>\n<title>On Fences and Empires</title>\n</titleStmt>"),
+        "{tei}"
+    );
+    assert!(
+        tei.contains("</teiHeader>\n<text>\n<body>\n<p>Rome"),
+        "{tei}"
+    );
+    let back = dendron::serialize(&endo::tei_to_document(&tei).unwrap());
+    assert!(
+        back.contains(
+            "Rome fell slowly @@.@>[(gibbon1776)ch. 15.@@ and Persia was vast @@.@>[(herodotus)I.1.@@, as every schoolboy knows @>[(twain1876), in a "
+        ),
+        "{back}"
+    );
+}
+
+/// A document with a bibliography exports to TEI and reads back
+/// to the same kanon: the embedded bibliogramma is not the
+/// litogramma hom's to map and rides through the morphism, the
+/// bibliogramma tei exo writes each entry as a bibl (fields TEI
+/// has no element for as typed notes), and the importer reads
+/// the listBibl and the refs back.
+#[test]
+fn bibliography_round_trips_through_tei() {
+    use atrep::{exo, kanonizo, morph};
+    use std::path::Path;
+
+    let atd = "\
+@@@!litogramma
+
+@=On Fences and Empires=@
+
+@=== Empires
+Rome fell slowly @@.@>[(gibbon1776)ch. 15.@@ and Persia was vast @>[(herodotus). An essay @>[(pope1711) says so & more.
+===@
+
+@@@!(bibliogramma)
+@& gibbon1776
+@: author
+Gibbon, Edward
+:@
+
+@: title
+The History of the Decline & Fall of the Roman Empire
+:@
+
+@: location
+London
+:@
+
+@: publisher
+Strahan and Cadell
+:@
+
+@: year
+1776
+:@
+
+@: edition
+2
+:@
+&@.book
+
+@& herodotus
+@: author
+Herodotus
+:@
+
+@: title
+The Histories
+:@
+&@.misc
+
+@& pope1711
+@: author
+Pope, Alexander
+:@
+
+@: title
+An Essay on Criticism
+:@
+
+@: journal
+Miscellanies
+:@
+
+@: volume
+2
+:@
+
+@: pages
+1-43
+:@
+
+@: year
+1711
+:@
+&@.article
+!@@@
+";
+    let tmp = Path::new(env!("CARGO_TARGET_TMPDIR")).join("tei-bibliography");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let path = tmp.join("doc.atd");
+    std::fs::write(&path, atd).unwrap();
+    let kanon = kanonizo::kanonizo_file(&path).unwrap().document;
+
+    let route = morph::resolve_route(&tmp, "litogramma", "at-tei").unwrap();
+    let at_tei = morph::apply_route(&kanon, &route).unwrap();
+    let x = exo::resolve_exo(&tmp, "at-tei", "tei").unwrap();
+    let tei = exo::render(&at_tei, &x, &tmp).unwrap();
+    assert!(
+        tei.contains(
+            "<listBibl>\n<bibl xml:id=\"gibbon1776\" type=\"liber\">\n<author>Gibbon, Edward</author>\n\
+             <title>The History of the Decline &amp; Fall of the Roman Empire</title>\n\
+             <pubPlace>London</pubPlace>\n<publisher>Strahan and Cadell</publisher>\n\
+             <date>1776</date>\n<note type=\"editio\">2</note></bibl>"
+        ),
+        "{tei}"
+    );
+    assert!(
+        tei.contains(
+            "<title>An Essay on Criticism</title>\n<title level=\"j\">Miscellanies</title>\n\
+             <biblScope unit=\"volume\">2</biblScope>\n<biblScope unit=\"page\">1-43</biblScope>"
+        ),
+        "{tei}"
+    );
+
+    let back_path = tmp.join("back.atd");
+    std::fs::write(
+        &back_path,
+        dendron::serialize(&endo::tei_to_document(&tei).unwrap()),
+    )
+    .unwrap();
+    let back = kanonizo::kanonizo_file(&back_path).unwrap().document;
+    assert_eq!(dendron::serialize(&back), dendron::serialize(&kanon));
+}
