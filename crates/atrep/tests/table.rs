@@ -286,10 +286,13 @@ b2
     let x = exo::resolve_exo(&tmp, "litogramma", "latex").unwrap();
     let tex = exo::render(&doc, &x, &tmp).unwrap();
     assert!(
-        tex.contains("\\ltrow{\\ltcell{\\textbf{A\n}}\n\\ltcell{\\textbf{B\n}}}"),
+        tex.contains("\\ltrow{\\ltcell{\\textbf{A\n}}{}{}\n\\ltcell{\\textbf{B\n}}{}{}}"),
         "{tex}"
     );
-    assert!(tex.contains("\\ltcell{\\multirow{2}{*}{tall\n}}"), "{tex}");
+    assert!(
+        tex.contains("\\ltcell{\\multirow{2}{*}{tall\n}}{}{2}"),
+        "{tex}"
+    );
     assert!(
         tex.contains("\\ltcell{\\multicolumn{2}{l}{both\n}}"),
         "{tex}"
@@ -331,4 +334,57 @@ fn tables_round_trip_through_tei() {
     .unwrap();
     let back = kanonizo::kanonizo_file(&back_path).unwrap().document;
     assert_eq!(dendron::serialize(&back), dendron::serialize(&doc));
+}
+
+/// at-html carries the table family: an HTML table imports into
+/// it (a row of th a header row, colspan and rowspan the spans, the
+/// caption the lemma), exports back through the html exo, and a
+/// litogramma table morphs into it by identity.
+#[test]
+fn html_tables_import_and_export() {
+    use atrep::{endo, morph};
+    let html = r#"<html><body><table id="prices"><caption>Prices</caption>
+<thead><tr><th>Boy</th><th>Price</th><th>Note</th></tr></thead>
+<tbody><tr><td rowspan="2">Ben</td><td colspan="2">an apple</td></tr>
+<tr><td>a kite</td><td><p>later</p><p>much later</p></td></tr></tbody></table></body></html>"#;
+    let doc = endo::html_to_document(html).unwrap();
+    let atd = dendron::serialize(&doc);
+    assert!(
+        atd.contains("@+ Prices\n@+=\n@+:\nBoy\n:+@\n\n@+:\nPrice\n:+@\n\n@+:\nNote\n:+@\n=+@"),
+        "{atd}"
+    );
+    assert!(
+        atd.contains("@+-\n@+:\n@+_(2) Ben\n:+@\n\n@+:\n@+>(2) an apple\n:+@\n-+@"),
+        "{atd}"
+    );
+    assert!(
+        atd.contains("@+:\nlater\n\nmuch later\n:+@\n-+@\n+@(prices)"),
+        "{atd}"
+    );
+    let tmp = tmp_dir("table-html");
+    let doc = kanon(&tmp, "prices", &atd).unwrap();
+    let x = exo::resolve_exo(&tmp, "at-html", "html").unwrap();
+    let out = exo::render(&doc, &x, &tmp).unwrap();
+    // The id is an onym nothing refers to, which kanonizo drops.
+    assert!(out.contains("<table>\n<caption>Prices</caption>"), "{out}");
+    assert!(out.contains("<th>\n<p>Boy</p>\n</th>"), "{out}");
+    assert!(
+        out.contains("<td rowspan=\"2\">\n<p>Ben</p>\n</td>"),
+        "{out}"
+    );
+    assert!(
+        out.contains("<td colspan=\"2\">\n<p>an apple</p>\n</td>"),
+        "{out}"
+    );
+    // Re-import of the export is the same kanon.
+    let back = endo::html_to_document(&out).unwrap();
+    let back = kanon(&tmp, "back", &dendron::serialize(&back)).unwrap();
+    assert_eq!(dendron::serialize(&back), dendron::serialize(&doc));
+
+    // litogramma -> at-html keeps a table.
+    let lit = kanon(&tmp, "lit", SPANS).unwrap();
+    let route = morph::resolve_route(&tmp, "litogramma", "at-html").unwrap();
+    let at_html = morph::apply_route(&lit, &route).unwrap();
+    let s = dendron::serialize(&at_html);
+    assert!(s.contains("@+:\n@+_(2) tall\n:+@"), "{s}");
 }

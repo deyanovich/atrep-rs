@@ -13,3 +13,12 @@
 @<< _
 @<< --
 @<< ..
+
+@@/ The target has no table family: a table drops with its rows,
+@@/ cells and spans (recorded loss).
+@-- +
+@-- +-
+@-- +=
+@-- +:
+@-- +>
+@-- +_

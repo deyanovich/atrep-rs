@@ -487,7 +487,9 @@ fn run() -> atrep::Result<()> {
                 .unwrap_or(std::path::Path::new("."))
                 .to_path_buf();
             // A binary built-in export (docx) is written as is.
-            if let Some(bytes) = atrep::native_export_bytes(&doc, &target, &dir) {
+            if let Some(bytes) =
+                atrep::native_export_bytes_variant(&doc, &target, &dir, variant.as_deref())
+            {
                 write_output(&out, bytes?)?;
                 println!("{}", out.display());
                 return Ok(());

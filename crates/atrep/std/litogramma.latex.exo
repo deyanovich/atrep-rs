@@ -438,7 +438,7 @@ _ \_
 @-> +
 @[\ltlabel{@(onym)}]@@[\begin{center}\itshape @(lemma)\end{center}
 ]@\begin{center}
-\begin{tabular}{llllllll}\noalign{\ltfirstcell}
+\begin{tabular}{llllllll}\noalign{\ltrowinit}
 @(grammata)
 \end{tabular}
 \end{center}
@@ -459,11 +459,11 @@ _ \_
 >-@
 
 @-> +:
-\ltcell{@[\multicolumn{@(hspan)}{l}{]@@[\multirow{@(vspan)}{*}{]@@(grammata)@[@(?vspan)}]@@[@(?hspan)}]@}
+\ltcell{@[\multicolumn{@(hspan)}{l}{]@@[\multirow{@(vspan)}{*}{]@@(grammata)@[@(?vspan)}]@@[@(?hspan)}]@}{@(hspan)}{@(vspan)}
 >-@
 
 @-> +: in +=
-\ltcell{@[\multicolumn{@(hspan)}{l}{]@@[\multirow{@(vspan)}{*}{]@\textbf{@(grammata)}@[@(?vspan)}]@@[@(?hspan)}]@}
+\ltcell{@[\multicolumn{@(hspan)}{l}{]@@[\multirow{@(vspan)}{*}{]@\textbf{@(grammata)}@[@(?vspan)}]@@[@(?hspan)}]@}{@(hspan)}{@(vspan)}
 >-@
 
 @-> +>
@@ -745,12 +745,48 @@ _ \_
 % rows (inside \noalign) and cleared after the cell's content, and
 % the exomorphosis writes \multicolumn / \multirow itself.
 \RequirePackage{multirow}
+% The grid is tracked in the class so that a vertical span, which
+% the rows below omit (the table model), gets its empty cells back
+% in LaTeX, which needs them: \lt@col is the column the next cell
+% takes, \lt@res<n> the rows a span still covers column n for.
+% Everything between a cell's content and the next cell is run at
+% the END of the cell (bookkeeping, then the & of each covered
+% column that follows), and the leading covered columns of a row
+% are emitted as a pre-expanded run of & from \noalign, so a
+% \multicolumn is always the first thing after an &.
 \newif\if@ltfirstcell
+\newcount\lt@col
+\newcount\lt@n
 \def\lt@amp{&}
 \def\lt@cellsep{\if@ltfirstcell\else\expandafter\lt@amp\fi}
-\def\ltcell#1{\lt@cellsep#1\global\@ltfirstcellfalse}
-\newcommand\ltfirstcell{\global\@ltfirstcelltrue}
-\newcommand\ltrow[1]{#1\\\noalign{\ltfirstcell}}
+\def\lt@resof#1{\ifcsname lt@res\number#1\endcsname\csname lt@res\number#1\endcsname\else 0\fi}
+\def\lt@setres#1#2{\expandafter\xdef\csname lt@res\number#1\endcsname{\number#2}}
+% After the content: advance by the columns spanned, record the rows
+% spanned, then close every covered column that follows.
+\def\lt@after#1#2{%
+  \global\@ltfirstcellfalse
+  \lt@n=\lt@col
+  \if\relax\detokenize{#1}\relax\global\advance\lt@col 1 \else\global\advance\lt@col #1 \fi
+  \if\relax\detokenize{#2}\relax\else
+    \lt@n=\lt@col \advance\lt@n -\if\relax\detokenize{#1}\relax 1\else#1\fi\relax
+    \loop\ifnum\lt@n<\lt@col \lt@setres{\lt@n}{#2}\advance\lt@n 1 \repeat
+  \fi
+  \lt@covered}
+% The & for each covered column from the current one on, as one
+% expandable run.
+\def\lt@covered{\begingroup\lt@n=\lt@col \def\lt@acc{}%
+  \loop\ifnum\lt@resof{\lt@n}>0 \xdef\lt@acc{\lt@acc&}\global\advance\lt@col 1 \advance\lt@n 1 \repeat
+  \expandafter\endgroup\lt@acc}
+\def\ltcell#1#2#3{\lt@cellsep#1\lt@after{#2}{#3}}
+% Between rows: the reservations age, and the columns still covered
+% at the start of the next row are closed before its first cell.
+\newcommand\ltfirstcell{\global\@ltfirstcelltrue\global\lt@col=0 \lt@n=0
+  \loop\ifnum\lt@n<64 \ifnum\lt@resof{\lt@n}>0 \lt@setres{\lt@n}{\numexpr\lt@resof{\lt@n}-1\relax}\fi\advance\lt@n 1 \repeat
+  \lt@n=0 \gdef\lt@lead{}%
+  \loop\ifnum\lt@resof{\lt@n}>0 \xdef\lt@lead{\lt@lead&}\global\advance\lt@col 1 \advance\lt@n 1 \repeat}
+\newcommand\ltrowinit{\lt@n=0 \loop\ifnum\lt@n<64 \lt@setres{\lt@n}{0}\advance\lt@n 1 \repeat\ltfirstcell}
+\def\lt@lead{}
+\newcommand\ltrow[1]{\lt@lead#1\\\noalign{\ltfirstcell}}
 
 \endinput
 END-OF-CLASS

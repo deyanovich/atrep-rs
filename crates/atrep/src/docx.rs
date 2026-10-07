@@ -350,6 +350,9 @@ struct Ctx<'p> {
     /// Text runs inside a BIBLIOGRAPHY field's result are dropped
     /// until the field ends, across paragraphs.
     dropping: bool,
+    /// Bibliography entries a reference manager's citation fields
+    /// carry (Zotero, Mendeley, EndNote), keyed to dedupe.
+    manager_entries: Vec<(String, Block)>,
 }
 
 /// A bookmark name as an onym: alphanumeric runs joined by
@@ -439,6 +442,7 @@ impl<'p> Ctx<'p> {
             media_names: HashSet::new(),
             field: None,
             dropping: false,
+            manager_entries: Vec::new(),
         })
     }
 
@@ -988,7 +992,12 @@ impl<'p> Ctx<'p> {
                         Some("separate") => {
                             if let Some(f) = &mut self.field {
                                 f.in_result = true;
-                                if f.instr.trim_start().starts_with("BIBLIOGRAPHY") {
+                                let instr = f.instr.trim_start();
+                                if instr.starts_with("BIBLIOGRAPHY")
+                                    || instr.starts_with("ADDIN ZOTERO_BIBL")
+                                    || instr.starts_with("ADDIN Mendeley Bibliography")
+                                    || instr.starts_with("ADDIN EN.REFLIST")
+                                {
                                     self.dropping = true;
                                 }
                             }
@@ -1094,6 +1103,46 @@ impl<'p> Ctx<'p> {
                 }
             }
             Some("BIBLIOGRAPHY") => {}
+            Some("ADDIN") => {
+                // A reference manager's field: Zotero and Mendeley
+                // carry CSL JSON, EndNote its own XML; each names
+                // the items cited and describes them, so the
+                // citation becomes cites and the items entries.
+                let rest = instr["ADDIN".len()..].trim_start();
+                if rest.starts_with("ZOTERO_BIBL")
+                    || rest.starts_with("Mendeley Bibliography")
+                    || rest.starts_with("EN.REFLIST")
+                {
+                    return;
+                }
+                let keys = if let Some(json) = rest
+                    .strip_prefix("ZOTERO_ITEM CSL_CITATION")
+                    .or_else(|| rest.strip_prefix("CSL_CITATION"))
+                {
+                    self.csl_citation(json.trim())
+                } else if let Some(xml) = rest.strip_prefix("EN.CITE") {
+                    self.endnote_citation(xml.trim())
+                } else {
+                    Vec::new()
+                };
+                trim_inline_edges(&mut result);
+                if keys.is_empty() {
+                    out.extend(result);
+                } else if result.is_empty() {
+                    for key in keys {
+                        out.push(mono(">[", &key));
+                    }
+                } else {
+                    // One span over the printed citation, opened by
+                    // every item it cites.
+                    let mut content: Vec<Inline> = keys.iter().map(|k| mono(">[", k)).collect();
+                    content.extend(result);
+                    out.push(Inline::EndoDiaphane {
+                        content,
+                        ann: Annotations::default(),
+                    });
+                }
+            }
             Some("HYPERLINK") => {
                 let url = quoted_arg(instr);
                 trim_inline_edges(&mut result);
@@ -1110,6 +1159,144 @@ impl<'p> Ctx<'p> {
             }
             _ => out.extend(result),
         }
+    }
+
+    // ----- reference managers ------------------------------------
+
+    /// A CSL citation (Zotero, Mendeley): the keys of its items, the
+    /// items' data registered as entries. The key is the item's
+    /// `citation-key`, else its `id`.
+    fn csl_citation(&mut self, json: &str) -> Vec<String> {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
+            return Vec::new();
+        };
+        let mut keys = Vec::new();
+        let Some(items) = value.get("citationItems").and_then(|v| v.as_array()) else {
+            return keys;
+        };
+        for item in items {
+            let data = item.get("itemData");
+            let key = data
+                .and_then(|d| d.get("citation-key"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .or_else(|| {
+                    item.get("id")
+                        .or_else(|| data.and_then(|d| d.get("id")))
+                        .map(|v| match v {
+                            serde_json::Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        })
+                })
+                .map(|k| csl_key(&k));
+            let Some(key) = key.filter(|k| !k.is_empty()) else {
+                continue;
+            };
+            if let Some(data) = data
+                && !self.manager_entries.iter().any(|(k, _)| *k == key)
+                && let Some(entry) = csl_entry(&key, data)
+            {
+                self.manager_entries.push((key.clone(), entry));
+            }
+            keys.push(key);
+        }
+        keys
+    }
+
+    /// An EndNote citation: `<EndNote><Cite>...<record>` per cited
+    /// record; the key is the first author's surname with the year
+    /// (else the record number), the entry from its titles, authors
+    /// and dates.
+    fn endnote_citation(&mut self, xml: &str) -> Vec<String> {
+        let Ok(toks) = tokenize_xml(xml) else {
+            return Vec::new();
+        };
+        let mut keys = Vec::new();
+        let mut i = 0;
+        while i < toks.len() {
+            match &toks[i] {
+                Tok::Open {
+                    name,
+                    self_closing: false,
+                    ..
+                } if name == "record" => {
+                    let end = skip(&toks, i + 1, "record").unwrap_or(toks.len());
+                    let rec = &toks[i..end];
+                    let text_in = |what: &str| -> Vec<String> {
+                        let mut out = Vec::new();
+                        let mut k = 0;
+                        while k < rec.len() {
+                            if let Tok::Open { name, .. } = &rec[k]
+                                && name == what
+                            {
+                                let (t, next) = text_of(rec, k + 1, what);
+                                let t = t.split_whitespace().collect::<Vec<_>>().join(" ");
+                                if !t.is_empty() {
+                                    out.push(t);
+                                }
+                                k = next;
+                                continue;
+                            }
+                            k += 1;
+                        }
+                        out
+                    };
+                    let number = text_in("rec-number").into_iter().next().unwrap_or_default();
+                    let authors = text_in("author");
+                    let title = text_in("title").into_iter().next();
+                    let year = text_in("year").into_iter().next();
+                    let first = authors
+                        .first()
+                        .map(|a| a.split(',').next().unwrap_or(a).trim().to_string())
+                        .unwrap_or_default();
+                    let key = csl_key(&format!(
+                        "{first}{}",
+                        year.clone().unwrap_or_else(|| number.clone())
+                    ));
+                    if !key.is_empty() {
+                        if !self.manager_entries.iter().any(|(k, _)| *k == key) {
+                            let mut fields: Vec<(&str, String)> = Vec::new();
+                            if !authors.is_empty() {
+                                fields.push(("author", authors.join(" and ")));
+                            }
+                            if let Some(t) = title {
+                                fields.push(("title", t));
+                            }
+                            if let Some(y) = year {
+                                fields.push(("year", y));
+                            }
+                            for (what, field) in [
+                                ("secondary-title", "journal"),
+                                ("publisher", "publisher"),
+                                ("pub-location", "location"),
+                                ("volume", "volume"),
+                                ("number", "number"),
+                                ("pages", "pages"),
+                            ] {
+                                if let Some(v) = text_in(what).into_iter().next() {
+                                    fields.push((field, v));
+                                }
+                            }
+                            let genus = match text_in("ref-type").first().map(String::as_str) {
+                                Some("Book" | "6") => "book",
+                                Some("Journal Article" | "17") => "article",
+                                Some("Book Section" | "5") => "incollection",
+                                Some("Conference Paper" | "47") => "inproceedings",
+                                Some("Report" | "27") => "report",
+                                Some("Web Page" | "12") => "online",
+                                _ => "misc",
+                            };
+                            self.manager_entries
+                                .push((key.clone(), bib_entry(&key, genus, fields)));
+                        }
+                        keys.push(key);
+                    }
+                    i = end;
+                }
+                _ => i += 1,
+            }
+        }
+        keys
     }
 
     // ----- tables -------------------------------------------------
@@ -1694,6 +1881,137 @@ fn sources(pkg: &Package) -> Result<Vec<Block>> {
     Ok(entries)
 }
 
+/// A citation key from a manager's id: alphanumeric runs joined
+/// by hyphens.
+fn csl_key(raw: &str) -> String {
+    let mut out = String::new();
+    let mut gap = false;
+    for c in raw.chars() {
+        if c.is_alphanumeric() {
+            if gap && !out.is_empty() {
+                out.push('-');
+            }
+            gap = false;
+            out.push(c);
+        } else {
+            gap = true;
+        }
+    }
+    out
+}
+
+/// A bibliogramma entry from CSL item data.
+fn csl_entry(key: &str, data: &serde_json::Value) -> Option<Block> {
+    let s = |name: &str| {
+        data.get(name).and_then(|v| match v {
+            serde_json::Value::String(t) => Some(t.clone()),
+            serde_json::Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        })
+    };
+    let names = |name: &str| -> Option<String> {
+        let list = data.get(name)?.as_array()?;
+        let joined: Vec<String> = list
+            .iter()
+            .filter_map(|p| {
+                let family = p.get("family").and_then(|v| v.as_str());
+                let given = p.get("given").and_then(|v| v.as_str());
+                let literal = p.get("literal").and_then(|v| v.as_str());
+                match (family, given, literal) {
+                    (Some(f), Some(g), _) => Some(format!("{f}, {g}")),
+                    (Some(f), None, _) => Some(f.to_string()),
+                    (None, _, Some(l)) => Some(l.to_string()),
+                    _ => None,
+                }
+            })
+            .collect();
+        (!joined.is_empty()).then(|| joined.join(" and "))
+    };
+    let year = data
+        .get("issued")
+        .and_then(|v| v.get("date-parts"))
+        .and_then(|v| v.as_array())
+        .and_then(|parts| parts.first())
+        .and_then(|p| p.as_array())
+        .and_then(|p| p.first())
+        .map(|v| match v {
+            serde_json::Value::String(t) => t.clone(),
+            other => other.to_string(),
+        });
+    let mut fields: Vec<(&str, String)> = Vec::new();
+    if let Some(a) = names("author") {
+        fields.push(("author", a));
+    }
+    if let Some(e) = names("editor") {
+        fields.push(("editor", e));
+    }
+    for (csl, field) in [
+        ("title", "title"),
+        ("container-title", "journal"),
+        ("publisher", "publisher"),
+        ("publisher-place", "location"),
+        ("volume", "volume"),
+        ("issue", "number"),
+        ("page", "pages"),
+        ("edition", "edition"),
+        ("URL", "url"),
+        ("DOI", "doi"),
+    ] {
+        if let Some(v) = s(csl) {
+            fields.push((field, v));
+        }
+    }
+    if let Some(y) = year {
+        fields.push(("year", y));
+    }
+    let genus = match s("type").as_deref() {
+        Some("book") => "book",
+        Some("article-journal" | "article" | "article-magazine" | "article-newspaper") => "article",
+        Some("chapter") => "incollection",
+        Some("paper-conference") => "inproceedings",
+        Some("report") => "report",
+        Some("webpage" | "post-weblog") => "online",
+        _ => "misc",
+    };
+    // A chapter's container is its book, not a journal.
+    if genus == "incollection" {
+        for f in &mut fields {
+            if f.0 == "journal" {
+                f.0 = "booktitle";
+            }
+        }
+    }
+    Some(bib_entry(key, genus, fields))
+}
+
+fn bib_entry(key: &str, genus: &str, fields: Vec<(&str, String)>) -> Block {
+    let children: Vec<Block> = fields
+        .into_iter()
+        .filter(|(_, v)| !v.is_empty())
+        .map(|(name, value)| Block::Para {
+            symbol: ":".to_string(),
+            taxis: None,
+            lemma: vec![Inline::Text(name.to_string())],
+            children: vec![Block::Paragraph(vec![Inline::Text(value)])],
+            hypograph: Vec::new(),
+            bracket_matching: true,
+            ann: Annotations::default(),
+        })
+        .collect();
+    Block::Para {
+        symbol: "&".to_string(),
+        taxis: None,
+        lemma: vec![Inline::Text(key.to_string())],
+        children,
+        hypograph: Vec::new(),
+        bracket_matching: true,
+        ann: Annotations {
+            onym: None,
+            genoses: vec![genus.to_string()],
+        },
+    }
+}
+
 fn source_entry(toks: &[Tok], mut i: usize) -> Result<(Option<Block>, usize)> {
     let mut tag = String::new();
     let mut kind = String::new();
@@ -1933,7 +2251,17 @@ pub fn docx_to_document_with_media(bytes: &[u8]) -> Result<(Document, Vec<DocxMe
     for (symbol, onym, body) in std::mem::take(&mut ctx.notes) {
         blocks.push(para_block(&symbol, Vec::new(), body, Some(onym)));
     }
-    let entries = sources(&pkg)?;
+    let mut entries = sources(&pkg)?;
+    // The reference managers' items join the sources, after them,
+    // without duplicating a key the sources part declares.
+    for (key, entry) in std::mem::take(&mut ctx.manager_entries) {
+        let declared = entries
+            .iter()
+            .any(|e| matches!(e, Block::Para { lemma, .. } if plain(lemma).trim() == key));
+        if !declared {
+            entries.push(entry);
+        }
+    }
     if !entries.is_empty() {
         blocks.push(Block::MonadEnglossis {
             dialect: "bibliogramma".to_string(),
@@ -2068,6 +2396,10 @@ struct Writer<'a> {
     /// The note bodies by onym, found before the body is written.
     note_bodies: HashMap<String, (String, Vec<Block>)>, // onym -> (symbol, blocks)
     in_note: bool,
+    /// A reference document's parts, taken over when given.
+    reference_styles: Option<Vec<u8>>,
+    reference_theme: Option<Vec<u8>>,
+    reference_fonts: Option<Vec<u8>>,
 }
 
 const NOTE_SYMBOLS: &[&str] = &["^", "^^", "^^^", "^!", "|"];
@@ -2092,6 +2424,9 @@ impl<'a> Writer<'a> {
             creator: None,
             note_bodies: HashMap::new(),
             in_note: false,
+            reference_styles: None,
+            reference_theme: None,
+            reference_fonts: None,
         };
         for (id, ty, target) in [
             ("rId1", "styles", "styles.xml"),
@@ -2915,7 +3250,10 @@ impl<'a> Writer<'a> {
             ));
         }
         comments.push_str("</w:comments>");
-        let styles = format!("{decl}{}", STYLES);
+        let styles = match &self.reference_styles {
+            Some(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+            None => format!("{decl}{}", STYLES),
+        };
         let mut numbering = format!("{decl}<w:numbering {NS}>{}", ABSTRACT_NUMS);
         numbering.push_str("<w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>");
         for (id, ordered) in &self.numbering {
@@ -2927,6 +3265,22 @@ impl<'a> Writer<'a> {
         numbering.push_str("</w:numbering>");
         let sources = self.sources_xml();
         let mut rels = self.rels.clone();
+        if self.reference_theme.is_some() {
+            rels.push((
+                format!("rId{}", rels.len() + 1),
+                "theme".to_string(),
+                "theme/theme1.xml".to_string(),
+                false,
+            ));
+        }
+        if self.reference_fonts.is_some() {
+            rels.push((
+                format!("rId{}", rels.len() + 1),
+                "fontTable".to_string(),
+                "fontTable.xml".to_string(),
+                false,
+            ));
+        }
         if sources.is_some() {
             rels.push((
                 format!("rId{}", rels.len() + 1),
@@ -3018,6 +3372,12 @@ impl<'a> Writer<'a> {
         if sources.is_some() {
             types.push_str("<Override PartName=\"/customXml/itemProps1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.customXmlProperties+xml\"/>");
         }
+        if self.reference_theme.is_some() {
+            types.push_str("<Override PartName=\"/word/theme/theme1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.theme+xml\"/>");
+        }
+        if self.reference_fonts.is_some() {
+            types.push_str("<Override PartName=\"/word/fontTable.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml\"/>");
+        }
         types.push_str("</Types>");
 
         let cursor = std::io::Cursor::new(Vec::new());
@@ -3039,6 +3399,12 @@ impl<'a> Writer<'a> {
         put("word/endnotes.xml", endnotes.as_bytes())?;
         put("word/comments.xml", comments.as_bytes())?;
         put("docProps/core.xml", core.as_bytes())?;
+        if let Some(theme) = &self.reference_theme {
+            put("word/theme/theme1.xml", theme)?;
+        }
+        if let Some(fonts) = &self.reference_fonts {
+            put("word/fontTable.xml", fonts)?;
+        }
         for (name, bytes) in &self.media {
             put(&format!("word/media/{name}"), bytes)?;
         }
@@ -3147,7 +3513,30 @@ pub fn document_to_docx(
     doc: &Document,
     read_media: &dyn Fn(&str) -> Option<Vec<u8>>,
 ) -> Result<Vec<u8>> {
+    document_to_docx_with(doc, read_media, None)
+}
+
+/// As [`document_to_docx`], with a reference document whose styles
+/// the export takes over: its `word/styles.xml`, theme and font
+/// table replace the built-in set, so a publisher's register is a
+/// `.docx` that declares the styles by the ids the export writes
+/// (Title, Subtitle, Author, Abstract, Heading1–4, Quote,
+/// SourceCode, Caption, ListParagraph, the note and comment
+/// styles, the Strong, Emphasis, VerbatimChar and Hyperlink
+/// character styles, the TableGrid table style). A style the
+/// reference lacks falls back to Normal in Word.
+pub fn document_to_docx_with(
+    doc: &Document,
+    read_media: &dyn Fn(&str) -> Option<Vec<u8>>,
+    reference: Option<&[u8]>,
+) -> Result<Vec<u8>> {
     let mut w = Writer::new(read_media);
+    if let Some(bytes) = reference {
+        let pkg = read_package(bytes)?;
+        w.reference_styles = pkg.parts.get("word/styles.xml").cloned();
+        w.reference_theme = pkg.parts.get("word/theme/theme1.xml").cloned();
+        w.reference_fonts = pkg.parts.get("word/fontTable.xml").cloned();
+    }
     w.gather(&doc.blocks);
     w.blocks(&doc.blocks, None);
     w.finish()

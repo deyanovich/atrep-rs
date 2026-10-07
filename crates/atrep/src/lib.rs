@@ -137,11 +137,44 @@ pub fn native_export(doc: &Document, target: &str) -> Option<Result<String>> {
 /// Built-in exomorphoses whose output is bytes, not text: Word
 /// (`docx`), a zip. None for any other target.
 pub fn native_export_bytes(doc: &Document, target: &str, dir: &Path) -> Option<Result<Vec<u8>>> {
+    native_export_bytes_variant(doc, target, dir, None)
+}
+
+/// [`native_export_bytes`] under a named variant: for Word, the
+/// register — a reference document `<dialektos>.docx.<variant>.docx`
+/// in `dir` whose styles the export takes over.
+pub fn native_export_bytes_variant(
+    doc: &Document,
+    target: &str,
+    dir: &Path,
+    variant: Option<&str>,
+) -> Option<Result<Vec<u8>>> {
     match target {
         #[cfg(feature = "docx")]
-        "docx" => Some(docx::document_to_docx(doc, &|param| {
-            std::fs::read(dir.join(param)).ok()
-        })),
+        "docx" => {
+            let reference = match variant {
+                Some(v) => {
+                    let path = dir.join(format!("{}.docx.{v}.docx", doc.dialect_id));
+                    match std::fs::read(&path) {
+                        Ok(bytes) => Some(bytes),
+                        Err(e) => {
+                            return Some(Err(error::Error::new(
+                                error::ErrorKind::MissingResource(format!(
+                                    "{}: {e} (the Word register `{v}` is a reference document by that name)",
+                                    path.display()
+                                )),
+                            )));
+                        }
+                    }
+                }
+                None => None,
+            };
+            Some(docx::document_to_docx_with(
+                doc,
+                &|param| std::fs::read(dir.join(param)).ok(),
+                reference.as_deref(),
+            ))
+        }
         _ => None,
     }
 }

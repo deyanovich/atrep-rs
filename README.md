@@ -65,13 +65,20 @@ atrep exo <file> <target> [-o out]
                                    footnotes, comments from
                                    manuscript notes, CITATION
                                    fields over a sources part,
-                                   tables with spans, images)
+                                   tables with spans, images;
+                                   --variant <name> takes the
+                                   styles of the reference document
+                                   <dialektos>.docx.<name>.docx
+                                   beside the input)
 atrep endo <file> [-o out]         import Markdown (.md), HTML
                                    (.html), reStructuredText
                                    (.rst), TEI (.xml/.tei),
                                    FictionBook (.fb2), Word
                                    (.docx; images land beside the
-                                   output as media/<name>), a
+                                   output as media/<name>; Zotero,
+                                   Mendeley and EndNote citation
+                                   fields read as cites with their
+                                   items as the bibliography), a
                                    Lingvo dictionary (.dsl,
                                    .dsl.dz), the Russian National
                                    Corpus (.rnc), OpenCorpora

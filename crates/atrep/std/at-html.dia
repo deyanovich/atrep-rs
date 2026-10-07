@@ -91,6 +91,50 @@ grammata
 @"strong emphasis (strong element)"@
 ===@
 
+@=== table
+@+[(taxis)] [lemma]
+rows
++@ [hypograph]
+@"table element; the lemma is its caption; rows of cells, the table model"@
+===@
+
+@=== row
+@+-
+cells
+-+@
+@"table row (tr)"@
+@^(+)
+===@
+
+@=== header-row
+@+=
+header
+cells
+=+@
+@"table row of header cells (tr of th)"@
+@^(+)
+===@
+
+@=== cell
+@+: [lemma]
+grammata
+:+@
+@"table cell (td; th in a header row); the hspan and vspan monosims first inside it are colspan and rowspan"@
+@^(+-)
+===@
+
+@=== hspan
+@+>(columns)
+@"colspan"@
+@^(+:)
+===@
+
+@=== vspan
+@+_(rows)
+@"rowspan"@
+@^(+:)
+===@
+
 @=== verse
 @~[(taxis)] [lemma]
 stichos

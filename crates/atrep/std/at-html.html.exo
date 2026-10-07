@@ -110,11 +110,41 @@
 ]@</div>
 >-@
 
-@-> ~.table
-<div class="table"@[ data-taxis="@(taxis)"]@>
-@[<p class="table-caption">@(lemma)</p>
+@-> +
+<table@[ id="@(onym)"]@>
+@[<caption>@(lemma)</caption>
 ]@@(grammata)
-</div>
+</table>
+>-@
+
+@-> +-
+<tr>
+@(grammata)
+</tr>
+>-@
+
+@-> +=
+<tr>
+@(grammata)
+</tr>
+>-@
+
+@-> +:
+<td@[ colspan="@(hspan)"]@@[ rowspan="@(vspan)"]@>@[
+@(grammata)
+]@</td>
+>-@
+
+@-> +: in +=
+<th@[ colspan="@(hspan)"]@@[ rowspan="@(vspan)"]@>@[
+@(grammata)
+]@</th>
+>-@
+
+@-> +>
+>-@
+
+@-> +_
 >-@
 
 @-> *strophe

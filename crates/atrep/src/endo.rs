@@ -869,20 +869,22 @@ fn parse_html_blocks(
                         blocks.push(para_block(">", None, children, false, vec![]));
                         i = next;
                     }
+                    "table" => {
+                        let (block, next) = parse_html_table(toks, i + 1, attr(attrs, "id"))?;
+                        blocks.push(block);
+                        i = next;
+                    }
                     "div" => {
                         let mut genoses = class_genoses(attrs);
                         // The verse/table divisions are the exo
                         // rendering of the verse stichoi sim;
                         // invert them back to it.
-                        if genoses.first().map(String::as_str) == Some("verse")
-                            || genoses.first().map(String::as_str) == Some("table")
-                        {
-                            let kind = genoses.remove(0);
+                        if genoses.first().map(String::as_str) == Some("verse") {
+                            genoses.remove(0);
                             let taxis = attr(attrs, "data-taxis")
                                 .and_then(|v| v.parse().ok())
                                 .map(Taxis::Explicit);
-                            let (block, next) =
-                                parse_html_verse(toks, i + 1, kind == "table", taxis, genoses)?;
+                            let (block, next) = parse_html_verse(toks, i + 1, taxis, genoses)?;
                             blocks.push(block);
                             i = next;
                             continue;
@@ -949,17 +951,127 @@ fn parse_html_blocks(
     }
 }
 
-/// Parse the inside of a `div class="verse"` / `div
-/// class="table"` back into the verse stichoi sim: `p
-/// class="verse-title"` is the lemma, `p class="strophe"` holds
-/// `<br/>`-separated stichoi, `p class="verse-attribution"` is
-/// the hypograph.
+/// A `<table>`: rows (`tr`, a row of `th` a header row, through
+/// thead/tbody/tfoot), cells holding their blocks (inline content
+/// as a paragraph), colspan and rowspan as the span monosims, the
+/// caption as the lemma.
+fn parse_html_table(toks: &[Tok], mut i: usize, id: Option<&str>) -> Result<(Block, usize)> {
+    let _depth = descend(html_err)?;
+    let mut lemma: Vec<Inline> = Vec::new();
+    let mut rows: Vec<Block> = Vec::new();
+    let mut row: Option<(bool, Vec<Block>)> = None;
+    while i < toks.len() {
+        match &toks[i] {
+            Tok::Close(name) if name == "table" => {
+                i += 1;
+                break;
+            }
+            Tok::Open { name, .. } if name == "caption" => {
+                let (content, next) = parse_html_inlines(toks, i + 1, "caption", false)?;
+                lemma = content;
+                i = next;
+            }
+            Tok::Open { name, .. } if name == "tr" => {
+                row = Some((true, Vec::new()));
+                i += 1;
+            }
+            Tok::Close(name) if name == "tr" => {
+                if let Some((all_header, cells)) = row.take() {
+                    let header = all_header && !cells.is_empty();
+                    rows.push(para_block(
+                        if header { "+=" } else { "+-" },
+                        None,
+                        cells,
+                        true,
+                        vec![],
+                    ));
+                }
+                i += 1;
+            }
+            Tok::Open { name, attrs, .. } if name == "td" || name == "th" => {
+                let tag = name.clone();
+                let mut spans: Vec<Inline> = Vec::new();
+                for (attribute, symbol) in [("colspan", "+>"), ("rowspan", "+_")] {
+                    if let Some(n) = attr(attrs, attribute)
+                        && n.trim().parse::<usize>().is_ok_and(|n| n >= 2)
+                    {
+                        spans.push(Inline::Monosim {
+                            symbol: symbol.to_string(),
+                            param: n.trim().to_string(),
+                            ann: Annotations::default(),
+                        });
+                    }
+                }
+                // Block content when the cell opens with a block
+                // element, inline content otherwise.
+                let mut probe = i + 1;
+                while matches!(toks.get(probe), Some(Tok::Text(t)) if t.trim().is_empty()) {
+                    probe += 1;
+                }
+                let block_content = matches!(toks.get(probe), Some(Tok::Open { name, .. }) if matches!(name.as_str(), "p" | "ul" | "ol" | "blockquote" | "div" | "table" | "pre" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"));
+                let (mut blocks, next) = if block_content {
+                    parse_html_blocks(toks, i + 1, Some(&tag))?
+                } else {
+                    let (mut content, next) = parse_html_inlines(toks, i + 1, &tag, false)?;
+                    trim_inline_edges(&mut content);
+                    (
+                        if content.is_empty() {
+                            Vec::new()
+                        } else {
+                            vec![Block::Paragraph(content)]
+                        },
+                        next,
+                    )
+                };
+                if !spans.is_empty() {
+                    match blocks.first_mut() {
+                        Some(Block::Paragraph(p)) => {
+                            spans.push(Inline::Text(" ".to_string()));
+                            spans.append(p);
+                            *p = spans;
+                        }
+                        _ => blocks.insert(0, Block::Paragraph(spans)),
+                    }
+                }
+                let cell = para_block("+:", None, blocks, true, vec![]);
+                match &mut row {
+                    Some((all_header, cells)) => {
+                        if tag == "td" {
+                            *all_header = false;
+                        }
+                        cells.push(cell);
+                    }
+                    None => rows.push(para_block("+-", None, vec![cell], true, vec![])),
+                }
+                i = next;
+            }
+            _ => i += 1,
+        }
+    }
+    let mut block = Block::Para {
+        symbol: "+".to_string(),
+        taxis: None,
+        lemma,
+        children: rows,
+        hypograph: Vec::new(),
+        bracket_matching: true,
+        ann: Annotations::default(),
+    };
+    if let Block::Para { ann, .. } = &mut block {
+        ann.onym = id.filter(|s| !s.is_empty()).map(str::to_string);
+    }
+    Ok((block, i))
+}
+
+/// Parse the inside of a `div class="verse"` back into the verse
+/// stichoi sim: `p class="verse-title"` is the lemma, `p
+/// class="strophe"` holds `<br/>`-separated stichoi, `p
+/// class="verse-attribution"` is the hypograph.
 fn parse_html_verse(
     toks: &[Tok],
     mut i: usize,
-    table: bool,
     taxis: Option<Taxis>,
-    mut genoses: Vec<String>,
+    genoses: Vec<String>,
 ) -> Result<(Block, usize)> {
     let mut lemma = Vec::new();
     let mut strophes = Vec::new();
@@ -968,9 +1080,6 @@ fn parse_html_verse(
         match &toks[i] {
             Tok::Close(name) if name == "div" => {
                 i += 1;
-                if table {
-                    genoses.insert(0, "table".to_string());
-                }
                 return Ok((
                     Block::Stichoi {
                         symbol: Some("~".to_string()),
@@ -992,7 +1101,7 @@ fn parse_html_verse(
                 let classes = class_genoses(attrs);
                 let class = classes.first().map(String::as_str);
                 match class {
-                    Some("verse-title") | Some("table-caption") => {
+                    Some("verse-title") => {
                         let (content, next) = parse_html_inlines(toks, i + 1, "p", false)?;
                         lemma = content;
                         i = next;

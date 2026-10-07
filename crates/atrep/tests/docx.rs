@@ -325,3 +325,113 @@ The Histories
     let back = kanonizo::kanonizo_file(&back_path).unwrap().document;
     assert_eq!(dendron::serialize(&back), dendron::serialize(&doc));
 }
+
+/// Build a minimal OOXML package around a body, for the fields a
+/// reference manager writes.
+fn minimal_docx(body: &str) -> Vec<u8> {
+    use std::io::Write;
+    let w = "xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"";
+    let document = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><w:document {w}><w:body>{body}<w:sectPr/></w:body></w:document>"
+    );
+    let ct = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/></Types>";
+    let rels = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/></Relationships>";
+    let cursor = std::io::Cursor::new(Vec::new());
+    let mut zip = zip::ZipWriter::new(cursor);
+    let opts = zip::write::SimpleFileOptions::default();
+    for (name, data) in [
+        ("[Content_Types].xml", ct.to_string()),
+        ("_rels/.rels", rels.to_string()),
+        ("word/document.xml", document),
+    ] {
+        zip.start_file(name, opts).unwrap();
+        zip.write_all(data.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap().into_inner()
+}
+
+fn field(instr: &str, result: &str) -> String {
+    format!(
+        "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:instrText xml:space=\"preserve\"> {} </w:instrText></w:r><w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t>{result}</w:t></w:r><w:r><w:fldChar w:fldCharType=\"end\"/></w:r>",
+        instr
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('"', "&quot;")
+    )
+}
+
+/// Zotero's and Mendeley's CSL citation fields and EndNote's
+/// EN.CITE field import as cites with their printed text as the
+/// span, and the items they describe as bibliography entries;
+/// their bibliography fields are dropped.
+#[test]
+fn reference_manager_fields_import() {
+    let zotero = r#"ADDIN ZOTERO_ITEM CSL_CITATION {"citationID":"a1","properties":{"formattedCitation":"(Gibbon, 1776, p. 15)"},"citationItems":[{"id":12,"itemData":{"id":12,"type":"book","title":"The History of the Decline and Fall of the Roman Empire","author":[{"family":"Gibbon","given":"Edward"}],"issued":{"date-parts":[["1776"]]},"publisher":"Strahan and Cadell","publisher-place":"London","citation-key":"gibbon1776"},"locator":"15"}]}"#;
+    let mendeley = r#"ADDIN CSL_CITATION {"citationItems":[{"id":"ITEM-1","itemData":{"id":"ITEM-1","type":"article-journal","title":"On the Histories","author":[{"family":"Herodotus"}],"container-title":"Hellenic Studies","volume":"3","page":"1-20","issued":{"date-parts":[[430]]}}}]}"#;
+    let endnote = r#"ADDIN EN.CITE <EndNote><Cite><Author>Austen</Author><Year>1813</Year><RecNum>7</RecNum><record><rec-number>7</rec-number><ref-type name="Book">6</ref-type><contributors><authors><author>Austen, Jane</author></authors></contributors><titles><title>Pride and Prejudice</title></titles><dates><year>1813</year></dates><publisher>T. Egerton</publisher><pub-location>London</pub-location></record></Cite></EndNote>"#;
+    let body = format!(
+        "<w:p><w:r><w:t xml:space=\"preserve\">Rome fell slowly </w:t></w:r>{}<w:r><w:t xml:space=\"preserve\"> and Persia was vast </w:t></w:r>{}<w:r><w:t xml:space=\"preserve\">, unlike Bath </w:t></w:r>{}<w:r><w:t>.</w:t></w:r></w:p><w:p>{}</w:p>",
+        field(zotero, "(Gibbon, 1776, p. 15)"),
+        field(mendeley, "(Herodotus, 430)"),
+        field(endnote, "(Austen, 1813)"),
+        field(
+            "ADDIN ZOTERO_BIBL {} CSL_BIBLIOGRAPHY",
+            "Gibbon, E. (1776). The History."
+        )
+    );
+    let doc = docx::docx_to_document(&minimal_docx(&body)).unwrap();
+    let atd = dendron::serialize(&doc);
+    assert!(
+        atd.contains("Rome fell slowly @@.@>[(gibbon1776)|(Gibbon, 1776, p. 15).@@ and Persia was vast @@.@>[(ITEM-1)|(Herodotus, 430).@@, unlike Bath @@.@>[(Austen1813)|(Austen, 1813).@@."),
+        "{atd}"
+    );
+    assert!(!atd.contains("(1776). The History."), "{atd}");
+    assert!(
+        atd.contains("@& gibbon1776\n@: author\nGibbon, Edward\n:@\n\n@: title\nThe History of the Decline and Fall of the Roman Empire\n:@\n\n@: publisher\nStrahan and Cadell\n:@\n\n@: location\nLondon\n:@\n\n@: year\n1776\n:@\n&@.book"),
+        "{atd}"
+    );
+    assert!(
+        atd.contains("@& ITEM-1\n@: author\nHerodotus\n:@\n\n@: title\nOn the Histories\n:@\n\n@: journal\nHellenic Studies\n:@\n\n@: volume\n3\n:@\n\n@: pages\n1-20\n:@\n\n@: year\n430\n:@\n&@.article"),
+        "{atd}"
+    );
+    assert!(
+        atd.contains("@& Austen1813\n@: author\nAusten, Jane\n:@\n\n@: title\nPride and Prejudice\n:@\n\n@: year\n1813\n:@\n\n@: publisher\nT. Egerton\n:@\n\n@: location\nLondon\n:@\n&@.book"),
+        "{atd}"
+    );
+    let tmp = tmp_dir("docx-managers");
+    std::fs::write(tmp.join("doc.atd"), &atd).unwrap();
+    kanonizo::kanonizo_file(&tmp.join("doc.atd")).unwrap();
+}
+
+/// A reference document supplies the styles of an export: its
+/// styles part replaces the built-in set, the content is the same.
+#[test]
+fn reference_document_supplies_the_styles() {
+    let reference = fixture("tom-sawyer.docx");
+    let doc = docx::docx_to_document(&fixture("fields.docx")).unwrap();
+    let plain = docx::document_to_docx(&doc, &|_| None).unwrap();
+    let styled = docx::document_to_docx_with(&doc, &|_| None, Some(&reference)).unwrap();
+    let part = |bytes: &[u8], name: &str| -> String {
+        use std::io::Read;
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes.to_vec())).unwrap();
+        let mut s = String::new();
+        zip.by_name(name).unwrap().read_to_string(&mut s).unwrap();
+        s
+    };
+    let ref_styles = part(&reference, "word/styles.xml");
+    assert_eq!(part(&styled, "word/styles.xml"), ref_styles);
+    assert_ne!(part(&plain, "word/styles.xml"), ref_styles);
+    assert_eq!(
+        part(&styled, "word/document.xml"),
+        part(&plain, "word/document.xml")
+    );
+    // pandoc's theme and font table ride along.
+    assert!(part(&styled, "word/theme/theme1.xml").contains("a:theme"));
+    assert!(part(&styled, "[Content_Types].xml").contains("theme+xml"));
+    // The back-import reads the styled document the same.
+    let back = docx::docx_to_document(&styled).unwrap();
+    assert_eq!(
+        dendron::serialize(&back),
+        dendron::serialize(&docx::docx_to_document(&plain).unwrap())
+    );
+}
