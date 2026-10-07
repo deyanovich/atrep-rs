@@ -537,6 +537,18 @@ fn text_until(toks: &[Tok], mut i: usize, until: &str) -> (String, usize) {
     (out, i)
 }
 
+/// The text of the element opened at `toks[i]` and the index
+/// past it. A self-closing element is empty and ends at once:
+/// reading on to a close tag would swallow what follows.
+fn element_text(toks: &[Tok], i: usize, name: &str) -> (String, usize) {
+    match &toks[i] {
+        Tok::Open {
+            self_closing: true, ..
+        } => (String::new(), i + 1),
+        _ => text_until(toks, i + 1, name),
+    }
+}
+
 fn is_blank(tok: &Tok) -> bool {
     matches!(tok, Tok::Text(t) if t.trim().is_empty())
 }
@@ -665,7 +677,7 @@ pub fn rnc_to_document(xml: &str) -> Result<Document> {
     while i < toks.len() {
         match &toks[i] {
             Tok::Open { name, .. } if name == "title" => {
-                let (t, next) = text_until(&toks, i + 1, "title");
+                let (t, next) = element_text(&toks, i, "title");
                 let t = collapse_ws(&t);
                 if corpus.title.is_none() && !t.trim().is_empty() {
                     corpus.title = Some(t.trim().to_string());
@@ -901,7 +913,7 @@ pub fn opencorpora_to_document(xml: &str) -> Result<Document> {
                                         break;
                                     }
                                     Tok::Open { name, .. } if name == "source" => {
-                                        let (t, next) = text_until(&toks, i + 1, "source");
+                                        let (t, next) = element_text(&toks, i, "source");
                                         source = t;
                                         i = next;
                                     }
@@ -1070,16 +1082,18 @@ pub fn proiel_to_document(xml: &str) -> Result<Document> {
                 in_annotation = false;
             }
             Tok::Open { name, .. } if name == "title" && depth == 0 => {
-                let (t, next) = text_until(&toks, i + 1, "title");
-                if corpus.title.is_none() {
-                    corpus.title = Some(collapse_ws(&t).trim().to_string());
+                let (t, next) = element_text(&toks, i, "title");
+                let t = collapse_ws(&t).trim().to_string();
+                if corpus.title.is_none() && !t.is_empty() {
+                    corpus.title = Some(t);
                 }
                 i = next;
             }
             Tok::Open { name, .. } if name == "author" && depth == 0 => {
-                let (t, next) = text_until(&toks, i + 1, "author");
-                if corpus.author.is_none() {
-                    corpus.author = Some(collapse_ws(&t).trim().to_string());
+                let (t, next) = element_text(&toks, i, "author");
+                let t = collapse_ws(&t).trim().to_string();
+                if corpus.author.is_none() && !t.is_empty() {
+                    corpus.author = Some(t);
                 }
                 i = next;
             }
@@ -1096,11 +1110,11 @@ pub fn proiel_to_document(xml: &str) -> Result<Document> {
                     if let Some(Tok::Open { name, .. }) = toks.get(j)
                         && name == "title"
                     {
-                        let (t, next) = text_until(&toks, j + 1, "title");
-                        corpus.blocks.push(CorpusBlock::Heading {
-                            depth,
-                            text: collapse_ws(&t).trim().to_string(),
-                        });
+                        let (t, next) = element_text(&toks, j, "title");
+                        let text = collapse_ws(&t).trim().to_string();
+                        if !text.is_empty() {
+                            corpus.blocks.push(CorpusBlock::Heading { depth, text });
+                        }
                         i = next;
                         continue;
                     }
@@ -1369,6 +1383,9 @@ fn proiel_export(corpus: &Corpus) -> String {
 pub fn conllu_to_document(text: &str) -> Result<Document> {
     let mut corpus = Corpus::default();
     let mut sent_no = 0usize;
+    // Sentences are separated by a blank line, whatever the
+    // line ending: a CRLF file has no literal "\n\n".
+    let text = text.replace("\r\n", "\n");
     for block in text.split("\n\n") {
         let mut sid: Option<String> = None;
         let mut source: Option<String> = None;

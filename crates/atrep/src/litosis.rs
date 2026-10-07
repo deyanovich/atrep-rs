@@ -200,14 +200,21 @@ fn strip_blocks(
                 }
                 strip_ann_vocab(ann, kept, autonym, keep_vocab);
                 strip_inlines(lemma, read_media)?;
-                for strophe in strophes {
+                for strophe in strophes.iter_mut() {
                     for line in &mut strophe.0 {
                         // Stichos whitespace is content (spec:
                         // Whitespace Normalization) - no
                         // re-normalization after stripping.
                         strip_inlines_keep_ws(line, read_media)?;
                     }
+                    // A stichos that held only metadata (an onym
+                    // anchor, a monosim) has no content left and is
+                    // no line: kept empty, it would serialize as a
+                    // blank line, a strophe break the document
+                    // does not have.
+                    strophe.0.retain(|line| !line.is_empty());
                 }
+                strophes.retain(|strophe| !strophe.0.is_empty());
                 strip_inlines(hypograph, read_media)?;
             }
             Block::ParaDiaphane { children, .. } => {

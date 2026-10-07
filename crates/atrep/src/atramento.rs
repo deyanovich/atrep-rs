@@ -8,7 +8,7 @@
 //! Pilot limitations (documented, deterministic): inline asides
 //! are rejected; inline notes must close on the line they open;
 //! explicit division episims are matched against sugar-opened
-//! divisions top-of-stack only.
+//! divisions only (strict openers are not tracked).
 
 use crate::error::{Error, ErrorKind, Result};
 
@@ -189,13 +189,22 @@ impl Compiler {
         }
 
         // Explicit episim of a sugar-opened block: the author
-        // closed it; pop without inserting.
-        if let Some(top) = self.open.last()
-            && trimmed == top.episim()
-        {
+        // closed it; pop without inserting. What sugar left open
+        // inside it closes first.
+        if let Some(p) = self.open.iter().rposition(|o| o.episim() == trimmed) {
+            while self.open.len() > p + 1 {
+                self.close_one();
+            }
             self.open.pop();
             self.out.push(trimmed.to_string());
             return Ok(i + 1);
+        }
+
+        // The episim of a strict division, act or scene ends the
+        // block that encloses an open dialogue (no division sits
+        // inside a speech), so the dialogue closes before it.
+        if is_enclosing_episim(trimmed) {
+            self.close_dialogue();
         }
 
         // Verse dialogue content: stichoi until a boundary.
@@ -385,7 +394,11 @@ impl Compiler {
             let mut content = Vec::new();
             content.push(self.inline(&first)?.text);
             let mut j = i + 1;
-            while j < lines.len() && !lines[j].trim().is_empty() && !self.is_block_start(lines[j]) {
+            while j < lines.len()
+                && !lines[j].trim().is_empty()
+                && !self.is_block_start(lines[j])
+                && note_def_parts(lines[j].trim_end()).is_none()
+            {
                 content.push(self.inline(lines[j])?.text);
                 j += 1;
             }
@@ -430,7 +443,9 @@ impl Compiler {
     }
 
     /// Would this line start a block construct (ending the
-    /// current paragraph)?
+    /// current paragraph)? A callout at the head of a line is not
+    /// one: only a paragraph that starts with a callout is a note
+    /// definition.
     fn is_block_start(&self, line: &str) -> bool {
         let t = line.trim_end();
         is_atx_heading(t)
@@ -445,8 +460,12 @@ impl Compiler {
             || t.starts_with("@@@")
             || figure_parts(t).is_some()
             || aside_kind(t).is_some()
-            || note_def_parts(t).is_some()
-            || self.open.last().is_some_and(|top| t == top.episim())
+            || self.open.iter().any(|o| t == o.episim())
+            || (is_enclosing_episim(t)
+                && matches!(
+                    self.open.last(),
+                    Some(Open::Dialogue) | Some(Open::VerseDialogue)
+                ))
     }
 
     fn heading(&mut self, lines: &[&str], i: usize) -> Result<usize> {
@@ -552,10 +571,14 @@ impl Compiler {
         let first = lines[j].trim_end();
         let kind = list_kind(first).ok_or_else(|| syntax("expected a list item"))?;
         let mut items: Vec<(String, Vec<String>)> = Vec::new();
+        // Text column of the current item: its continuation lines
+        // and nested lists are dedented to it.
+        let mut column = 2;
         while j < lines.len() {
             let t = lines[j].trim_end();
             if list_kind(t) == Some(kind) {
                 items.push((t.to_string(), Vec::new()));
+                column = text_column(t);
                 j += 1;
                 continue;
             }
@@ -575,7 +598,7 @@ impl Compiler {
                     break;
                 }
                 if is_indented(lines[j]) {
-                    items.last_mut().unwrap().1.push(dedent(lines[j]));
+                    items.last_mut().unwrap().1.push(dedent(lines[j], column));
                     j += 1;
                     continue;
                 }
@@ -655,9 +678,12 @@ impl Compiler {
             }
         });
         let (alpha, start) = match param.as_deref() {
-            Some(p) if p.chars().all(|c| c.is_ascii_uppercase()) && !p.is_empty() => {
-                (true, alpha_to_n(p))
-            }
+            Some(p) if p.chars().all(|c| c.is_ascii_uppercase()) && !p.is_empty() => (
+                true,
+                alpha_to_n(p).ok_or_else(|| {
+                    syntax(&format!("alphabetic list ordinal `{p}` is out of range"))
+                })?,
+            ),
             Some(p) if p.chars().all(|c| c.is_ascii_digit()) && !p.is_empty() => (
                 false,
                 p.parse::<u32>()
@@ -674,7 +700,10 @@ impl Compiler {
                 .split_once(". ")
                 .map(|(_, t)| t)
                 .unwrap_or_else(|| marker.strip_prefix(". ").unwrap_or(marker));
-            let value = start + n as u32;
+            let value = u32::try_from(n)
+                .ok()
+                .and_then(|n| start.checked_add(n))
+                .ok_or_else(|| syntax("list ordinal out of range"))?;
             let taxis = if alpha {
                 n_to_alpha(value)
             } else {
@@ -800,12 +829,14 @@ impl Compiler {
             return Ok(i + 1);
         }
 
-        // Block stage direction.
+        // Block stage direction: it ends an open dialogue.
         if trimmed == "@:[" {
+            self.close_dialogue();
             self.out.push(trimmed.to_string());
             return Ok(i + 1);
         }
         if let Some(rest) = trimmed.strip_prefix("@:[ ") {
+            self.close_dialogue();
             if trimmed.contains("]:@") {
                 self.push_inline(trimmed)?;
                 return Ok(i + 1);
@@ -935,6 +966,13 @@ impl Compiler {
         let chars: Vec<char> = s.chars().collect();
         let mut out = String::new();
         let mut emph: Vec<Emph> = Vec::new();
+        // Index just past the last emphasis opener: a delimiter
+        // there may open as well (`/*nested*/`).
+        let mut after_opener = usize::MAX;
+        // Per kind, where its last possible closer sits (found on
+        // first need): an opener has a closer ahead iff that is at
+        // or past it, so no opener rescans the paragraph.
+        let mut last_closers: [Option<Option<usize>>; 3] = [None; 3];
         let mut i = 0;
         while i < chars.len() {
             let c = chars[i];
@@ -1017,6 +1055,7 @@ impl Compiler {
                 for &kind in candidates {
                     let width = kind.width();
                     let prev = if i == 0 { None } else { Some(chars[i - 1]) };
+                    let open_prev = if i == after_opener { None } else { prev };
                     let next = chars.get(i + width).copied();
                     let closer = kind.closer();
                     // Close?
@@ -1032,13 +1071,16 @@ impl Compiler {
                     }
                     // Open?
                     if matches_at(&chars, i, kind.opener())
-                        && flank_open(prev, next)
+                        && flank_open(open_prev, next)
                         && !emph.contains(&kind)
-                        && closer_ahead(&chars, i + width, kind)
+                        && last_closers[kind as usize]
+                            .get_or_insert_with(|| last_closer(&chars, kind))
+                            .is_some_and(|at| at >= i + width)
                     {
                         out.push_str(kind.sim());
                         emph.push(kind);
                         i += width;
+                        after_opener = i;
                         handled = true;
                         break;
                     }
@@ -1255,8 +1297,35 @@ fn is_ws(c: Option<char>) -> bool {
     c.is_none_or(|c| c.is_whitespace())
 }
 
+/// Opening punctuation: brackets and quotation marks (either
+/// form of a mark, since which one opens varies by language, and
+/// the apostrophe of an elision: `l'/Odyssée/`).
+fn is_opening_punct(c: char) -> bool {
+    matches!(
+        c,
+        '(' | '['
+            | '{'
+            | '"'
+            | '\''
+            | '\u{2018}'
+            | '\u{2019}'
+            | '\u{201A}'
+            | '\u{201C}'
+            | '\u{201D}'
+            | '\u{201E}'
+            | '\u{00AB}'
+            | '\u{00BB}'
+            | '\u{2039}'
+            | '\u{203A}'
+            | '\u{00BF}'
+            | '\u{00A1}'
+    )
+}
+
+/// A delimiter opens after nothing, whitespace, or opening
+/// punctuation, and before a non-space (spec: flanking rules).
 fn flank_open(prev: Option<char>, next: Option<char>) -> bool {
-    let before_ok = prev.is_none_or(|c| c.is_whitespace() || !c.is_alphanumeric());
+    let before_ok = prev.is_none_or(|c| c.is_whitespace() || is_opening_punct(c));
     let after_ok = next.is_some_and(|c| !c.is_whitespace());
     before_ok && after_ok
 }
@@ -1267,9 +1336,12 @@ fn flank_close(prev: Option<char>, next: Option<char>) -> bool {
     before_ok && after_ok
 }
 
-fn closer_ahead(chars: &[char], from: usize, kind: Emph) -> bool {
+/// Index of the last delimiter in the paragraph that can close
+/// `kind`, if any.
+fn last_closer(chars: &[char], kind: Emph) -> Option<usize> {
     let closer = kind.closer();
-    let mut i = from;
+    let mut last = None;
+    let mut i = 0;
     while i < chars.len() {
         if chars[i] == '\\' {
             i += 2;
@@ -1279,12 +1351,12 @@ fn closer_ahead(chars: &[char], from: usize, kind: Emph) -> bool {
             let prev = if i == 0 { None } else { Some(chars[i - 1]) };
             let next = chars.get(i + closer.chars().count()).copied();
             if flank_close(prev, next) {
-                return true;
+                last = Some(i);
             }
         }
         i += 1;
     }
-    false
+    last
 }
 
 fn matches_at(chars: &[char], i: usize, s: &str) -> bool {
@@ -1402,8 +1474,20 @@ fn aside_kind(t: &str) -> Option<String> {
 }
 
 fn note_def_parts(t: &str) -> Option<(usize, String, String)> {
-    for (fi, (marker, _, _)) in NOTE_FAMILIES.iter().enumerate() {
+    for (fi, (marker, episim, _)) in NOTE_FAMILIES.iter().enumerate() {
         if let Some(rest) = t.strip_prefix(marker) {
+            // An episim before the next note opener makes this an
+            // inline note opening the paragraph, not a definition.
+            let next_open = NOTE_FAMILIES
+                .iter()
+                .filter_map(|(m, _, _)| rest.find(m))
+                .min();
+            if rest
+                .find(episim)
+                .is_some_and(|end| next_open.is_none_or(|n| end < n))
+            {
+                return None;
+            }
             let mut end = 0;
             let chars: Vec<char> = rest.chars().collect();
             while end < chars.len() && (chars[end].is_ascii_alphanumeric() || chars[end] == '-') {
@@ -1476,20 +1560,40 @@ fn is_drama_boundary(t: &str) -> bool {
     t.starts_with("@:") || t == "~:@"
 }
 
+/// The episim of a division, an act or a scene, written out.
+fn is_enclosing_episim(t: &str) -> bool {
+    DIV_EPISYMS.contains(&t) || t == "=:@" || t == "#:@"
+}
+
 fn is_indented(l: &str) -> bool {
     l.starts_with("  ") || l.starts_with('\t')
 }
 
-fn dedent(l: &str) -> String {
-    l.strip_prefix("  ")
-        .or_else(|| l.strip_prefix('\t'))
-        .unwrap_or(l)
-        .to_string()
+/// The column at which an item's text starts: the width of its
+/// marker (`- ` and `. ` are two columns, `13. ` four).
+fn text_column(item: &str) -> usize {
+    match list_kind(item) {
+        Some(ListKind::Ordered) => item.find(". ").map_or(2, |p| p + 2),
+        _ => 2,
+    }
 }
 
-fn alpha_to_n(s: &str) -> u32 {
-    s.chars()
-        .fold(0u32, |acc, c| acc * 26 + (c as u32 - 'A' as u32 + 1))
+/// Strip a continuation line's indentation up to the item's text
+/// column (a tab stands for the whole indentation).
+fn dedent(l: &str, column: usize) -> String {
+    if let Some(rest) = l.strip_prefix('\t') {
+        return rest.to_string();
+    }
+    let indent = l.len() - l.trim_start_matches(' ').len();
+    l[indent.min(column)..].to_string()
+}
+
+/// The number an alphabetic ordinal stands for (`A` is 1, `AA`
+/// 27), or `None` when it does not fit.
+fn alpha_to_n(s: &str) -> Option<u32> {
+    s.chars().try_fold(0u32, |acc, c| {
+        acc.checked_mul(26)?.checked_add(c as u32 - 'A' as u32 + 1)
+    })
 }
 
 fn n_to_alpha(mut n: u32) -> String {

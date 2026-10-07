@@ -80,6 +80,40 @@ fn main_loop(connection: Connection) -> Result<(), Box<dyn std::error::Error + S
     Ok(())
 }
 
+/// Deserialize a request's params. Malformed params answer the
+/// request with InvalidParams and yield `None`: a bad message is
+/// the client's problem, never a reason to leave the main loop.
+fn extract_request<P: serde::de::DeserializeOwned>(
+    connection: &Connection,
+    req: Request,
+    method: &str,
+) -> Result<Option<(RequestId, P)>, Box<dyn std::error::Error + Sync + Send>> {
+    let id = req.id.clone();
+    match req.extract::<P>(method) {
+        Ok(pair) => Ok(Some(pair)),
+        Err(e) => {
+            let response = Response::new_err(id, ErrorCode::InvalidParams as i32, e.to_string());
+            connection.sender.send(Message::Response(response))?;
+            Ok(None)
+        }
+    }
+}
+
+/// Deserialize a notification's params; a malformed notification
+/// is dropped (there is no reply channel for it).
+fn extract_notification<P: serde::de::DeserializeOwned>(
+    note: Notification,
+    method: &str,
+) -> Option<P> {
+    match note.extract::<P>(method) {
+        Ok(params) => Some(params),
+        Err(e) => {
+            eprintln!("atrep-lsp: ignoring malformed notification: {e}");
+            None
+        }
+    }
+}
+
 fn handle_request(
     connection: &Connection,
     docs: &Docs,
@@ -87,8 +121,14 @@ fn handle_request(
 ) -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
     match req.method.as_str() {
         "textDocument/semanticTokens/full" => {
-            let (id, params): (RequestId, SemanticTokensParams) =
-                req.extract("textDocument/semanticTokens/full")?;
+            let Some((id, params)) = extract_request::<SemanticTokensParams>(
+                connection,
+                req,
+                "textDocument/semanticTokens/full",
+            )?
+            else {
+                return Ok(());
+            };
             let uri = params.text_document.uri;
             let response = match docs.get(uri.as_str()) {
                 Some(text) => {
@@ -106,8 +146,14 @@ fn handle_request(
             connection.sender.send(Message::Response(response))?;
         }
         "textDocument/documentSymbol" => {
-            let (id, params): (RequestId, DocumentSymbolParams) =
-                req.extract("textDocument/documentSymbol")?;
+            let Some((id, params)) = extract_request::<DocumentSymbolParams>(
+                connection,
+                req,
+                "textDocument/documentSymbol",
+            )?
+            else {
+                return Ok(());
+            };
             let value = with_structure(docs, &params.text_document.uri, |s, _| {
                 serde_json::to_value(DocumentSymbolResponse::Nested(s.document_symbols()))
             })?;
@@ -116,8 +162,14 @@ fn handle_request(
                 .send(Message::Response(Response::new_ok(id, value)))?;
         }
         "textDocument/foldingRange" => {
-            let (id, params): (RequestId, FoldingRangeParams) =
-                req.extract("textDocument/foldingRange")?;
+            let Some((id, params)) = extract_request::<FoldingRangeParams>(
+                connection,
+                req,
+                "textDocument/foldingRange",
+            )?
+            else {
+                return Ok(());
+            };
             let value = with_structure(docs, &params.text_document.uri, |s, _| {
                 serde_json::to_value(s.folding_ranges())
             })?;
@@ -126,8 +178,14 @@ fn handle_request(
                 .send(Message::Response(Response::new_ok(id, value)))?;
         }
         "textDocument/definition" => {
-            let (id, params): (RequestId, GotoDefinitionParams) =
-                req.extract("textDocument/definition")?;
+            let Some((id, params)) = extract_request::<GotoDefinitionParams>(
+                connection,
+                req,
+                "textDocument/definition",
+            )?
+            else {
+                return Ok(());
+            };
             let tdp = params.text_document_position_params;
             let uri = tdp.text_document.uri.clone();
             let value = with_structure(docs, &tdp.text_document.uri, |s, _| {
@@ -144,8 +202,11 @@ fn handle_request(
                 .send(Message::Response(Response::new_ok(id, value)))?;
         }
         "textDocument/references" => {
-            let (id, params): (RequestId, ReferenceParams) =
-                req.extract("textDocument/references")?;
+            let Some((id, params)) =
+                extract_request::<ReferenceParams>(connection, req, "textDocument/references")?
+            else {
+                return Ok(());
+            };
             let tdp = params.text_document_position;
             let uri = tdp.text_document.uri.clone();
             let include = params.context.include_declaration;
@@ -165,8 +226,14 @@ fn handle_request(
                 .send(Message::Response(Response::new_ok(id, value)))?;
         }
         "textDocument/selectionRange" => {
-            let (id, params): (RequestId, SelectionRangeParams) =
-                req.extract("textDocument/selectionRange")?;
+            let Some((id, params)) = extract_request::<SelectionRangeParams>(
+                connection,
+                req,
+                "textDocument/selectionRange",
+            )?
+            else {
+                return Ok(());
+            };
             let value = with_structure(docs, &params.text_document.uri, |s, _| {
                 let ranges: Vec<_> = params
                     .positions
@@ -180,7 +247,11 @@ fn handle_request(
                 .send(Message::Response(Response::new_ok(id, value)))?;
         }
         "textDocument/hover" => {
-            let (id, params): (RequestId, HoverParams) = req.extract("textDocument/hover")?;
+            let Some((id, params)) =
+                extract_request::<HoverParams>(connection, req, "textDocument/hover")?
+            else {
+                return Ok(());
+            };
             let tdp = params.text_document_position_params;
             let value = with_structure(docs, &tdp.text_document.uri, |s, text| {
                 match s.hover(text, tdp.position) {
@@ -229,13 +300,21 @@ fn handle_notification(
 ) -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
     match note.method.as_str() {
         "textDocument/didOpen" => {
-            let params: DidOpenTextDocumentParams = note.extract("textDocument/didOpen")?;
+            let Some(params) =
+                extract_notification::<DidOpenTextDocumentParams>(note, "textDocument/didOpen")
+            else {
+                return Ok(());
+            };
             let uri = params.text_document.uri;
             docs.insert(uri.as_str().to_string(), params.text_document.text);
             publish(connection, docs, uri)?;
         }
         "textDocument/didChange" => {
-            let params: DidChangeTextDocumentParams = note.extract("textDocument/didChange")?;
+            let Some(params) =
+                extract_notification::<DidChangeTextDocumentParams>(note, "textDocument/didChange")
+            else {
+                return Ok(());
+            };
             let uri = params.text_document.uri;
             // FULL sync: the last change carries the whole document.
             if let Some(change) = params.content_changes.into_iter().next_back() {
@@ -244,7 +323,11 @@ fn handle_notification(
             publish(connection, docs, uri)?;
         }
         "textDocument/didClose" => {
-            let params: DidCloseTextDocumentParams = note.extract("textDocument/didClose")?;
+            let Some(params) =
+                extract_notification::<DidCloseTextDocumentParams>(note, "textDocument/didClose")
+            else {
+                return Ok(());
+            };
             let uri = params.text_document.uri;
             docs.remove(uri.as_str());
             // clear stale diagnostics

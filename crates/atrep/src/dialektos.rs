@@ -397,6 +397,7 @@ const STD_DIALEKTOI: &[(&str, &str)] = &[
     ("at-usfm", include_str!("../std/at-usfm.dia")),
     ("litogramma", include_str!("../std/litogramma.dia")),
     ("bibliogramma", include_str!("../std/bibliogramma.dia")),
+    ("lexigramma", include_str!("../std/lexigramma.dia")),
 ];
 
 /// Embedded standard-library glossae: (dialektos, language, source).
@@ -616,6 +617,14 @@ fn parse_definition(
                     ));
                 };
                 let canonical = canonical.trim().to_string();
+                if canonical.is_empty() {
+                    return Err(Error::at(
+                        ErrorKind::InvalidLektos(format!(
+                            "vocabulary `{name}`: line `{vline}` names no canonical term"
+                        )),
+                        loc(i),
+                    ));
+                }
                 let entry = vocab.terms.entry(canonical.clone()).or_default();
                 for alias in aliases.split_whitespace() {
                     entry.insert(alias.to_lowercase());
@@ -673,6 +682,27 @@ fn parse_definition(
             loc(i + 1),
         ));
     }
+    // A `lemma=<vocab>` / `@% <vocab>` binding names a vocabulary
+    // of this dialektos (its own or an inherited one); an
+    // undefined one would make canonicalization a silent no-op.
+    for def in dialektos.sims.values() {
+        for (what, vocab) in [
+            ("lemma", &def.lemma_vocabulary),
+            ("genos", &def.genos_vocabulary),
+        ] {
+            if let Some(vocab) = vocab
+                && !dialektos.vocabularies.contains_key(vocab)
+            {
+                return Err(Error::at(
+                    ErrorKind::InvalidLektos(format!(
+                        "sim `{}`: {what} vocabulary `{vocab}` is not defined",
+                        def.name
+                    )),
+                    loc(lines.len()),
+                ));
+            }
+        }
+    }
     Ok(dialektos)
 }
 
@@ -708,6 +738,12 @@ fn apply_inheritance(
     // symbol, symbol here), so localized names keep working in
     // the inheriting dialektos's plerographic spelling.
     let parent_glossae = parent.glossae.clone();
+    // The parent's vocabularies follow too: a sim's
+    // `lemma=<vocab>` / `@% <vocab>` binding must resolve in the
+    // inheriting dialektos, or canonicalization silently stops.
+    // Full inheritance brings every vocabulary (a local sim may
+    // bind one of the parent's); an import brings the bound ones.
+    let parent_vocabularies = parent.vocabularies.clone();
     let mut brought: Vec<(String, String)> = Vec::new();
 
     let mut merge = |def: SimDef| -> Result<()> {
@@ -752,11 +788,32 @@ fn apply_inheritance(
                 let mut parts = spec.split_whitespace();
                 let sym = parts.next().unwrap_or("").to_string();
                 let alias = parts.next().map(str::to_string);
-                if parts.next().is_some() {
+                if sym.is_empty() || parts.next().is_some() {
                     return Err(Error::at(
                         ErrorKind::InvalidLektos(format!("malformed import: `{spec}`")),
                         loc,
                     ));
+                }
+                // The alias becomes the sim's symbol here, so the
+                // ostensive symbol grammar applies to it.
+                if let Some(alias) = &alias {
+                    if !alias.chars().all(sigil::is_symbolic) {
+                        return Err(Error::at(
+                            ErrorKind::InvalidLektos(format!(
+                                "import alias `{alias}`: a symbol is a run of symbolic characters"
+                            )),
+                            loc,
+                        ));
+                    }
+                    if alias.contains('{') || alias.contains('}') {
+                        return Err(Error::at(
+                            ErrorKind::InvalidLektos(format!(
+                                "import alias `{alias}`: `{{` and `}}` are reserved and cannot \
+                                 appear in a symbol"
+                            )),
+                            loc,
+                        ));
+                    }
                 }
                 let mut def =
                     parent.sims.get(&sym).cloned().ok_or_else(|| {
@@ -778,6 +835,21 @@ fn apply_inheritance(
             if let Some(name) = names.get(psym) {
                 entry.entry(csym.clone()).or_insert_with(|| name.clone());
             }
+        }
+    }
+    let whole = matches!(recorded, InheritKind::Full | InheritKind::Exclude(_));
+    for (name, vocab) in parent_vocabularies {
+        let bound = brought.iter().any(|(_, csym)| {
+            let def = &dialektos.sims[csym];
+            def.lemma_vocabulary.as_deref() == Some(name.as_str())
+                || def.genos_vocabulary.as_deref() == Some(name.as_str())
+        });
+        if !whole && !bound {
+            continue;
+        }
+        let entry = dialektos.vocabularies.entry(name).or_default();
+        for (canonical, aliases) in vocab.terms {
+            entry.terms.entry(canonical).or_default().extend(aliases);
         }
     }
     dialektos.lineage.push(InheritOp {
@@ -890,6 +962,12 @@ fn parse_sim_block(
             Some((h, v)) => (h, Some(v.trim().to_string())),
             None => (header, None),
         };
+        if bound_vocab.as_deref() == Some("") {
+            return Err(Error::at(
+                ErrorKind::InvalidLektos(format!("sim `{name}`: `lemma=` names no vocabulary")),
+                loc(idx),
+            ));
+        }
         lemma_vocabulary = bound_vocab;
         let lemma = match header {
             "" => Optionality::Unsupported,
@@ -1004,7 +1082,14 @@ fn parse_sim_block(
         let parent_open = format!("{sig}^(");
         let genos_vocab_open = format!("{sig}% ");
         if let Some(rest) = line.strip_prefix(genos_vocab_open.as_str()) {
-            def.genos_vocabulary = Some(rest.trim().to_string());
+            let vocab = rest.trim();
+            if vocab.is_empty() {
+                return Err(Error::at(
+                    ErrorKind::InvalidLektos(format!("sim `{name}`: `{sig}%` names no vocabulary")),
+                    loc(idx),
+                ));
+            }
+            def.genos_vocabulary = Some(vocab.to_string());
             idx += 1;
             continue;
         }

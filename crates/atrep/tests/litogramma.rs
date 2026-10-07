@@ -102,12 +102,24 @@ Ode on Solitude
 /// Absent the sibling checkout (standalone), the guard is skipped.
 #[test]
 fn std_copies_track_the_litogramma_repo() {
+    std_copies_track("litogramma", 11);
+}
+
+/// The same guard for the lexigramma repo (the dictionary
+/// dialektos and its exos ship in std the same way).
+#[test]
+fn std_copies_track_the_lexigramma_repo() {
+    std_copies_track("lexigramma", 3);
+}
+
+fn std_copies_track(name: &str, at_least: usize) {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
         .parent()
         .unwrap()
-        .join("../litogramma");
+        .join("..")
+        .join(name);
     if !repo.is_dir() {
         return;
     }
@@ -123,12 +135,14 @@ fn std_copies_track_the_litogramma_repo() {
         shared += 1;
         assert!(
             std::fs::read(&path).unwrap() == std::fs::read(&theirs).unwrap(),
-            "std/{name} has drifted from the litogramma repo — run \
-             scripts/vendor-litogramma.sh pull (or push)"
+            "std/{name} has drifted from the {} repo — run \
+             scripts/vendor-litogramma.sh pull (or push) {}",
+            repo.display(),
+            repo.display()
         );
     }
     assert!(
-        shared >= 11,
+        shared >= at_least,
         "the vendored set shrank: {shared} shared files"
     );
 }

@@ -46,7 +46,7 @@ fn lex0_imports_as_lexigramma() {
     assert!(s.contains("@:(2)"), "{s}");
     // Citation with author annotation; equivalent with language.
     assert!(s.contains("@~the river bank~@ @,Twain,@.author"), "{s}");
-    assert!(s.contains("@{Ufer}@.de"), "{s}");
+    assert!(s.contains("@=>Ufer<=@.de"), "{s}");
     // Usage label with mapped genos.
     assert!(s.contains("@[Brit.]@.geo"), "{s}");
     // Cross-reference resolved from xml:id to the autonym.

@@ -24,8 +24,10 @@ _ \_
 
 >-@
 
+@@/ An autolink's target is read without backslash processing,
+@@/ so it is written raw.
 @-> ><
-<@(grammata)>
+<@((grammata))>
 >-@
 
 @-> #
@@ -68,8 +70,11 @@ _ \_
 - @(grammata:  )
 >-@
 
+@@/ Continuation lines hang under four spaces: enough for a
+@@/ two-digit marker, and within the content column plus three
+@@/ that a one-digit marker tolerates.
 @-> .
-@(taxis). @(grammata:   )
+@(taxis). @(grammata:    )
 >-@
 
 @-> *verbatim
@@ -85,6 +90,18 @@ _ \_
 @-> *media
 ![](@((param)))
 
+>-@
+
+@@/ The footnote extension: the callout is a deixis, the body a
+@@/ para-simmere on the same symbol. The label is an identifier,
+@@/ written verbatim; continuation lines of a multi-paragraph
+@@/ body indent four spaces.
+@-> *deixis ^
+[^@((onym))]
+>-@
+
+@-> ^
+[^@((onym))]: @(grammata:    )
 >-@
 
 @-> *onym-anchor

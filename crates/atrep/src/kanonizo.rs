@@ -52,6 +52,9 @@ pub struct KanonizoOptions {
 struct Ctx<'a> {
     fetcher: &'a dyn Fetcher,
     cfg: &'a fetch::FetchConfig,
+    /// The root document's directory: every local transclusion and
+    /// media target, at any inclusion depth, must stay inside it.
+    base: PathBuf,
 }
 
 impl Ctx<'_> {
@@ -87,19 +90,26 @@ pub fn kanonizo_file_with(
     let ctx = Ctx {
         fetcher,
         cfg: &opts.fetch,
+        base: path.parent().unwrap_or(Path::new(".")).to_path_buf(),
     };
     let mut seen = Seen::default();
     let mut doc = load_and_expand(path, &mut seen, &ctx)?;
     expand_axiomata(&mut doc)?;
-    validate_deixes(&doc.blocks)?;
     validate_milestones(&doc.blocks)?;
     // Autonym sims (spec: "Auto-Onymization") pin their onyms from
-    // their lemmas before canonical renumbering, which exempts them.
+    // their lemmas before canonical renumbering, which exempts them
+    // - and before deixis validation, so a deixis may point at an
+    // autonym the source leaves to be computed.
     let base = path.parent().unwrap_or(Path::new(".")).to_path_buf();
     let dial = dialektos::resolve(&base, &doc.dialect_id)?;
-    let autonyms = assign_autonyms(&mut doc.blocks, &dial)?;
+    let autonyms = assign_autonyms(&mut doc.blocks, &dial, &base)?;
+    validate_deixes(&doc.blocks)?;
     canonicalize_onyms(&mut doc, &autonyms);
-    evaluate_taxis_except(&mut doc.blocks, &autonym_symbols(&dial))?;
+    evaluate_taxis_except(
+        &mut doc.blocks,
+        &autonym_symbols(&dial),
+        Some((&dial.id, &base)),
+    )?;
     // Vocabulary normalization (spec: "Vocabulary
     // Normalization"): aliases in any language canonicalize, so
     // authoring language cannot fork the kanon.
@@ -108,6 +118,7 @@ pub fn kanonizo_file_with(
     normalize_document(&mut doc);
     let base_dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
     let media = process_media(&mut doc.blocks, &base_dir, &ctx)?;
+    dendron::check_serializable(&doc)?;
     let kanon = dendron::serialize(&doc);
     Ok(KanonResult {
         document: doc,
@@ -136,8 +147,12 @@ fn autonym_symbols(dial: &dialektos::Dialektos) -> std::collections::HashSet<Str
 /// embedded dialektos of englossis blocks (the document's
 /// directory, or `.` for in-memory sources).
 pub fn tasso(doc: &mut Document, dial: &dialektos::Dialektos, base: &Path) -> Result<()> {
-    assign_autonyms(&mut doc.blocks, dial)?;
-    evaluate_taxis_except(&mut doc.blocks, &autonym_symbols(dial))?;
+    assign_autonyms(&mut doc.blocks, dial, base)?;
+    evaluate_taxis_except(
+        &mut doc.blocks,
+        &autonym_symbols(dial),
+        Some((&dial.id, base)),
+    )?;
     normalize_vocabularies(&mut doc.blocks, dial, base);
     Ok(())
 }
@@ -193,7 +208,9 @@ fn validate_milestones(blocks: &[Block]) -> Result<()> {
                     walk(children, seen)?;
                     walk_inlines(hypograph, seen)?;
                 }
-                Block::ParaDiaphane { children, .. } => walk(children, seen)?,
+                Block::ParaDiaphane { children, .. } | Block::MonadEnglossis { children, .. } => {
+                    walk(children, seen)?
+                }
                 Block::Stichoi {
                     lemma,
                     strophes,
@@ -317,16 +334,25 @@ fn load_and_expand(path: &Path, seen: &mut Seen, ctx: &Ctx) -> Result<Document> 
     let mut doc = parser::parse_document(&normalized, path)?;
 
     let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
-    expand_transclusions(&mut doc.blocks, &dir, seen, ctx).map_err(|e| e.via(path))?;
+    expand_transclusions(
+        &mut doc.blocks,
+        Origin::Local(&dir),
+        dir.as_path(),
+        seen,
+        ctx,
+    )
+    .map_err(|e| e.via(path))?;
 
     seen.paths.pop();
     Ok(doc)
 }
 
 /// Fetch and expand a remote document. Remote files have no local
-/// directory: the dialektos declaration and any relative
-/// transclusions resolve against `dir`, the including document's
-/// directory (pilot decision; see README spec gaps).
+/// directory: the dialektos declaration resolves against `dir`,
+/// the including document's directory (pilot decision; see README
+/// spec gaps), while the document's own relative targets
+/// (transclusions and media) resolve against its URL, never
+/// against the local file system.
 fn load_and_expand_remote(url: &str, dir: &Path, seen: &mut Seen, ctx: &Ctx) -> Result<Document> {
     if seen.urls.iter().any(|u| u == url) {
         return Err(Error::new(ErrorKind::TransclusionCycle(url.to_string())));
@@ -347,7 +373,7 @@ fn load_and_expand_remote(url: &str, dir: &Path, seen: &mut Seen, ctx: &Ctx) -> 
         .unwrap_or("remote.atd");
     let parse_path = dir.join(name);
     let mut doc = parser::parse_document(&normalized, &parse_path).map_err(via)?;
-    expand_transclusions(&mut doc.blocks, dir, seen, ctx).map_err(via)?;
+    expand_transclusions(&mut doc.blocks, Origin::Remote(url), dir, seen, ctx).map_err(via)?;
 
     seen.urls.pop();
     Ok(doc)
@@ -357,8 +383,101 @@ fn is_url(target: &str) -> bool {
     target.starts_with("http://") || target.starts_with("https://")
 }
 
+/// Where a document came from, which decides how its relative
+/// targets resolve: against its directory (local) or its URL
+/// (remote).
+#[derive(Clone, Copy)]
+enum Origin<'a> {
+    Local(&'a Path),
+    Remote(&'a str),
+}
+
+/// Resolve a relative reference against a base URL (RFC 3986
+/// section 5.2, reduced to the http(s) shapes the fetcher accepts):
+/// a root-relative target replaces the path, any other target
+/// replaces the last segment, and dot segments are removed.
+fn resolve_url(base: &str, target: &str) -> String {
+    let scheme_end = base.find("://").map(|i| i + 3).unwrap_or(0);
+    let path_start = base[scheme_end..]
+        .find('/')
+        .map(|i| scheme_end + i)
+        .unwrap_or(base.len());
+    let origin = &base[..path_start];
+    let base_path = base[path_start..].split(['?', '#']).next().unwrap_or("");
+    let merged = if target.starts_with('/') {
+        target.to_string()
+    } else {
+        match base_path.rfind('/') {
+            Some(i) => format!("{}{}", &base_path[..=i], target),
+            None => format!("/{target}"),
+        }
+    };
+    let mut segments: Vec<&str> = Vec::new();
+    for segment in merged.split('/').skip(1) {
+        match segment {
+            "." => {}
+            ".." => {
+                segments.pop();
+            }
+            s => segments.push(s),
+        }
+    }
+    format!("{origin}/{}", segments.join("/"))
+}
+
+/// Lexically absolute form of a path: anchored at the current
+/// directory when relative, with `.` and `..` components folded.
+fn lexical_absolute(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("/"))
+            .join(path)
+    };
+    let mut out = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            c => out.push(c.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Resolve a local target against the including document's
+/// directory, refusing anything that reaches outside the root
+/// document's directory: an absolute target, or a relative one
+/// whose `..` components climb above it.
+fn contained_path(base: &Path, dir: &Path, target: &str) -> Result<PathBuf> {
+    let escapes = |what: &str| {
+        Error::new(ErrorKind::MissingResource(format!(
+            "{target}: {what} (targets must stay inside {})",
+            if base.as_os_str().is_empty() {
+                "the document's directory".to_string()
+            } else {
+                base.display().to_string()
+            }
+        )))
+    };
+    let target_path = Path::new(target);
+    if target_path.is_absolute() || target_path.has_root() {
+        return Err(escapes("absolute targets are refused"));
+    }
+    let resolved = dir.join(target_path);
+    if !lexical_absolute(&resolved).starts_with(lexical_absolute(base)) {
+        return Err(escapes("the target escapes the document directory"));
+    }
+    Ok(resolved)
+}
+
 fn expand_transclusions(
     blocks: &mut [Block],
+    origin: Origin<'_>,
     dir: &Path,
     seen: &mut Seen,
     ctx: &Ctx,
@@ -367,10 +486,14 @@ fn expand_transclusions(
     while i < blocks.len() {
         match &mut blocks[i] {
             Block::AnaphorEnglossis { target } => {
-                let inner = if is_url(target) {
-                    load_and_expand_remote(&target.clone(), dir, seen, ctx)?
-                } else {
-                    load_and_expand(&dir.join(target.as_str()), seen, ctx)?
+                let inner = match origin {
+                    _ if is_url(target) => load_and_expand_remote(&target.clone(), dir, seen, ctx)?,
+                    Origin::Remote(url) => {
+                        load_and_expand_remote(&resolve_url(url, target), dir, seen, ctx)?
+                    }
+                    Origin::Local(from) => {
+                        load_and_expand(&contained_path(&ctx.base, from, target)?, seen, ctx)?
+                    }
                 };
                 blocks[i] = Block::MonadEnglossis {
                     dialect: inner.dialect_id,
@@ -379,18 +502,25 @@ fn expand_transclusions(
                 };
             }
             Block::AnaphorEnlexis { target } => {
-                let content = if is_url(target) {
-                    let fetched = ctx.fetch(target)?;
-                    String::from_utf8(fetched.bytes)
-                        .map_err(|_| Error::new(ErrorKind::InvalidUtf8).via(Path::new(target)))?
-                } else {
-                    let target_path = dir.join(target.as_str());
-                    std::fs::read_to_string(&target_path).map_err(|e| {
-                        Error::new(ErrorKind::MissingResource(format!(
-                            "{}: {e}",
-                            target_path.display()
-                        )))
-                    })?
+                let content = match origin {
+                    Origin::Local(from) if !is_url(target) => {
+                        let target_path = contained_path(&ctx.base, from, target)?;
+                        std::fs::read_to_string(&target_path).map_err(|e| {
+                            Error::new(ErrorKind::MissingResource(format!(
+                                "{}: {e}",
+                                target_path.display()
+                            )))
+                        })?
+                    }
+                    _ => {
+                        let url = match origin {
+                            Origin::Remote(base) if !is_url(target) => resolve_url(base, target),
+                            _ => target.clone(),
+                        };
+                        let fetched = ctx.fetch(&url)?;
+                        String::from_utf8(fetched.bytes)
+                            .map_err(|_| Error::new(ErrorKind::InvalidUtf8).via(Path::new(&url)))?
+                    }
                 };
                 let content = if content.is_empty() || content.ends_with('\n') {
                     content
@@ -402,11 +532,21 @@ fn expand_transclusions(
                     ann: Annotations::default(),
                 };
             }
+            // A remote document's media lives next to it on the
+            // server: pin the URL now, before media processing
+            // (which resolves local targets) sees the parameter.
+            Block::Enmedia { param } => {
+                if let Origin::Remote(url) = origin
+                    && !is_url(param)
+                {
+                    *param = resolve_url(url, param);
+                }
+            }
             Block::Para { children, .. }
             | Block::ParaDiaphane { children, .. }
             | Block::MonadEnglossis { children, .. }
             | Block::ParaAxioma { children, .. } => {
-                expand_transclusions(children, dir, seen, ctx)?;
+                expand_transclusions(children, origin, dir, seen, ctx)?;
             }
             _ => {}
         }
@@ -422,6 +562,95 @@ fn expand_transclusions(
 enum AxiomaContent {
     Inline(Vec<Inline>),
     Block(Vec<Block>),
+}
+
+/// Upper bound on the total size of everything axioma references
+/// expand to in one document, in bytes of estimated tree size (see
+/// [`inline_weight`]). Definitions may reference earlier ones, so a
+/// chain that references its predecessor twice doubles at every
+/// link; the bound turns that into an error instead of exhausting
+/// memory.
+const MAX_AXIOMA_EXPANSION: usize = 64 * 1024 * 1024;
+
+/// Nominal size of one tree node, for the expansion bound.
+const NODE_WEIGHT: usize = 64;
+
+/// The axioma definitions seen so far, and the running size of
+/// what their references have expanded to.
+#[derive(Default)]
+struct Registry {
+    defs: HashMap<String, AxiomaContent>,
+    expanded: usize,
+}
+
+/// Account for one expansion of `onym` weighing `weight` against
+/// the running total.
+fn charge_expansion(expanded: &mut usize, onym: &str, weight: usize) -> Result<()> {
+    *expanded = expanded.saturating_add(weight);
+    if *expanded > MAX_AXIOMA_EXPANSION {
+        return Err(Error::new(ErrorKind::Syntax(format!(
+            "axioma expansion exceeds the size limit of {MAX_AXIOMA_EXPANSION} bytes \
+             at the reference to `{onym}` (do the definitions multiply each other?)"
+        ))));
+    }
+    Ok(())
+}
+
+/// Estimated in-memory size of an inline sequence: a nominal
+/// weight per node plus its text.
+fn inline_weight(inlines: &[Inline]) -> usize {
+    inlines
+        .iter()
+        .map(|inline| {
+            NODE_WEIGHT
+                + match inline {
+                    Inline::Text(t) => t.len(),
+                    Inline::VerbatimInline { content, .. } => content.len(),
+                    Inline::Endo { content, .. }
+                    | Inline::EndoDiaphane { content, .. }
+                    | Inline::EndoAxioma { content, .. } => inline_weight(content),
+                    _ => 0,
+                }
+        })
+        .sum()
+}
+
+/// Estimated in-memory size of a block sequence.
+fn block_weight(blocks: &[Block]) -> usize {
+    blocks
+        .iter()
+        .map(|block| {
+            NODE_WEIGHT
+                + match block {
+                    Block::Paragraph(inlines) => inline_weight(inlines),
+                    Block::Para {
+                        lemma,
+                        children,
+                        hypograph,
+                        ..
+                    } => inline_weight(lemma) + block_weight(children) + inline_weight(hypograph),
+                    Block::Stichoi {
+                        lemma,
+                        strophes,
+                        hypograph,
+                        ..
+                    } => {
+                        inline_weight(lemma)
+                            + strophes
+                                .iter()
+                                .flat_map(|strophe| &strophe.0)
+                                .map(|line| inline_weight(line))
+                                .sum::<usize>()
+                            + inline_weight(hypograph)
+                    }
+                    Block::ParaDiaphane { children, .. }
+                    | Block::MonadEnglossis { children, .. }
+                    | Block::ParaAxioma { children, .. } => block_weight(children),
+                    Block::VerbatimBlock { content, .. } => content.len(),
+                    _ => 0,
+                }
+        })
+        .sum()
 }
 
 /// What an onym declared in the source document is attached to,
@@ -443,7 +672,7 @@ enum OnymTarget {
 fn expand_axiomata(doc: &mut Document) -> Result<()> {
     let mut targets: HashMap<String, OnymTarget> = HashMap::new();
     collect_onym_targets(&doc.blocks, &mut targets);
-    let mut registry: HashMap<String, AxiomaContent> = HashMap::new();
+    let mut registry = Registry::default();
     expand_axiomata_blocks(&mut doc.blocks, &mut registry, &targets)
 }
 
@@ -566,7 +795,7 @@ fn inline_copy_text(inline: &Inline) -> String {
 
 fn expand_axiomata_blocks(
     blocks: &mut Vec<Block>,
-    registry: &mut HashMap<String, AxiomaContent>,
+    registry: &mut Registry,
     targets: &HashMap<String, OnymTarget>,
 ) -> Result<()> {
     let mut i = 0;
@@ -578,19 +807,24 @@ fn expand_axiomata_blocks(
                 let onym = onym.clone();
                 let mut content = std::mem::take(children);
                 expand_axiomata_blocks(&mut content, registry, targets)?;
-                registry.insert(onym, AxiomaContent::Block(content));
+                registry.defs.insert(onym, AxiomaContent::Block(content));
                 blocks.remove(i);
                 continue;
             }
             Block::AxiomaRefBlock { onym, enlexis } => {
                 let onym = onym.clone();
                 if *enlexis {
-                    blocks[i] = resolve_enlexis_block(&onym, registry, targets)?;
+                    let copy = resolve_enlexis_block(&onym, &registry.defs, targets)?;
+                    let weight = block_weight(std::slice::from_ref(&copy));
+                    charge_expansion(&mut registry.expanded, &onym, weight)?;
+                    blocks[i] = copy;
                     i += 1;
                 } else {
-                    let Some(AxiomaContent::Block(content)) = registry.get(onym.as_str()) else {
+                    let Some(AxiomaContent::Block(content)) = registry.defs.get(onym.as_str())
+                    else {
                         return Err(Error::new(ErrorKind::AxiomaBeforeDefinition(onym)));
                     };
+                    charge_expansion(&mut registry.expanded, &onym, block_weight(content))?;
                     let content = content.clone();
                     let n = content.len();
                     blocks.splice(i..=i, content);
@@ -712,7 +946,7 @@ fn resolve_enlexis_inline(
 
 fn expand_axiomata_inlines(
     inlines: &mut Vec<Inline>,
-    registry: &mut HashMap<String, AxiomaContent>,
+    registry: &mut Registry,
     targets: &HashMap<String, OnymTarget>,
 ) -> Result<()> {
     let mut i = 0;
@@ -722,19 +956,24 @@ fn expand_axiomata_inlines(
                 let onym = onym.clone();
                 let mut content = std::mem::take(content);
                 expand_axiomata_inlines(&mut content, registry, targets)?;
-                registry.insert(onym, AxiomaContent::Inline(content));
+                registry.defs.insert(onym, AxiomaContent::Inline(content));
                 inlines.remove(i);
                 continue;
             }
             Inline::AxiomaRef { onym, enlexis } => {
                 let onym = onym.clone();
                 if *enlexis {
-                    inlines[i] = resolve_enlexis_inline(&onym, registry, targets)?;
+                    let copy = resolve_enlexis_inline(&onym, &registry.defs, targets)?;
+                    let weight = inline_weight(std::slice::from_ref(&copy));
+                    charge_expansion(&mut registry.expanded, &onym, weight)?;
+                    inlines[i] = copy;
                     i += 1;
                 } else {
-                    let Some(AxiomaContent::Inline(content)) = registry.get(onym.as_str()) else {
+                    let Some(AxiomaContent::Inline(content)) = registry.defs.get(onym.as_str())
+                    else {
                         return Err(Error::new(ErrorKind::AxiomaBeforeDefinition(onym)));
                     };
+                    charge_expansion(&mut registry.expanded, &onym, inline_weight(content))?;
                     let content = content.clone();
                     let n = content.len();
                     inlines.splice(i..=i, content);
@@ -922,22 +1161,26 @@ fn check_deixes_inlines(
 /// referenced ones, and rewrite references (monosim parameters that
 /// match a declared onym).
 fn canonicalize_onyms(doc: &mut Document, exempt: &std::collections::HashSet<String>) {
+    // Declarations in document order, with a set beside the list so
+    // membership stays constant-time in documents with many onyms.
     let mut declared: Vec<String> = Vec::new();
+    let mut declared_set: std::collections::HashSet<String> = std::collections::HashSet::new();
     walk_annotations(&mut doc.blocks, &mut |what| {
         if let OnymSite::Declaration(name) = what
             && !exempt.contains(name.as_str())
-            && !declared.contains(name)
+            && !declared_set.contains(name)
         {
+            declared_set.insert(name.clone());
             declared.push(name.clone());
         }
     });
-    let mut referenced: Vec<String> = Vec::new();
+    let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
     walk_annotations(&mut doc.blocks, &mut |what| {
         if let OnymSite::Reference(param) = what
-            && declared.contains(param)
+            && declared_set.contains(param)
             && !referenced.contains(param)
         {
-            referenced.push(param.clone());
+            referenced.insert(param.clone());
         }
     });
     // Canonical numbering follows declaration order.
@@ -963,15 +1206,18 @@ fn canonicalize_onyms(doc: &mut Document, exempt: &std::collections::HashSet<Str
 /// is how homographs stay distinct. Kanonizo pins the value: an
 /// absent onym is filled, a matching one is kept (idempotence),
 /// a contradicting one is an error, and duplicates are errors.
-/// The returned set is exempt from canonical renumbering.
+/// The returned set is exempt from canonical renumbering. `base`
+/// resolves the embedded dialektos of englossis blocks, whose own
+/// sim definitions decide what is an autonym inside them.
 fn assign_autonyms(
     blocks: &mut [Block],
     dial: &dialektos::Dialektos,
+    base: &Path,
 ) -> Result<std::collections::HashSet<String>> {
     let mut assigned = std::collections::HashSet::new();
     let mut groups: std::collections::HashMap<String, (u64, Vec<u64>)> =
         std::collections::HashMap::new();
-    assign_autonyms_walk(blocks, dial, &mut assigned, &mut groups)?;
+    assign_autonyms_walk(blocks, dial, base, &mut assigned, &mut groups)?;
     // Homograph numbering is per lemma: every homograph carries a
     // taxis and the numbers run 1..n in document order.
     for (lemma, (untaxed, mut numbers)) in groups {
@@ -997,7 +1243,7 @@ fn assign_autonyms(
     Ok(assigned)
 }
 
-fn autonym_of(lemma: &[Inline], taxis: &Option<Taxis>) -> Option<String> {
+pub(crate) fn autonym_of(lemma: &[Inline], taxis: &Option<Taxis>) -> Option<String> {
     fn text_of(inlines: &[Inline], out: &mut String) {
         for inline in inlines {
             match inline {
@@ -1040,6 +1286,7 @@ fn autonym_of(lemma: &[Inline], taxis: &Option<Taxis>) -> Option<String> {
 fn assign_autonyms_walk(
     blocks: &mut [Block],
     dial: &dialektos::Dialektos,
+    base: &Path,
     assigned: &mut std::collections::HashSet<String>,
     groups: &mut std::collections::HashMap<String, (u64, Vec<u64>)>,
 ) -> Result<()> {
@@ -1061,6 +1308,12 @@ fn assign_autonyms_walk(
                     let base = autonym_of(lemma, &None);
                     if let Some(base) = base {
                         let entry = groups.entry(base).or_default();
+                        // A blank taxis autonumbers like any other,
+                        // in the sequence autonym sims use: per
+                        // lemma, in document order.
+                        if matches!(taxis, Some(Taxis::Auto)) {
+                            *taxis = Some(Taxis::Explicit(entry.1.len() as u64 + 1));
+                        }
                         match taxis {
                             Some(Taxis::Explicit(n)) => entry.1.push(*n),
                             _ => entry.0 += 1,
@@ -1088,13 +1341,23 @@ fn assign_autonyms_walk(
                         ))));
                     }
                 }
-                assign_autonyms_walk(children, dial, assigned, groups)?;
+                assign_autonyms_walk(children, dial, base, assigned, groups)?;
             }
             Block::ParaDiaphane { children, .. } => {
-                assign_autonyms_walk(children, dial, assigned, groups)?;
+                assign_autonyms_walk(children, dial, base, assigned, groups)?;
             }
-            Block::MonadEnglossis { children, .. } => {
-                assign_autonyms_walk(children, dial, assigned, groups)?;
+            // An englossis block answers to the embedded dialektos's
+            // own sim definitions (as vocabulary normalization does).
+            Block::MonadEnglossis {
+                dialect, children, ..
+            } => {
+                if dialect != &dial.id
+                    && let Ok(inner) = dialektos::resolve(base, dialect)
+                {
+                    assign_autonyms_walk(children, &inner, base, assigned, groups)?;
+                } else {
+                    assign_autonyms_walk(children, dial, base, assigned, groups)?;
+                }
             }
             _ => {}
         }
@@ -1186,7 +1449,12 @@ fn walk_annotations_inline(inlines: &mut [Inline], f: &mut dyn FnMut(OnymSite<'_
                     f(OnymSite::Declaration(o));
                 }
             }
-            Inline::Monosim { param, .. } => f(OnymSite::Reference(param)),
+            Inline::Monosim { param, ann, .. } => {
+                if let Some(o) = &ann.onym {
+                    f(OnymSite::Declaration(o));
+                }
+                f(OnymSite::Reference(param));
+            }
             Inline::Deixis { onym, ann, .. } => {
                 if let Some(o) = &ann.onym {
                     f(OnymSite::Declaration(o));
@@ -1226,11 +1494,18 @@ fn rewrite_onyms(blocks: &mut [Block], mapping: &HashMap<String, String>) {
             } => {
                 rewrite_ann(ann);
                 rewrite_onyms_inline(lemma, mapping);
-                for strophe in strophes {
-                    for line in &mut strophe.0 {
+                // A line that held only an unreferenced anchor is
+                // gone with it: kept empty it would serialize as a
+                // blank line, which reads back as a strophe break.
+                strophes.retain_mut(|strophe| {
+                    let had_lines = !strophe.0.is_empty();
+                    strophe.0.retain_mut(|line| {
+                        let had_content = !line.is_empty();
                         rewrite_onyms_inline(line, mapping);
-                    }
-                }
+                        !(had_content && line.is_empty())
+                    });
+                    !(had_lines && strophe.0.is_empty())
+                });
                 rewrite_onyms_inline(hypograph, mapping);
             }
             Block::ParaDiaphane { children, ann } | Block::MonadEnglossis { children, ann, .. } => {
@@ -1266,7 +1541,8 @@ fn rewrite_onyms_inline(inlines: &mut Vec<Inline>, mapping: &HashMap<String, Str
                 rewrite_onyms_inline(content, mapping);
             }
             Inline::VerbatimInline { ann, .. } => rewrite_ann(ann),
-            Inline::Monosim { param, .. } => {
+            Inline::Monosim { param, ann, .. } => {
+                rewrite_ann(ann);
                 if let Some(new) = mapping.get(param.as_str()) {
                     *param = new.clone();
                 }
@@ -1288,15 +1564,19 @@ fn rewrite_onyms_inline(inlines: &mut Vec<Inline>, mapping: &HashMap<String, Str
 // ---------------------------------------------------------------
 
 pub(crate) fn evaluate_taxis(blocks: &mut [Block]) -> Result<()> {
-    evaluate_taxis_except(blocks, &std::collections::HashSet::new())
+    evaluate_taxis_except(blocks, &std::collections::HashSet::new(), None)
 }
 
 /// Sibling-run taxis sequencing, skipping the given sim symbols:
 /// autonym sims number per lemma (homographs), not per sibling
-/// run, and are validated by `assign_autonyms` instead.
+/// run, and are validated by `assign_autonyms` instead. `scope`
+/// is the dialektos the exemptions come from and the directory
+/// that resolves others: an englossis block of a different
+/// dialektos then answers to its own autonym sims.
 pub(crate) fn evaluate_taxis_except(
     blocks: &mut [Block],
     exempt_symbols: &std::collections::HashSet<String>,
+    scope: Option<(&str, &Path)>,
 ) -> Result<()> {
     let mut run: Option<(String, u64)> = None;
     for block in blocks.iter_mut() {
@@ -1328,7 +1608,7 @@ pub(crate) fn evaluate_taxis_except(
                         }
                     }
                 }
-                evaluate_taxis_except(children, exempt_symbols)?;
+                evaluate_taxis_except(children, exempt_symbols, scope)?;
             }
             Block::Stichoi {
                 symbol: Some(symbol),
@@ -1357,11 +1637,23 @@ pub(crate) fn evaluate_taxis_except(
                     }
                 }
             }
-            Block::Para { children, .. }
-            | Block::ParaDiaphane { children, .. }
-            | Block::MonadEnglossis { children, .. } => {
+            Block::Para { children, .. } | Block::ParaDiaphane { children, .. } => {
                 run = None;
-                evaluate_taxis_except(children, exempt_symbols)?;
+                evaluate_taxis_except(children, exempt_symbols, scope)?;
+            }
+            Block::MonadEnglossis {
+                dialect, children, ..
+            } => {
+                run = None;
+                if let Some((id, base)) = scope
+                    && dialect != id
+                    && let Ok(inner) = dialektos::resolve(base, dialect)
+                {
+                    let inner_exempt = autonym_symbols(&inner);
+                    evaluate_taxis_except(children, &inner_exempt, Some((&inner.id, base)))?;
+                } else {
+                    evaluate_taxis_except(children, exempt_symbols, scope)?;
+                }
             }
             _ => run = None,
         }
@@ -1601,6 +1893,14 @@ fn normalize_blocks(blocks: &mut Vec<Block>) {
     blocks.retain(|b| !matches!(b, Block::Paragraph(inlines) if inlines.is_empty()));
 }
 
+/// The whitespace kanonizo normalizes (spec: "Whitespace
+/// Normalization" names tabs and spaces; a paragraph's line breaks
+/// are layout too). Every other space character — no-break, thin,
+/// ideographic — is content and survives untouched.
+fn is_layout_space(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\n' | '\r')
+}
+
 /// Normalize one inline sequence: merge adjacent text nodes,
 /// collapse whitespace runs, trim the sequence boundaries, recurse
 /// into nested inline content.
@@ -1631,7 +1931,7 @@ pub(crate) fn normalize_inline_seq(inlines: &mut Vec<Inline>) {
             let mut out = String::with_capacity(t.len());
             let mut in_ws = false;
             for c in t.chars() {
-                if c.is_whitespace() {
+                if is_layout_space(c) {
                     if !in_ws {
                         out.push(' ');
                     }
@@ -1646,10 +1946,10 @@ pub(crate) fn normalize_inline_seq(inlines: &mut Vec<Inline>) {
     }
     // Trim sequence boundaries.
     if let Some(Inline::Text(t)) = merged.first_mut() {
-        *t = t.trim_start().to_string();
+        *t = t.trim_start_matches(is_layout_space).to_string();
     }
     if let Some(Inline::Text(t)) = merged.last_mut() {
-        *t = t.trim_end().to_string();
+        *t = t.trim_end_matches(is_layout_space).to_string();
     }
     merged.retain(|i| !matches!(i, Inline::Text(t) if t.is_empty()));
     *inlines = merged;
@@ -1678,7 +1978,7 @@ fn process_media_blocks(
                     let fetched = ctx.fetch(param)?;
                     (fetched.bytes, fetched.content_type)
                 } else {
-                    let resolved = base_dir.join(param.as_str());
+                    let resolved = contained_path(base_dir, base_dir, param)?;
                     let bytes = std::fs::read(&resolved).map_err(|e| {
                         Error::new(ErrorKind::MissingResource(format!(
                             "{}: {e}",

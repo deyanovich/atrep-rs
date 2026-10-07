@@ -1,0 +1,357 @@
+@@@!atrep-exo
+@=lexigramma=>kindle
+
+@@/ Kindle lookup dictionary exomorphosis: the output is the
+@@/ idx-marked HTML of the Kindle Publishing Guidelines'
+@@/ dictionary chapter - every entry an idx:entry on the
+@@/ default lookup index, scriptable and spell-tolerant, its
+@@/ headword (and every variant form) an idx:orth lookup key -
+@@/ with the dictionary OPF and the kindle-pack script riding
+@@/ as assets. The OPF's x-metadata block (DictionaryInLanguage,
+@@/ DictionaryOutLanguage, DefaultLookupIndex) is what makes
+@@/ the device treat the book as a lookup dictionary,
+@@/ consultable from any text. Packaging:
+@@/
+@@/   atrep exo dict.atk kindle -o content.html
+@@/   sh kindle-pack content.html de en dict.mobi
+@@/
+@@/ The script requires kindlegen (Amazon's compiler, in the
+@@/ AUR): calibre's ebook-convert is no substitute - its
+@@/ sanitizer drops the idx:/mbp: elements with their contents
+@@/ and never compiles the INDX lookup index. Without
+@@/ kindlegen the script assembles the source package and
+@@/ says so. Cross-references land on the autonym anchors.
+
+@%
+& &amp;
+< &lt;
+> &gt;
+%@
+
+@-> *document
+<html xmlns:mbp="https://kindlegen.s3.amazonaws.com/AmazonKindlePublishingGuidelines.pdf" xmlns:idx="https://kindlegen.s3.amazonaws.com/AmazonKindlePublishingGuidelines.pdf">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+<title></title>
+</head>
+<body>
+<mbp:frameset>
+@(grammata)
+</mbp:frameset>
+</body>
+</html>
+>-@
+
+@-> *paragraph
+<p>@(grammata)</p>
+>-@
+
+@@/ ----- the entry: a lookup unit on the default index -----
+
+@-> !
+<idx:entry name="default" scriptable="yes" spell="yes">
+<idx:short><a id="@(onym)"></a>
+<idx:orth value="@(lemma)"><b class="headword">@(lemma)</b>@[<sup>@(taxis)</sup>]@</idx:orth>
+@(grammata)
+</idx:short>
+</idx:entry>
+<hr/>
+>-@
+
+@-> :
+<div class="sense"><b>@(taxis).</b>@[ <i>@(lemma)</i>]@
+@(grammata)
+</div>
+>-@
+
+@@/ ----- the form block -----
+
+@-> *solo =~
+<idx:orth value="@(grammata)"><span class="variant">@(grammata)</span></idx:orth>
+>-@
+
+@-> *solo =%
+<span class="pron">[@(grammata)]</span>
+>-@
+
+@-> *solo =-
+<span class="syll">@(grammata)</span>
+>-@
+
+@-> *solo =&
+<i class="gram">@(grammata)</i>
+>-@
+
+@-> *solo =<
+<span class="etym">[@(grammata)]</span>
+>-@
+
+@@/ The languages line is metadata (the OPF takes the codes from
+@@/ the kindle-pack arguments), not page content.
+
+@-> *solo =/
+
+>-@
+
+@-> *solo =*
+<idx:orth value="@(grammata)"></idx:orth>
+>-@
+
+@@/ ----- inline dictionary furniture -----
+
+@-> &
+<i class="gram">@(grammata)</i>
+>-@
+
+@-> [
+<i class="usg">[@(grammata)]</i>
+>-@
+
+@-> =>
+<b class="equiv">@(grammata)</b>
+>-@
+
+@-> ~
+<i class="cit">@(grammata)</i>
+>-@
+
+@-> =~~
+<div class="citblock">
+@(grammata)
+</div>
+>-@
+
+@-> >
+<a href="#@(param)">@(param)</a>
+>-@
+
+@@/ ----- top matter and the koine layer -----
+
+@-> *solo =
+<h1 class="title">@(grammata)</h1>
+>-@
+
+@-> *solo =_
+<p class="subtitle">@(grammata)</p>
+>-@
+
+@-> *solo =:
+<p class="author">@(grammata)</p>
+>-@
+
+@-> *solo =;
+<p class="editor">@(grammata)</p>
+>-@
+
+@-> #
+<h2>@(lemma)</h2>
+@(grammata)
+>-@
+
+@-> ##
+<h3>@(lemma)</h3>
+@(grammata)
+>-@
+
+@-> ###
+<h4>@(lemma)</h4>
+@(grammata)
+>-@
+
+@-> #_
+<b class="run-in">@(grammata)</b>
+>-@
+
+@-> *solo **
+<hr class="section-break"/>
+>-@
+
+@-> **
+<span class="section-break">@(grammata)</span>
+>-@
+
+@-> /
+<i>@(grammata)</i>
+>-@
+
+@-> *
+<b>@(grammata)</b>
+>-@
+
+@-> */
+<b><i>@(grammata)</i></b>
+>-@
+
+@-> ,
+<span class="annotation">@(grammata)</span>
+>-@
+
+@-> ""
+<span class="q">‘@(grammata)’</span>
+>-@
+
+@-> "
+<blockquote>
+@(grammata)
+@[<p class="attribution">@(hypograph)</p>
+]@</blockquote>
+>-@
+
+@-> --
+<ul>
+@(grammata)
+</ul>
+>-@
+
+@-> -
+<li>@(grammata)</li>
+>-@
+
+@-> ..
+<ol>
+@(grammata)
+</ol>
+>-@
+
+@-> .-
+<li value="@(taxis)">@(grammata)</li>
+>-@
+
+@-> ::;
+<dl>
+@(grammata)
+</dl>
+>-@
+
+@-> ::
+<dt>@(lemma)</dt>
+@(grammata)
+>-@
+
+@-> ;
+<dd>@(grammata)</dd>
+>-@
+
+@-> ^
+<span class="footnote">@(grammata)</span>
+>-@
+
+@-> *deixis ^
+<sup>*</sup>
+>-@
+
+@-> ><
+<a href="@(grammata)">@(grammata)</a>
+>-@
+
+@-> *verbatim
+<pre>@(content)</pre>
+>-@
+
+@-> *verbatim-inline
+<code>@(content)</code>
+>-@
+
+@-> *diaphane
+<div@[ class="@(genoses)"]@>
+@(grammata)
+</div>
+>-@
+
+@-> *diaphane-inline
+<span@[ class="@(genoses)"]@>@(grammata)</span>
+>-@
+
+@-> *milestone
+<span class="milestone"></span>
+>-@
+
+@-> *onym-anchor
+<a id="@(onym)"></a>
+>-@
+
+@-> *stichoi
+@(grammata)
+>-@
+
+@-> *strophe
+<p class="strophe">
+@(grammata)
+</p>
+>-@
+
+@-> *stichos
+@(grammata)<br/>
+>-@
+
+@-> *media
+<img src="@((param))" alt=""/>
+>-@
+
+@-> *englossis
+<div class="englossis">
+@(grammata)
+</div>
+>-@
+
+@=* dict.opf END-OF-OPF
+<?xml version="1.0" encoding="utf-8"?>
+<package version="2.0" xmlns="http://www.idpf.org/2007/opf" unique-identifier="uid">
+  <metadata>
+    <dc-metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+      <dc:Title>@TITLE@</dc:Title>
+      <dc:Language>@INLANG@</dc:Language>
+      <dc:Identifier id="uid">@UUID@</dc:Identifier>
+    </dc-metadata>
+    <x-metadata>
+      <DictionaryInLanguage>@INLANG@</DictionaryInLanguage>
+      <DictionaryOutLanguage>@OUTLANG@</DictionaryOutLanguage>
+      <DefaultLookupIndex>default</DefaultLookupIndex>
+    </x-metadata>
+  </metadata>
+  <manifest>
+    <item id="content" href="@CONTENT@" media-type="text/x-oeb1-document"/>
+  </manifest>
+  <spine>
+    <itemref idref="content"/>
+  </spine>
+</package>
+END-OF-OPF
+
+@=* kindle-pack END-OF-PACK
+#!/bin/sh
+# Assemble a Kindle lookup dictionary from the exo output.
+# Usage: sh kindle-pack <content.html> <in-lang> <out-lang> [out.mobi]
+# Runs kindlegen or calibre's ebook-convert when available;
+# otherwise leaves the assembled sources beside the content.
+set -e
+SRC=${1:?usage: kindle-pack content.html in-lang out-lang [out.mobi]}
+INLANG=${2:?in-lang required (the language looked up)}
+OUTLANG=${3:?out-lang required (the language of the definitions)}
+OUT=${4:-${SRC%.html}.mobi}
+TITLE=$(sed -n 's:.*<h1 class="title">\(.*\)</h1>.*:\1:p' "$SRC" | head -1)
+[ -n "$TITLE" ] || TITLE="Lexigramma Dictionary"
+if command -v uuidgen >/dev/null 2>&1; then UUID=$(uuidgen); else
+  UUID=$(od -x -N16 /dev/urandom | head -1 | awk '{print $2$3"-"$4"-"$5"-"$6"-"$7$8$9}')
+fi
+OPF=${SRC%.html}.opf
+sed -e "s|@TITLE@|$TITLE|" -e "s|@INLANG@|$INLANG|" \
+    -e "s|@OUTLANG@|$OUTLANG|" -e "s|@UUID@|$UUID|" \
+    -e "s|@CONTENT@|$(basename "$SRC")|" \
+    dict.opf > "$OPF"
+if command -v kindlegen >/dev/null 2>&1; then
+  kindlegen "$OPF" -o "$(basename "$OUT")"
+  echo "$OUT"
+else
+  # calibre's ebook-convert is NOT a fallback here: its
+  # sanitizer drops the idx:/mbp: elements with their contents
+  # and never compiles the INDX lookup index - the output opens
+  # but is empty and cannot be looked up from other books.
+  # kindlegen (AUR) or Kindle Previewer remain the only
+  # compilers of the dictionary index.
+  echo "sources assembled: $OPF + $SRC" >&2
+  echo "install kindlegen (AUR) to build $OUT -" >&2
+  echo "calibre strips idx: markup and cannot compile lookup dictionaries" >&2
+  exit 1
+fi
+END-OF-PACK

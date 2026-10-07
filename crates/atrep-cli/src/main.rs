@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use unicode_normalization::UnicodeNormalization;
 
 #[derive(Parser)]
 #[command(
@@ -114,8 +115,9 @@ enum Command {
         /// Subdivide oversized segments: recursively halve any
         /// coordinate whose largest witness slice exceeds this
         /// many characters, cutting every witness at the sentence
-        /// boundary nearest its midpoint (continuation slices
-        /// carry no milestone).
+        /// boundary nearest its midpoint, and verse between
+        /// strophes or lines (continuation slices carry no
+        /// milestone).
         #[arg(long)]
         split: Option<usize>,
     },
@@ -133,11 +135,17 @@ enum Command {
     /// and re-emit in canonical form, in place.
     Quasialign {
         /// Files sharing a milestone scheme (.atd or .atk),
-        /// rewritten in place.
+        /// rewritten in place unless --output-dir is given.
         files: Vec<PathBuf>,
         /// Ceiling on segment size, in text characters.
         #[arg(long)]
         max_segment: usize,
+        /// Directory to write the cut files into, under their own
+        /// names, leaving the sources untouched. The rewrite is a
+        /// re-serialization: comments and the plerographic
+        /// spelling do not survive it, so in place they are lost.
+        #[arg(short, long)]
+        output_dir: Option<PathBuf>,
         /// Witness namespace prepended to every inserted cut's
         /// coordinate (e.g. litogram:) unless the parent already
         /// carries it — positional cuts are witness-specific.
@@ -224,6 +232,78 @@ fn main() -> ExitCode {
     }
 }
 
+/// A DSL dictionary is read as bytes (UTF-16 or a code page, or
+/// gzip for `.dsl.dz`); the `#INCLUDE`d abbreviations dictionary
+/// beside it, when present, rides into the import.
+fn dsl_import(file: &std::path::Path) -> atrep::Result<atrep::dendron::Document> {
+    let bytes = std::fs::read(file).map_err(|e| io_at(file, e))?;
+    let include = atrep::dsl::dsl_include(&bytes)?
+        .map(|name| {
+            file.parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join(name)
+        })
+        .filter(|p| p.is_file());
+    match include {
+        Some(path) => {
+            let abbr = std::fs::read(&path).map_err(|e| io_at(&path, e))?;
+            atrep::dsl::dsl_to_document_with_abbreviations(&bytes, &abbr)
+        }
+        None => atrep::dsl::dsl_to_document(&bytes),
+    }
+}
+
+/// Read a source file, naming it in the error (as `check` does).
+fn read_input(file: &std::path::Path) -> atrep::Result<String> {
+    std::fs::read_to_string(file).map_err(|e| {
+        atrep::error::Error::new(atrep::error::ErrorKind::MissingResource(format!(
+            "{}: {e}",
+            file.display()
+        )))
+    })
+}
+
+/// An I/O error naming the path it happened on.
+fn io_at(path: &std::path::Path, e: std::io::Error) -> atrep::error::Error {
+    atrep::error::Error::new(atrep::error::ErrorKind::Io(std::io::Error::new(
+        e.kind(),
+        format!("{}: {e}", path.display()),
+    )))
+}
+
+/// Write an output file, naming it in the error.
+fn write_output(path: &std::path::Path, contents: impl AsRef<[u8]>) -> atrep::Result<()> {
+    std::fs::write(path, contents).map_err(|e| io_at(path, e))
+}
+
+/// The output path: the explicit one, else `default` — refused
+/// when that would overwrite the input (an .atk kanonized again,
+/// an .md exported to md), since a default must never clobber a
+/// source.
+fn output_path(
+    input: &std::path::Path,
+    output: Option<PathBuf>,
+    default: PathBuf,
+) -> atrep::Result<PathBuf> {
+    if let Some(out) = output {
+        return Ok(out);
+    }
+    let same = default == input
+        || match (default.canonicalize(), input.canonicalize()) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => false,
+        };
+    if same {
+        return Err(atrep::error::Error::new(atrep::error::ErrorKind::Syntax(
+            format!(
+                "{}: the default output path is the input itself; pass --output",
+                input.display()
+            ),
+        )));
+    }
+    Ok(default)
+}
+
 /// Metagraphe: reparse (either spelling in) and serialize in the
 /// requested spelling.
 fn respell(file: &std::path::Path, plero: bool, lang: Option<&str>) -> atrep::Result<String> {
@@ -252,6 +332,8 @@ fn outline_kaiv(file: &std::path::Path) -> atrep::Result<String> {
             file.display()
         )))
     })?;
+    // NFC before parsing, as check does.
+    let text: String = text.nfc().collect();
     let (doc, blocks, dial) = atrep::parser::parse_document_outline(&text, file)?;
     let o = atrep::outline::assemble(&doc, blocks, &text, &dial);
     let esc = |v: &str| {
@@ -361,11 +443,11 @@ fn run() -> atrep::Result<()> {
             timeout,
             retries,
         } => {
-            let source = std::fs::read_to_string(&file)?;
+            let source = read_input(&file)?;
             if atrep::is_definition_source(&source) {
+                let out = output_path(&file, output, file.with_extension("lektos"))?;
                 let result = atrep::kanonizo::kanonizo_definition_file(&file)?;
-                let out = output.unwrap_or_else(|| file.with_extension("lektos"));
-                std::fs::write(&out, &result.kanon)?;
+                write_output(&out, &result.kanon)?;
                 println!("{}", out.display());
             } else {
                 let opts = atrep::kanonizo::KanonizoOptions {
@@ -375,10 +457,13 @@ fn run() -> atrep::Result<()> {
                         ..Default::default()
                     },
                 };
+                let out = output_path(&file, output, file.with_extension("atk"))?;
                 let fetcher = atrep::fetch::HttpFetcher::new(&opts.fetch);
                 let result = atrep::kanonizo::kanonizo_file_with(&file, &fetcher, &opts)?;
-                let out = output.unwrap_or_else(|| file.with_extension("atk"));
-                atrep::kanonizo::write_outputs(&result, &out)?;
+                atrep::kanonizo::write_outputs(&result, &out).map_err(|e| match e.kind {
+                    atrep::error::ErrorKind::Io(io) => io_at(&out, io),
+                    _ => e,
+                })?;
                 println!("{}", out.display());
                 if !result.media.is_empty() {
                     println!("{}", out.with_extension("atk.tar.gz").display());
@@ -391,6 +476,7 @@ fn run() -> atrep::Result<()> {
             output,
             variant,
         } => {
+            let out = output_path(&file, output, file.with_extension(&target))?;
             let doc = if file.extension().is_some_and(|e| e == "atk") {
                 atrep::check_file(&file)?
             } else {
@@ -415,8 +501,7 @@ fn run() -> atrep::Result<()> {
                     atrep::exo::render_with_aux(&doc, &exo, &dir)?
                 }
             };
-            let out = output.unwrap_or_else(|| file.with_extension(&target));
-            std::fs::write(&out, rendered)?;
+            write_output(&out, rendered)?;
             println!("{}", out.display());
             // Associated exos produce companion files (e.g. the
             // .bib beside a LaTeX export).
@@ -430,7 +515,7 @@ fn run() -> atrep::Result<()> {
                 } else {
                     out.with_extension(&aux_target)
                 };
-                std::fs::write(&aux_out, content)?;
+                write_output(&aux_out, content)?;
                 println!("{}", aux_out.display());
             }
         }
@@ -456,7 +541,7 @@ fn run() -> atrep::Result<()> {
                 witnesses.push((id.clone(), doc));
             }
             let collated = atrep::zygosis::collation(&witnesses, &scheme, &base)?;
-            std::fs::write(&output, atrep::dendron::serialize(&collated))?;
+            write_output(&output, atrep::dendron::serialize(&collated))?;
             println!("{}", output.display());
         }
         Command::Zygo {
@@ -481,20 +566,31 @@ fn run() -> atrep::Result<()> {
                 witnesses.push((id.clone(), doc));
             }
             let zygoma = atrep::zygosis::zygosis_split(&witnesses, &scheme, split)?;
-            std::fs::write(&output, atrep::dendron::serialize(&zygoma))?;
+            write_output(&output, atrep::dendron::serialize(&zygoma))?;
             println!("{}", output.display());
         }
         Command::Quasialign {
             refine,
             files,
             max_segment,
+            output_dir,
             scheme,
             prefix,
             cut_prefix,
         } => {
             let mut docs = Vec::new();
+            // Files whose source carries comments, which the
+            // re-serialization drops.
+            let mut commented = Vec::new();
             for file in &files {
-                docs.push(atrep::check_file(file)?);
+                let text = read_input(file)?;
+                let normalized: String = text.nfc().collect();
+                docs.push(atrep::parser::parse_document(&normalized, file)?);
+                commented.push(
+                    atrep::scan::scan(&text, None)
+                        .iter()
+                        .any(|t| t.kind == atrep::scan::TokKind::Comment),
+                );
             }
             let scheme = match scheme {
                 Some(s) => s,
@@ -529,9 +625,51 @@ fn run() -> atrep::Result<()> {
                 cut_prefix.as_deref(),
                 refine,
             )?;
-            for ((file, doc), n) in files.iter().zip(&docs).zip(&report.inserted) {
-                std::fs::write(file, atrep::dendron::serialize(doc))?;
-                println!("{}: {n} quasi-milestone(s) inserted", file.display());
+            // Every output is serialized and staged in a temp file
+            // beside its target before any target is replaced, so
+            // a failure leaves the set as it was; each rename is
+            // then atomic.
+            let targets: Vec<PathBuf> = match &output_dir {
+                Some(dir) => {
+                    std::fs::create_dir_all(dir).map_err(|e| io_at(dir, e))?;
+                    files
+                        .iter()
+                        .map(|f| dir.join(f.file_name().unwrap_or(f.as_os_str())))
+                        .collect()
+                }
+                None => files.clone(),
+            };
+            let mut staged: Vec<PathBuf> = Vec::new();
+            let discard = |staged: &[PathBuf]| {
+                for tmp in staged {
+                    let _ = std::fs::remove_file(tmp);
+                }
+            };
+            for (target, doc) in targets.iter().zip(&docs) {
+                let mut name = target.file_name().unwrap_or_default().to_os_string();
+                name.push(".tmp");
+                let tmp = target.with_file_name(name);
+                if let Err(e) = std::fs::write(&tmp, atrep::dendron::serialize(doc)) {
+                    discard(&staged);
+                    return Err(io_at(&tmp, e));
+                }
+                staged.push(tmp);
+            }
+            for (i, ((file, target), n)) in
+                files.iter().zip(&targets).zip(&report.inserted).enumerate()
+            {
+                if output_dir.is_none() && commented[i] {
+                    eprintln!(
+                        "atrep: {}: comments in the source are dropped by the in-place \
+                         rewrite (use --output-dir to keep the source)",
+                        file.display()
+                    );
+                }
+                if let Err(e) = std::fs::rename(&staged[i], target) {
+                    discard(&staged[i..]);
+                    return Err(io_at(target, e));
+                }
+                println!("{}: {n} quasi-milestone(s) inserted", target.display());
             }
             for coord in &report.skipped {
                 eprintln!("atrep: `{coord}` already carries quasi cuts; left untouched");
@@ -543,22 +681,27 @@ fn run() -> atrep::Result<()> {
             line_milestones,
             output,
         } => {
-            let source = std::fs::read_to_string(&file)?;
             let ext = file
                 .extension()
                 .map(|e| e.to_string_lossy().to_string())
                 .unwrap_or_default();
+            // A DSL dictionary is bytes (UTF-16, a code page,
+            // gzip); every other format is read as text here.
+            let source = if matches!(ext.as_str(), "dsl" | "dz") {
+                String::new()
+            } else {
+                read_input(&file)?
+            };
+            let out = output_path(&file, output, file.with_extension("atd"))?;
             if ext == "atr" {
                 // Atramento is text-to-text: the litogramma deltos
                 // is written directly, preserving the passthrough
                 // property byte for byte.
                 let lit = atrep::atramento::atramento_to_litogramma(&source)?;
-                let out = output.unwrap_or_else(|| file.with_extension("atd"));
-                std::fs::write(&out, lit)?;
+                write_output(&out, lit)?;
                 println!("{}", out.display());
                 return Ok(());
             }
-            let out = output.clone().unwrap_or_else(|| file.with_extension("atd"));
             // FictionBook binaries land beside the document as
             // media/<id>, where its image blocks point.
             let mut media: Vec<atrep::fb2::Fb2Media> = Vec::new();
@@ -568,6 +711,7 @@ fn run() -> atrep::Result<()> {
                 Ok(doc)
             };
             let doc = match ext.as_str() {
+                "md" | "markdown" => atrep::endo::markdown_to_document(&source)?,
                 "html" | "htm" => atrep::endo::html_to_document(&source)?,
                 "rst" => atrep::endo::rst_to_document(&source)?,
                 "org" => atrep::endo::org_to_document(&source)?,
@@ -583,6 +727,7 @@ fn run() -> atrep::Result<()> {
                 "usx" => atrep::endo::usx_to_document(&source)?,
                 "osis" => atrep::endo::osis_to_document(&source)?,
                 "fb2" => fb2_import(&source)?,
+                "dsl" | "dz" => dsl_import(&file)?,
                 "rnc" => atrep::epimerismos::rnc_to_document(&source)?,
                 "opencorpora" | "oc" => atrep::epimerismos::opencorpora_to_document(&source)?,
                 "proiel" => atrep::epimerismos::proiel_to_document(&source)?,
@@ -596,23 +741,52 @@ fn run() -> atrep::Result<()> {
                     }
                     _ => atrep::endo::tei_to_document_lines(&source, line_milestones.as_deref())?,
                 },
-                _ => atrep::endo::markdown_to_document(&source)?,
+                // The importer is chosen by extension alone, so an
+                // unknown one is an error rather than a guess (a
+                // Markdown reparse of an .atd would be silent loss).
+                _ => {
+                    return Err(atrep::error::Error::new(atrep::error::ErrorKind::Syntax(
+                        format!(
+                            "{}: no endomorphosis for the extension `{ext}` (expected md, \
+                             html, rst, org, dj, dbk, bib, jats, usfm, tanzil, usx, osis, \
+                             fb2, rnc, opencorpora, proiel, conllu, xml/tei or atr)",
+                            file.display()
+                        ),
+                    )));
+                }
             };
             let mut doc = doc;
             if let Some(scheme) = &milestone_scheme {
                 atrep::endo::usfm_apply_scheme(&mut doc, scheme);
             }
-            std::fs::write(&out, atrep::dendron::serialize(&doc))?;
+            // A binary lands as media/<id>, so the id must be a
+            // plain file name: no separator of either platform, no
+            // drive prefix, no parent reference. Checked before
+            // anything is written.
+            if let Some(m) = media
+                .iter()
+                .find(|m| m.id == "." || m.id == ".." || m.id.contains(['/', '\\', ':']))
+            {
+                return Err(atrep::error::Error::new(atrep::error::ErrorKind::Syntax(
+                    format!(
+                        "{}: FictionBook binary id `{}` is not a plain file name",
+                        file.display(),
+                        m.id
+                    ),
+                )));
+            }
+            atrep::dendron::check_serializable(&doc)?;
+            write_output(&out, atrep::dendron::serialize(&doc))?;
             println!("{}", out.display());
             if !media.is_empty() {
                 let dir = out
                     .parent()
                     .unwrap_or(std::path::Path::new("."))
                     .join("media");
-                std::fs::create_dir_all(&dir)?;
+                std::fs::create_dir_all(&dir).map_err(|e| io_at(&dir, e))?;
                 for m in &media {
                     let path = dir.join(&m.id);
-                    std::fs::write(&path, &m.bytes)?;
+                    write_output(&path, &m.bytes)?;
                     println!("{}", path.display());
                 }
             }
@@ -623,6 +797,7 @@ fn run() -> atrep::Result<()> {
             variant,
             output,
         } => {
+            let out = output_path(&file, output, file.with_extension(format!("{target}.atk")))?;
             let doc = if file.extension().is_some_and(|e| e == "atk") {
                 atrep::check_file(&file)?
             } else {
@@ -648,8 +823,8 @@ fn run() -> atrep::Result<()> {
                 eprintln!("atrep: fusing {}", hops.join(" => "));
             }
             let out_doc = atrep::morph::apply_route(&doc, &route)?;
-            let out = output.unwrap_or_else(|| file.with_extension(format!("{target}.atk")));
-            std::fs::write(&out, atrep::dendron::serialize(&out_doc))?;
+            atrep::dendron::check_serializable(&out_doc)?;
+            write_output(&out, atrep::dendron::serialize(&out_doc))?;
             println!("{}", out.display());
         }
         Command::Compose { chain, output } => {
@@ -665,10 +840,22 @@ fn run() -> atrep::Result<()> {
             let hops: Vec<&str> = std::iter::once(route[0].source.as_str())
                 .chain(route.iter().map(|m| m.target.as_str()))
                 .collect();
+            // A .hom must be total, and one that is not reloads
+            // with implicit identities in its gaps (or fails every
+            // later morph for the pair, since an explicit file is
+            // tried before the derived embedding). A composite over
+            // a partial derived embedding therefore has no file
+            // form; `morph` still applies the route.
+            let unmapped = fused.unmapped();
+            if !unmapped.is_empty() {
+                return Err(atrep::error::Error::new(
+                    atrep::error::ErrorKind::MorphIncomplete(unmapped.join(", ")),
+                ));
+            }
             eprintln!("atrep: composed {}", hops.join(" => "));
             let out = output
                 .unwrap_or_else(|| PathBuf::from(format!("{}.{}.hom", fused.source, fused.target)));
-            std::fs::write(&out, atrep::morph::serialize_hom(&fused))?;
+            write_output(&out, atrep::morph::serialize_hom(&fused))?;
             println!("{}", out.display());
         }
         Command::Litos {
@@ -685,7 +872,7 @@ fn run() -> atrep::Result<()> {
             let result = atrep::litosis::litosis_with(&doc, &lookup, &resolve)?;
             if save_litos_file {
                 let litos_path = PathBuf::from(format!("{}.litos", file.display()));
-                std::fs::write(&litos_path, &result.litos)?;
+                write_output(&litos_path, &result.litos)?;
             }
             println!("{}", result.litos_id);
         }

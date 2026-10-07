@@ -285,6 +285,60 @@ edited by @(grammata)
 [*]
 >-@
 
+@@/ ----- deixes to structure -----
+@@/ The core deixis form points at any para-simmere; a deixis
+@@/ to a section, figure, table, container, equation, act or
+@@/ scene renders as the `>` reference does: as nothing, gemtext
+@@/ having no in-page links.
+
+@-> *deixis ==
+>-@
+
+@-> *deixis ===
+>-@
+
+@-> *deixis #
+>-@
+
+@-> *deixis ##
+>-@
+
+@-> *deixis ###
+>-@
+
+@-> *deixis ####
+>-@
+
+@-> *deixis <
+>-@
+
+@-> *deixis +
+>-@
+
+@-> *deixis _
+>-@
+
+@-> *deixis _=
+>-@
+
+@-> *deixis _-
+>-@
+
+@-> *deixis _:
+>-@
+
+@-> *deixis _/
+>-@
+
+@-> *deixis $$
+>-@
+
+@-> *deixis :=
+>-@
+
+@-> *deixis :#
+>-@
+
 @-> "
 > @(grammata:> )
 

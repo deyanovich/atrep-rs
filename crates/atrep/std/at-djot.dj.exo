@@ -86,3 +86,14 @@ _@(grammata)_
 @-> *onym-anchor
 {#@(onym)}
 >-@
+
+@@/ Footnotes: the reference is a deixis, the definition a
+@@/ para-simmere on the same symbol. The label is an identifier,
+@@/ written verbatim; continuation lines indent four spaces.
+@-> *deixis ^
+[^@((onym))]
+>-@
+
+@-> ^
+[^@((onym))]: @(grammata:    )
+>-@

@@ -444,8 +444,11 @@ flagged as input for the next spec revision:
    same timeout/retry configuration, and an unavailable resource
    fails kanonizo.
 8. **Remote documents have no local directory.** Their dialektos
-   declarations and any relative transclusion targets resolve
-   against the *including* document's directory.
+   declarations resolve against the *including* document's
+   directory. Their relative transclusion and media targets resolve
+   against the remote document's own URL and never reach the local
+   file system; local targets must stay inside the root document's
+   directory.
 9. **`.lektos` sim ordering**: the spec says "alphabetically by
    sim name" without a collation. The pilot sorts byte-wise on
    the UTF-8 name, with the symbol (byte-wise) as tie-break —

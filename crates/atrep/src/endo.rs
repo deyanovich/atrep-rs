@@ -28,6 +28,45 @@
 use crate::dendron::{Annotations, Block, Document, Inline, Strophe, Taxis};
 use crate::error::Result;
 
+/// The deepest nesting an importer follows before refusing the
+/// document. Block containers (quotes, items, divisions,
+/// sections) and inline spans each recurse once per level; an
+/// unbounded ladder would overflow the stack instead of failing.
+/// The bound counts frames, so it is sized to the largest
+/// importer frame of a debug build (Org's, near 19 KiB) on a
+/// 2 MiB thread (the test default), with room to spare.
+const MAX_NESTING: usize = 64;
+
+thread_local! {
+    /// The current importer nesting depth; every recursive
+    /// importer function holds a [`Nesting`] for its frame.
+    static NESTING: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// One level of importer nesting, released when dropped.
+struct Nesting;
+
+impl Drop for Nesting {
+    fn drop(&mut self) {
+        NESTING.with(|c| c.set(c.get() - 1));
+    }
+}
+
+/// Enter one nesting level, or fail (through the importer's own
+/// error constructor) past [`MAX_NESTING`].
+fn descend(err: fn(String) -> Error) -> Result<Nesting> {
+    let depth = NESTING.with(|c| c.get());
+    if depth >= MAX_NESTING {
+        return Err(err(format!("nesting deeper than {MAX_NESTING} levels")));
+    }
+    NESTING.with(|c| c.set(depth + 1));
+    Ok(Nesting)
+}
+
+fn md_err(msg: String) -> Error {
+    Error::new(ErrorKind::Syntax(format!("markdown import: {msg}")))
+}
+
 /// Import Markdown text as an `at-markdown` document.
 pub fn markdown_to_document(md: &str) -> Result<Document> {
     let lines: Vec<&str> = md.lines().collect();
@@ -40,6 +79,7 @@ pub fn markdown_to_document(md: &str) -> Result<Document> {
 }
 
 fn parse_blocks(lines: &[&str]) -> Result<Vec<Block>> {
+    let _depth = descend(md_err)?;
     let mut blocks = Vec::new();
     let mut i = 0;
     while i < lines.len() {
@@ -49,12 +89,14 @@ fn parse_blocks(lines: &[&str]) -> Result<Vec<Block>> {
             continue;
         }
 
-        // Fenced code block; the info string becomes a genos.
-        if let Some(info) = line.strip_prefix("```") {
-            let info = info.trim().to_string();
+        // Fenced code block; the info string becomes a genos. A
+        // longer fence holds shorter ones as content.
+        if line.starts_with("```") {
+            let ticks = line.chars().take_while(|&c| c == '`').count();
+            let info = line[ticks..].trim().to_string();
             let start = i + 1;
             let mut end = start;
-            while end < lines.len() && lines[end].trim_end() != "```" {
+            while end < lines.len() && !closes_fence(lines[end], ticks) {
                 end += 1;
             }
             let mut content = lines[start..end].join("\n");
@@ -220,6 +262,13 @@ fn item_content(
     Ok((parse_blocks(&refs)?, j))
 }
 
+/// Whether `line` closes a code fence opened with `ticks`
+/// backticks: a run of at least as many, alone on its line.
+fn closes_fence(line: &str, ticks: usize) -> bool {
+    let run = line.trim_end();
+    run.len() >= ticks && run.chars().all(|c| c == '`')
+}
+
 fn is_block_start(line: &str) -> bool {
     line.starts_with("```")
         || atx_heading(line).is_some()
@@ -265,8 +314,9 @@ fn link_endo(url: String) -> Inline {
 /// absolute URI (ASCII-alphabetic scheme, then `:`), no
 /// whitespace or `<` inside, closed by `>`. Returns the URI and
 /// the index past the closing `>`.
-fn autolink_target(chars: &[char], open: usize) -> Option<(String, usize)> {
-    let close = chars[open + 1..].iter().position(|&c| c == '>')? + open + 1;
+fn autolink_target(finder: &mut Finder, open: usize) -> Option<(String, usize)> {
+    let chars = finder.chars;
+    let close = finder.find(open + 1, &['>'])?;
     let inner: String = chars[open + 1..close].iter().collect();
     if inner.is_empty() || inner.chars().any(|c| c.is_whitespace() || c == '<') {
         return None;
@@ -284,6 +334,8 @@ fn autolink_target(chars: &[char], open: usize) -> Option<(String, usize)> {
 
 fn parse_inline(text: &str) -> Vec<Inline> {
     let chars: Vec<char> = text.chars().collect();
+    let mut finder = Finder::new(&chars);
+    let mut closers: ScanMemo<usize> = ScanMemo::new();
     let mut inlines: Vec<Inline> = Vec::new();
     let mut lit = String::new();
     let mut i = 0;
@@ -307,7 +359,7 @@ fn parse_inline(text: &str) -> Vec<Inline> {
         }
         // Code span.
         if c == '`'
-            && let Some(close) = find(&chars, i + 1, &['`'])
+            && let Some(close) = finder.find(i + 1, &['`'])
         {
             flush(&mut lit, &mut inlines);
             inlines.push(Inline::VerbatimInline {
@@ -320,7 +372,7 @@ fn parse_inline(text: &str) -> Vec<Inline> {
         // Footnote callout `[^name]` (the footnote extension).
         if c == '['
             && chars.get(i + 1) == Some(&'^')
-            && let Some(close) = find(&chars, i + 2, &[']'])
+            && let Some(close) = finder.find(i + 2, &[']'])
         {
             flush(&mut lit, &mut inlines);
             inlines.push(Inline::Deixis {
@@ -334,7 +386,7 @@ fn parse_inline(text: &str) -> Vec<Inline> {
         // Autolink `<URL>` — the visible-URL link: the target IS
         // the display, exactly the link sim's shape.
         if c == '<'
-            && let Some((url, next)) = autolink_target(&chars, i)
+            && let Some((url, next)) = autolink_target(&mut finder, i)
         {
             flush(&mut lit, &mut inlines);
             inlines.push(link_endo(url));
@@ -348,9 +400,9 @@ fn parse_inline(text: &str) -> Vec<Inline> {
         // not a link; nested brackets are outside the subset.)
         if c == '['
             && (i == 0 || chars[i - 1] != '!')
-            && let Some(close) = find(&chars, i + 1, &[']'])
+            && let Some(close) = finder.find(i + 1, &[']'])
             && chars.get(close + 1) == Some(&'(')
-            && let Some(end) = find(&chars, close + 2, &[')'])
+            && let Some(end) = finder.find(close + 2, &[')'])
         {
             let text: String = chars[i + 1..close].iter().collect();
             let url: String = chars[close + 2..end]
@@ -372,24 +424,38 @@ fn parse_inline(text: &str) -> Vec<Inline> {
             i = end + 1;
             continue;
         }
-        // Strong, then emphasis.
+        // Strong, then emphasis; a triple run is emphasis around
+        // strong (and falls back to strong when it has no triple
+        // closer).
         if c == '*' {
-            let strong = chars.get(i + 1) == Some(&'*');
-            let (open_len, delim): (usize, &[char]) = if strong {
-                (2, &['*', '*'])
-            } else {
-                (1, &['*'])
-            };
-            if let Some(close) = find(&chars, i + open_len, delim) {
+            let run = chars[i..]
+                .iter()
+                .take(3)
+                .take_while(|&&ch| ch == '*')
+                .count();
+            let tried = if run == 3 { 0..2 } else { 3 - run..4 - run };
+            if let Some((delim, close)) = STAR_RUNS[tried]
+                .iter()
+                .find_map(|&d| Some((d, star_close(&chars, &mut closers, i, d)?)))
+            {
                 flush(&mut lit, &mut inlines);
-                let inner: String = chars[i + open_len..close].iter().collect();
-                inlines.push(Inline::Endo {
-                    symbol: if strong { "**".into() } else { "*".into() },
-                    content: parse_inline(&inner),
-                    bracket_matching: true,
-                    ann: Annotations::default(),
-                });
-                i = close + open_len;
+                let inner: String = chars[i + delim.len()..close].iter().collect();
+                let symbols: &[&str] = match delim.len() {
+                    3 => &["**", "*"],
+                    2 => &["**"],
+                    _ => &["*"],
+                };
+                let mut content = parse_inline(&inner);
+                for symbol in symbols {
+                    content = vec![Inline::Endo {
+                        symbol: symbol.to_string(),
+                        content,
+                        bracket_matching: true,
+                        ann: Annotations::default(),
+                    }];
+                }
+                inlines.extend(content);
+                i = close + delim.len();
                 continue;
             }
         }
@@ -404,6 +470,87 @@ fn parse_inline(text: &str) -> Vec<Inline> {
 fn find(chars: &[char], from: usize, delim: &[char]) -> Option<usize> {
     (from..chars.len().saturating_sub(delim.len() - 1))
         .find(|&j| &chars[j..j + delim.len()] == delim)
+}
+
+/// Memory for the forward scans of one inline run, keyed by what
+/// is sought. A scan from `from` that ended at `pos` (or nowhere)
+/// answers every later query starting at or before `pos` without
+/// rescanning, so a run of unclosed openers costs linear rather
+/// than quadratic time. Sound whenever the scan's answer is the
+/// first position at or after `from` meeting a condition that
+/// does not itself depend on `from`.
+struct ScanMemo<K>(Vec<(K, usize, Option<usize>)>);
+
+impl<K: PartialEq + Copy> ScanMemo<K> {
+    fn new() -> Self {
+        ScanMemo(Vec::new())
+    }
+
+    fn find(&mut self, key: K, from: usize, scan: impl FnOnce() -> Option<usize>) -> Option<usize> {
+        if let Some((_, f, r)) = self.0.iter().find(|(k, ..)| *k == key)
+            && *f <= from
+            && r.is_none_or(|p| from <= p)
+        {
+            return *r;
+        }
+        let r = scan();
+        match self.0.iter_mut().find(|(k, ..)| *k == key) {
+            Some(e) => (e.1, e.2) = (from, r),
+            None => self.0.push((key, from, r)),
+        }
+        r
+    }
+}
+
+/// The `*` delimiter runs, longest first.
+const STAR_RUNS: [&[char]; 3] = [&['*', '*', '*'], &['*', '*'], &['*']];
+
+/// The closer for the `*` run `delim` opening at `open`. A run
+/// opens only before non-whitespace and closes only after it
+/// (CommonMark's flanking, reduced; reStructuredText's start-
+/// and end-string rule), and a single closing star is not part
+/// of a longer run, so `**a * b**` is one strong span and
+/// `*a **b** c*` one emphasis around a strong.
+fn star_close(
+    chars: &[char],
+    closers: &mut ScanMemo<usize>,
+    open: usize,
+    delim: &'static [char],
+) -> Option<usize> {
+    let len = delim.len();
+    let from = open + len;
+    if chars.get(from).is_none_or(|c| c.is_whitespace()) {
+        return None;
+    }
+    closers.find(len, from, || {
+        (from..chars.len().saturating_sub(len - 1)).find(|&p| {
+            chars[p..p + len] == *delim
+                && !chars[p - 1].is_whitespace()
+                && (len > 1 || (chars[p - 1] != '*' && chars.get(p + 1) != Some(&'*')))
+        })
+    })
+}
+
+/// [`find`] over one inline run, with memory.
+struct Finder<'a> {
+    chars: &'a [char],
+    memo: ScanMemo<&'static [char]>,
+}
+
+impl<'a> Finder<'a> {
+    fn new(chars: &'a [char]) -> Self {
+        Finder {
+            chars,
+            memo: ScanMemo::new(),
+        }
+    }
+
+    /// Position of the next occurrence of `delim` at or after
+    /// `from`.
+    fn find(&mut self, from: usize, delim: &'static [char]) -> Option<usize> {
+        let chars = self.chars;
+        self.memo.find(delim, from, || find(chars, from, delim))
+    }
 }
 
 #[cfg(test)]
@@ -490,6 +637,14 @@ fn tokenize_html(html: &str) -> Result<Vec<Tok>> {
                 rest = &rest[end + 3..];
                 continue;
             }
+            if let Some(cdata) = rest.strip_prefix("<![CDATA[") {
+                let end = cdata
+                    .find("]]>")
+                    .ok_or_else(|| html_err("unterminated CDATA section".into()))?;
+                toks.push(Tok::Text(cdata_text(&cdata[..end])));
+                rest = &cdata[end + 3..];
+                continue;
+            }
             if rest.starts_with("<!") {
                 // Doctype and other declarations are skipped.
                 let end = rest
@@ -498,9 +653,7 @@ fn tokenize_html(html: &str) -> Result<Vec<Tok>> {
                 rest = &rest[end + 1..];
                 continue;
             }
-            let end = rest
-                .find('>')
-                .ok_or_else(|| html_err("unterminated tag".into()))?;
+            let end = tag_end(rest).ok_or_else(|| html_err("unterminated tag".into()))?;
             let inner = &rest[1..end];
             rest = &rest[end + 1..];
             if let Some(name) = inner.strip_prefix('/') {
@@ -580,11 +733,85 @@ fn class_genoses(attrs: &[(String, String)]) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Decode the entities the at-html escape table produces.
+/// Decode character references: the predefined XML entities,
+/// `&nbsp;`, and decimal or hexadecimal numeric references, in
+/// one pass (so `&amp;lt;` is `&lt;`). An unknown or malformed
+/// reference stays literal.
 pub(crate) fn decode_entities(text: &str) -> String {
-    text.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&amp;", "&")
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        rest = &rest[amp..];
+        // A reference is short: its `;` is looked for nearby only.
+        let decoded = rest[1..]
+            .char_indices()
+            .take(32)
+            .find(|&(_, c)| c == ';')
+            .and_then(|(semi, _)| Some((entity_char(&rest[1..1 + semi])?, semi + 2)));
+        match decoded {
+            Some((c, len)) => {
+                out.push(c);
+                rest = &rest[len..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The character a reference names (the text between `&` and
+/// `;`). NUL is refused: it is the importers' sentinel prefix.
+fn entity_char(name: &str) -> Option<char> {
+    match name {
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "amp" => Some('&'),
+        "quot" => Some('"'),
+        "apos" => Some('\''),
+        "nbsp" => Some('\u{a0}'),
+        _ => {
+            let number = name.strip_prefix('#')?;
+            let (digits, radix) = match number.strip_prefix(['x', 'X']) {
+                Some(hex) => (hex, 16),
+                None => (number, 10),
+            };
+            if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
+                return None;
+            }
+            let code = u32::from_str_radix(digits, radix).ok()?;
+            char::from_u32(code).filter(|&c| c != '\0')
+        }
+    }
+}
+
+/// The index of the `>` that ends the tag opening at the head of
+/// `tag`; a `>` inside a quoted attribute value is content.
+fn tag_end(tag: &str) -> Option<usize> {
+    let mut quote: Option<char> = None;
+    for (i, c) in tag.char_indices() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None => match c {
+                '"' | '\'' => quote = Some(c),
+                '>' => return Some(i),
+                _ => {}
+            },
+        }
+    }
+    None
+}
+
+/// The text of a CDATA section as a text token's content: the
+/// consumers decode references in text tokens, so `&` is written
+/// as its reference and the section's text comes out verbatim.
+fn cdata_text(raw: &str) -> String {
+    raw.replace('&', "&amp;")
 }
 
 fn heading_level(name: &str) -> Option<usize> {
@@ -600,6 +827,7 @@ fn parse_html_blocks(
     mut i: usize,
     until: Option<&str>,
 ) -> Result<(Vec<Block>, usize)> {
+    let _depth = descend(html_err)?;
     let mut blocks = Vec::new();
     while i < toks.len() {
         match &toks[i] {
@@ -660,7 +888,15 @@ fn parse_html_blocks(
                             continue;
                         }
                         let (children, next) = parse_html_blocks(toks, i + 1, Some("div"))?;
-                        blocks.push(para_block("_", None, children, true, genoses));
+                        let mut block = para_block("_", None, children, true, genoses);
+                        // The division's id is its onym (the exo
+                        // writes it so; pointers refer to it).
+                        if let Block::Para { ann, .. } = &mut block {
+                            ann.onym = attr(attrs, "id")
+                                .filter(|id| !id.is_empty())
+                                .map(str::to_string);
+                        }
+                        blocks.push(block);
                         i = next;
                     }
                     "ul" => {
@@ -916,6 +1152,7 @@ fn parse_html_inlines(
     until: &str,
     breaks: bool,
 ) -> Result<(Vec<Inline>, usize)> {
+    let _depth = descend(html_err)?;
     let mut inlines = Vec::new();
     while i < toks.len() {
         match &toks[i] {
@@ -947,6 +1184,17 @@ fn parse_html_inlines(
                         vec![]
                     };
                     let (content, next) = parse_html_inlines(toks, i + 1, name, breaks)?;
+                    // An empty, classless span with an id is the
+                    // exo's onym anchor.
+                    if name == "span"
+                        && content.is_empty()
+                        && genoses.is_empty()
+                        && let Some(id) = attr(attrs, "id").filter(|id| !id.is_empty())
+                    {
+                        inlines.push(Inline::OnymAnchor(id.to_string()));
+                        i = next;
+                        continue;
+                    }
                     inlines.push(Inline::Endo {
                         symbol: symbol.to_string(),
                         content,
@@ -984,6 +1232,21 @@ fn parse_html_inlines(
                         .map(|h| h.trim().to_string())
                         .unwrap_or_default();
                     let (content, next) = parse_html_inlines(toks, i + 1, name, breaks)?;
+                    // The exo's deixis: a pointer anchor to an
+                    // onymized division. Its dagger is rendering,
+                    // not content.
+                    if let Some(onym) = href.strip_prefix('#')
+                        && !onym.is_empty()
+                        && class_genoses(attrs).iter().any(|c| c == "pointer")
+                    {
+                        inlines.push(Inline::Deixis {
+                            symbol: "_".to_string(),
+                            onym: onym.to_string(),
+                            ann: Annotations::default(),
+                        });
+                        i = next;
+                        continue;
+                    }
                     if href.is_empty() {
                         inlines.extend(content);
                     } else {
@@ -1068,6 +1331,7 @@ fn rst_indented_block<'a>(lines: &[&'a str], mut i: usize) -> (Vec<&'a str>, usi
 }
 
 fn parse_rst_blocks(lines: &[&str]) -> Result<Vec<Block>> {
+    let _depth = descend(rst_err)?;
     let mut blocks = Vec::new();
     let mut i = 0;
     while i < lines.len() {
@@ -1122,13 +1386,14 @@ fn parse_rst_blocks(lines: &[&str]) -> Result<Vec<Block>> {
             && !name.is_empty()
             && !name.contains(char::is_whitespace)
         {
-            blocks.push(rst_para(
-                ":",
-                parse_rst_inline(name),
-                vec![Block::Paragraph(parse_rst_inline(value.trim()))],
-                None,
-            ));
-            i += 1;
+            // The body continues on indented lines (the exo's
+            // shape for a field of several lines or paragraphs).
+            let mut inner: Vec<&str> = vec![value.trim()];
+            let (cont, next) = rst_indented_block(lines, i + 1);
+            inner.extend(cont);
+            let children = parse_rst_blocks(&inner)?;
+            blocks.push(rst_para(":", parse_rst_inline(name), children, None));
+            i = next.max(i + 1);
             continue;
         }
 
@@ -1136,7 +1401,10 @@ fn parse_rst_blocks(lines: &[&str]) -> Result<Vec<Block>> {
         if !line.starts_with(' ')
             && let Some(under) = lines.get(i + 1)
             && let Some(level) = adornment_level(under)
-            && under.len() >= line.trim_end().len()
+            // docutils takes an underline shorter than its title
+            // as a title still (with a warning) once it is four
+            // characters long; a shorter one is ordinary text.
+            && (under.len() >= line.trim_end().chars().count() || under.len() >= 4)
         {
             blocks.push(Block::Paragraph(vec![Inline::Endo {
                 symbol: "#".repeat(level),
@@ -1287,6 +1555,8 @@ fn rst_item_content(
 /// literals, footnote callouts (deixes), backslash escapes.
 fn parse_rst_inline(text: &str) -> Vec<Inline> {
     let chars: Vec<char> = text.chars().collect();
+    let mut finder = Finder::new(&chars);
+    let mut closers: ScanMemo<usize> = ScanMemo::new();
     let mut inlines: Vec<Inline> = Vec::new();
     let mut lit = String::new();
     let mut i = 0;
@@ -1310,7 +1580,7 @@ fn parse_rst_inline(text: &str) -> Vec<Inline> {
         // Double-backtick literal.
         if c == '`'
             && chars.get(i + 1) == Some(&'`')
-            && let Some(close) = find(&chars, i + 2, &['`', '`'])
+            && let Some(close) = finder.find(i + 2, &['`', '`'])
         {
             flush(&mut lit, &mut inlines);
             inlines.push(Inline::VerbatimInline {
@@ -1323,7 +1593,7 @@ fn parse_rst_inline(text: &str) -> Vec<Inline> {
         // Footnote callout `[#name]_`.
         if c == '['
             && chars.get(i + 1) == Some(&'#')
-            && let Some(close) = find(&chars, i + 2, &[']', '_'])
+            && let Some(close) = finder.find(i + 2, &[']', '_'])
         {
             flush(&mut lit, &mut inlines);
             inlines.push(Inline::Deixis {
@@ -1341,7 +1611,7 @@ fn parse_rst_inline(text: &str) -> Vec<Inline> {
         // references without a URI stay literal, as do bare URLs.
         if c == '`'
             && chars.get(i + 1) != Some(&'`')
-            && let Some(close) = find(&chars, i + 1, &['`', '_'])
+            && let Some(close) = finder.find(i + 1, &['`', '_'])
             && let Some((text, url)) = rst_embedded_uri(&chars[i + 1..close])
         {
             flush(&mut lit, &mut inlines);
@@ -1363,12 +1633,9 @@ fn parse_rst_inline(text: &str) -> Vec<Inline> {
         // Strong, then emphasis.
         if c == '*' {
             let strong = chars.get(i + 1) == Some(&'*');
-            let (open_len, delim): (usize, &[char]) = if strong {
-                (2, &['*', '*'])
-            } else {
-                (1, &['*'])
-            };
-            if let Some(close) = find(&chars, i + open_len, delim) {
+            let delim = STAR_RUNS[if strong { 1 } else { 2 }];
+            let open_len = delim.len();
+            if let Some(close) = star_close(&chars, &mut closers, i, delim) {
                 flush(&mut lit, &mut inlines);
                 let inner: String = chars[i + open_len..close].iter().collect();
                 inlines.push(Inline::Endo {
@@ -1836,7 +2103,7 @@ fn usx_loc_to_osis(loc: &str) -> String {
 fn tei_choice(
     toks: &[Tok],
     mut i: usize,
-    notes: &mut usize,
+    ctx: &mut TeiCtx,
 ) -> Result<(Vec<Inline>, Vec<Inline>, usize)> {
     let mut preferred: Vec<Inline> = Vec::new();
     let mut fallback: Vec<Inline> = Vec::new();
@@ -1844,15 +2111,28 @@ fn tei_choice(
         match &toks[i] {
             Tok::Close(name) if name == "choice" => return Ok((preferred, fallback, i + 1)),
             Tok::Text(t) if t.trim().is_empty() => i += 1,
+            // An empty reading (`<expan/>`, `<sic/>`) has no close
+            // tag to run to.
+            Tok::Open {
+                name,
+                self_closing: true,
+                ..
+            } if matches!(
+                name.as_str(),
+                "expan" | "corr" | "reg" | "abbr" | "sic" | "orig"
+            ) =>
+            {
+                i += 1;
+            }
             Tok::Open { name, .. } if matches!(name.as_str(), "expan" | "corr" | "reg") => {
                 let n = name.clone();
-                let ((content, _), next) = tei_inline_run(toks, i + 1, &n, notes)?;
+                let ((content, _), next) = tei_inline_run(toks, i + 1, &n, ctx)?;
                 preferred = content;
                 i = next;
             }
             Tok::Open { name, .. } if matches!(name.as_str(), "abbr" | "sic" | "orig") => {
                 let n = name.clone();
-                let ((content, _), next) = tei_inline_run(toks, i + 1, &n, notes)?;
+                let ((content, _), next) = tei_inline_run(toks, i + 1, &n, ctx)?;
                 fallback = content;
                 i = next;
             }
@@ -1901,6 +2181,14 @@ pub(crate) fn tokenize_xml(xml: &str) -> Result<Vec<Tok>> {
                 rest = &rest[end + 3..];
                 continue;
             }
+            if let Some(cdata) = rest.strip_prefix("<![CDATA[") {
+                let end = cdata
+                    .find("]]>")
+                    .ok_or_else(|| tei_err("unterminated CDATA section".into()))?;
+                toks.push(Tok::Text(cdata_text(&cdata[..end])));
+                rest = &cdata[end + 3..];
+                continue;
+            }
             if rest.starts_with("<?") || rest.starts_with("<!") {
                 // A DOCTYPE may carry an internal DTD subset
                 // (`[ … ]>`, Perseus P4 parameter entities): the
@@ -1920,9 +2208,7 @@ pub(crate) fn tokenize_xml(xml: &str) -> Result<Vec<Tok>> {
                 }
                 continue;
             }
-            let end = rest
-                .find('>')
-                .ok_or_else(|| tei_err("unterminated tag".into()))?;
+            let end = tag_end(rest).ok_or_else(|| tei_err("unterminated tag".into()))?;
             let inner = &rest[1..end];
             rest = &rest[end + 1..];
             if let Some(name) = inner.strip_prefix('/') {
@@ -2046,27 +2332,28 @@ pub fn tei_to_document_lines(xml: &str, line_milestones: Option<&str>) -> Result
         return tei_lex0_document(&toks);
     }
     let mut blocks: Vec<Block> = Vec::new();
-    let mut notes = 0usize;
     // The bibliography is read ahead of the text, so a ref that
     // points at one of its entries imports as a cite.
     let entries = tei_bibliography(&toks)?;
-    TEI_BIB_KEYS.with(|c| {
-        *c.borrow_mut() = entries
+    let mut ctx = TeiCtx {
+        notes: 0,
+        bib_keys: entries
             .iter()
             .filter_map(|e| match e {
                 Block::Para { lemma, .. } => Some(plain_text(lemma)),
                 _ => None,
             })
-            .collect();
-    });
+            .collect(),
+    };
     let mut i = 0;
     while i < toks.len() {
         match &toks[i] {
-            Tok::Text(t) if t.trim().is_empty() => i += 1,
+            // A byte-order mark is whitespace at document level.
+            Tok::Text(t) if t.trim_start_matches('\u{feff}').trim().is_empty() => i += 1,
             Tok::Open { name, .. } if name == "TEI" || name == "TEI.2" => i += 1,
             Tok::Close(name) if name == "TEI" || name == "TEI.2" => i += 1,
             Tok::Open { name, .. } if name == "teiHeader" => {
-                let next = tei_header(&toks, i + 1, &mut blocks)?;
+                let next = tei_header(&toks, i + 1, &mut blocks, &mut ctx)?;
                 i = next;
             }
             Tok::Open { name, .. } if name == "standOff" => {
@@ -2078,10 +2365,10 @@ pub fn tei_to_document_lines(xml: &str, line_milestones: Option<&str>) -> Result
                 i = skip_element(&toks, i + 1, name.clone())?;
             }
             Tok::Open { name, .. } if name == "front" => {
-                i = tei_front(&toks, i + 1, &mut blocks, &mut notes)?;
+                i = tei_front(&toks, i + 1, &mut blocks, &mut ctx)?;
             }
             Tok::Open { name, .. } if name == "body" => {
-                let (inner, next) = tei_blocks(&toks, i + 1, "body", 0, &mut notes)?;
+                let (inner, next) = tei_blocks(&toks, i + 1, "body", 0, &mut ctx)?;
                 blocks.extend(inner);
                 i = next;
             }
@@ -2117,7 +2404,6 @@ pub fn tei_to_document_lines(xml: &str, line_milestones: Option<&str>) -> Result
     };
     tei_compose_bekker(&mut blocks, &mut ms_state);
     tei_settle_heads(&mut blocks);
-    TEI_BIB_KEYS.with(|c| c.borrow_mut().clear());
     if !entries.is_empty() {
         blocks.push(Block::MonadEnglossis {
             dialect: "bibliogramma".to_string(),
@@ -2132,21 +2418,36 @@ pub fn tei_to_document_lines(xml: &str, line_milestones: Option<&str>) -> Result
     })
 }
 
-thread_local! {
-    /// The keys of the bibliography being imported: the xml:id of
-    /// every listBibl entry of the current TEI document.
-    static TEI_BIB_KEYS: std::cell::RefCell<std::collections::HashSet<String>> =
-        std::cell::RefCell::new(std::collections::HashSet::new());
+/// The state one TEI import threads through its readers: the
+/// footnote counter (every note body is `n{notes}`) and the keys
+/// of the bibliography being imported (the xml:id of every
+/// listBibl entry), which make a ref at one of them a cite.
+#[derive(Default)]
+struct TeiCtx {
+    notes: usize,
+    bib_keys: std::collections::HashSet<String>,
 }
 
-/// The bibliography of a TEI text: every bibl or biblStruct that
-/// carries an xml:id inside a listBibl, wherever the list sits in
-/// the text (a bibliography div, the back matter), as bibliogramma
-/// entries in document order. The header's listBibl describes the
+/// The bibliography of a TEI text: every bibl or biblStruct
+/// inside a listBibl, wherever the list sits in the text (a
+/// bibliography div, the back matter), as bibliogramma entries in
+/// document order. The key is the xml:id; an entry without one
+/// cannot be cited but keeps its place under a synthesized key
+/// (bibl-N, its ordinal). The header's listBibl describes the
 /// sources of the edition and is not read.
 fn tei_bibliography(toks: &[Tok]) -> Result<Vec<Block>> {
     let mut entries: Vec<Block> = Vec::new();
     let mut seen = std::collections::HashSet::new();
+    // The ids the source spells, so a synthesized key takes none.
+    let taken: std::collections::HashSet<&str> = toks
+        .iter()
+        .filter_map(|t| match t {
+            Tok::Open { name, attrs, .. } if name == "bibl" || name == "biblStruct" => {
+                attr(attrs, "xml:id").or_else(|| attr(attrs, "id"))
+            }
+            _ => None,
+        })
+        .collect();
     let mut in_header = false;
     let mut lists = 0usize;
     let mut i = 0;
@@ -2169,10 +2470,18 @@ fn tei_bibliography(toks: &[Tok]) -> Result<Vec<Block>> {
                 attrs,
                 self_closing: false,
             } if (name == "bibl" || name == "biblStruct") && lists > 0 && !in_header => {
-                if let Some(key) = attr(attrs, "xml:id").or_else(|| attr(attrs, "id"))
-                    && seen.insert(key.to_string())
-                {
-                    let (entry, next) = tei_bibl_entry(toks, i + 1, name, attrs, key)?;
+                let key = match attr(attrs, "xml:id").or_else(|| attr(attrs, "id")) {
+                    Some(key) => key.to_string(),
+                    None => {
+                        let mut n = entries.len() + 1;
+                        while taken.contains(format!("bibl-{n}").as_str()) {
+                            n += 1;
+                        }
+                        format!("bibl-{n}")
+                    }
+                };
+                if seen.insert(key.clone()) {
+                    let (entry, next) = tei_bibl_entry(toks, i + 1, name, attrs, &key)?;
                     entries.push(entry);
                     i = next;
                     continue;
@@ -2197,7 +2506,7 @@ fn tei_bibl_entry(
     attrs: &[(String, String)],
     key: &str,
 ) -> Result<(Block, usize)> {
-    let (printed, _) = tei_text_of(toks, i, until)?;
+    let start = i;
     let mut authors: Vec<String> = Vec::new();
     let mut editors: Vec<String> = Vec::new();
     let mut titles: Vec<(String, String)> = Vec::new();
@@ -2295,7 +2604,9 @@ fn tei_bibl_entry(
                 kind = "article";
                 "journal"
             }
-            (Some(_), "m") => {
+            // Beside an analytic title, a monograph title — or
+            // one that names no level — is the containing work.
+            (Some(_), "m" | "") => {
                 kind = "incollection";
                 "booktitle"
             }
@@ -2316,15 +2627,29 @@ fn tei_bibl_entry(
     if !editors.is_empty() {
         fields.push(("editor".to_string(), editors.join(" and ")));
     }
+    // A repeated element (a second note, a second page range)
+    // joins the first, as authors do.
     for (field, text) in rest {
-        if !fields.iter().any(|(f, _)| *f == field) {
-            fields.push((field, text));
+        match fields.iter_mut().find(|(f, _)| *f == field) {
+            Some((_, value)) if text.is_empty() || *value == text => {}
+            Some((_, value)) if value.is_empty() => *value = text,
+            Some((_, value)) => {
+                value.push_str("; ");
+                value.push_str(&text);
+            }
+            None => fields.push((field, text)),
         }
     }
     if fields.is_empty() {
+        let (printed, _) = tei_text_of(toks, start, until)?;
         fields.push(("note".to_string(), printed));
     }
-    let kind = attr(attrs, "type").unwrap_or(kind).to_string();
+    // A type names the genus when it can be spelled as a genos
+    // ("Journal Article" is journal-article); else the genus the
+    // titles gave stands.
+    let kind = attr(attrs, "type")
+        .and_then(tei_kebab)
+        .unwrap_or_else(|| kind.to_string());
     let children = fields
         .into_iter()
         .filter(|(_, v)| !v.is_empty())
@@ -2381,58 +2706,99 @@ pub(crate) fn skip_element(toks: &[Tok], mut i: usize, name: String) -> Result<u
 /// teiHeader: titleStmt children become litogramma front
 /// matter and a particDesc listPerson the cast; the rest of the
 /// header is skipped.
-fn tei_header(toks: &[Tok], mut i: usize, blocks: &mut Vec<Block>) -> Result<usize> {
+fn tei_header(
+    toks: &[Tok],
+    mut i: usize,
+    blocks: &mut Vec<Block>,
+    ctx: &mut TeiCtx,
+) -> Result<usize> {
     // When any title carries type="main", untyped and
     // bibliographic siblings are catalogue noise: main becomes
     // the title, type="sub" the subtitle, the rest drops.
+    // Only the titles the loop below reads count (the ones
+    // directly under the descended wrappers): a type="main" in
+    // the skipped sourceDesc describes the source, not this
+    // edition.
     let has_main = {
         let mut probe = i;
         let mut found = false;
-        let mut depth = 1usize;
-        while probe < toks.len() && depth > 0 {
+        while probe < toks.len() {
             match &toks[probe] {
+                Tok::Close(name) if name == "teiHeader" => break,
                 Tok::Open {
                     name,
                     attrs,
                     self_closing,
-                } => {
-                    if name == "teiHeader" && !self_closing {
-                        depth += 1;
-                    }
-                    if name == "title" && attr(attrs, "type") == Some("main") {
+                } if name == "title" => {
+                    if attr(attrs, "type") == Some("main") {
                         found = true;
                     }
+                    probe = if *self_closing {
+                        probe + 1
+                    } else {
+                        skip_element(toks, probe + 1, "title".to_string())?
+                    };
                 }
-                Tok::Close(name) if name == "teiHeader" => depth -= 1,
-                _ => {}
+                Tok::Open {
+                    name,
+                    self_closing: false,
+                    ..
+                } if !matches!(
+                    name.as_str(),
+                    "fileDesc" | "titleStmt" | "profileDesc" | "particDesc"
+                ) =>
+                {
+                    probe = skip_element(toks, probe + 1, name.clone())?;
+                }
+                _ => probe += 1,
             }
-            probe += 1;
         }
         found
     };
     while i < toks.len() {
         match &toks[i] {
             Tok::Close(name) if name == "teiHeader" => return Ok(i + 1),
-            Tok::Open { name, attrs, .. } if name == "title" => {
+            Tok::Open {
+                name,
+                attrs,
+                self_closing,
+            } if name == "title" => {
+                if *self_closing {
+                    // <title/>: an empty title — nothing to emit
+                    i += 1;
+                    continue;
+                }
                 let ttype = attr(attrs, "type").map(str::to_string);
-                let (content, next) = tei_inline_run(toks, i + 1, "title", &mut 0)?;
-                match (has_main, ttype.as_deref()) {
-                    (true, Some("main")) => blocks.push(solo_endo("=", content.0)),
-                    (true, Some("sub")) => blocks.push(solo_endo("=_", content.0)),
-                    (true, _) => {}
-                    (false, Some("sub")) => blocks.push(solo_endo("=_", content.0)),
-                    (false, _) => blocks.push(solo_endo("=", content.0)),
+                let save = ctx.notes;
+                let ((content, bodies), next) = tei_inline_run(toks, i + 1, "title", ctx)?;
+                let symbol = match (has_main, ttype.as_deref()) {
+                    (true, Some("main")) => Some("="),
+                    (true, Some("sub")) => Some("=_"),
+                    (true, _) => None,
+                    (false, Some("sub")) => Some("=_"),
+                    (false, _) => Some("="),
+                };
+                if let Some(symbol) = symbol {
+                    blocks.push(solo_endo(symbol, content));
+                    blocks.extend(bodies);
+                } else {
+                    // a dropped catalogue title takes its notes
+                    // with it: release their numbers
+                    ctx.notes = save;
                 }
                 i = next;
             }
-            Tok::Open { name, .. } if name == "author" => {
-                let (content, next) = tei_inline_run(toks, i + 1, "author", &mut 0)?;
-                blocks.push(solo_endo("=:", content.0));
-                i = next;
-            }
-            Tok::Open { name, .. } if name == "editor" => {
-                let (content, next) = tei_inline_run(toks, i + 1, "editor", &mut 0)?;
-                blocks.push(solo_endo("=;", content.0));
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "author" || name == "editor" => {
+                if *self_closing {
+                    i += 1;
+                    continue;
+                }
+                let n = name.clone();
+                let ((content, bodies), next) = tei_inline_run(toks, i + 1, &n, ctx)?;
+                blocks.push(solo_endo(if n == "author" { "=:" } else { "=;" }, content));
+                blocks.extend(bodies);
                 i = next;
             }
             Tok::Open {
@@ -2462,7 +2828,7 @@ fn tei_header(toks: &[Tok], mut i: usize, blocks: &mut Vec<Block>) -> Result<usi
                 // The edition's cast (profileDesc/particDesc):
                 // the same dramatis-persona lines as a body-level
                 // list, after the front matter.
-                let (items, next) = tei_list_person(toks, i + 1, &mut 0)?;
+                let (items, next) = tei_list_person(toks, i + 1, ctx)?;
                 blocks.extend(items);
                 i = next;
             }
@@ -2494,12 +2860,30 @@ fn tei_milestone_is_title(n: &str) -> bool {
     n.trim().chars().count() > 24
 }
 
+/// A TEI name as a genos-shaped identifier (a milestone scheme, an
+/// entry genus): lowercased, every run of other characters
+/// one hyphen, none at the edges. None when nothing valid is left.
+fn tei_kebab(name: &str) -> Option<String> {
+    let mut out = String::new();
+    for c in name.trim().chars() {
+        if c.is_alphanumeric() {
+            out.extend(c.to_lowercase());
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    let out = out.trim_end_matches('-').to_string();
+    crate::sigil::is_valid_genos(&out).then_some(out)
+}
+
 fn tei_milestone_mono(n: &str, attrs: &[(String, String)]) -> Option<Inline> {
+    // Reference-system names ride as kebab-case schemes/genoses:
+    // underscores in a unit (alt_poem_line) become hyphens, and
+    // a pointer or an abbreviation (resp="#Bekker", "St.") sheds
+    // what the scheme grammar has no spelling for.
     let resp = attr(attrs, "resp")
         .or_else(|| attr(attrs, "ed").filter(|e| e.len() > 1))
-        .map(|r| r.to_ascii_lowercase());
-    // Reference-system names ride as kebab-case schemes/genoses:
-    // underscores in a unit (alt_poem_line) become hyphens.
+        .and_then(tei_kebab);
     let unit = attr(attrs, "unit").map(|u| u.to_ascii_lowercase().replace('_', "-"));
     let scheme = resp
         .clone()
@@ -2687,7 +3071,7 @@ fn tei_compose_bekker(blocks: &mut [Block], st: &mut MsPass) {
 fn tei_line_run(
     toks: &[Tok],
     mut i: usize,
-    notes: &mut usize,
+    ctx: &mut TeiCtx,
 ) -> Result<(Vec<Vec<Inline>>, Vec<Block>, usize)> {
     let mut lines: Vec<Vec<Inline>> = Vec::new();
     let mut bodies: Vec<Block> = Vec::new();
@@ -2704,7 +3088,7 @@ fn tei_line_run(
                     i += 1;
                     continue;
                 }
-                let ((mut content, inner), next) = tei_inline_run(toks, i + 1, "l", notes)?;
+                let ((mut content, inner), next) = tei_inline_run(toks, i + 1, "l", ctx)?;
                 trim_inline_edges(&mut content);
                 lines.push(content);
                 bodies.extend(inner);
@@ -2736,7 +3120,7 @@ fn tei_is_verse_quote(toks: &[Tok], i: usize) -> bool {
 fn tei_inline_verse_quote(
     toks: &[Tok],
     mut i: usize,
-    notes: &mut usize,
+    ctx: &mut TeiCtx,
 ) -> Result<(Vec<Inline>, Vec<Block>, usize)> {
     let mut out: Vec<Inline> = Vec::new();
     let mut vq_bodies: Vec<Block> = Vec::new();
@@ -2749,7 +3133,7 @@ fn tei_inline_verse_quote(
             Tok::Close(name) if name == "sp" => i += 1,
             Tok::Open { name, .. } if name == "speaker" => {
                 // a drama excerpt: the speaker label leads its line
-                let ((content, inner), next) = tei_inline_run(toks, i + 1, "speaker", notes)?;
+                let ((content, inner), next) = tei_inline_run(toks, i + 1, "speaker", ctx)?;
                 if !out.is_empty() {
                     out.push(Inline::Text(" / ".to_string()));
                 }
@@ -2765,7 +3149,7 @@ fn tei_inline_verse_quote(
                     i += 1;
                     continue;
                 }
-                let (mut content, inner, next) = tei_inline_verse_quote(toks, i + 1, notes)?;
+                let (mut content, inner, next) = tei_inline_verse_quote(toks, i + 1, ctx)?;
                 trim_inline_edges(&mut content);
                 if !out.is_empty() {
                     out.push(Inline::Text(" / ".to_string()));
@@ -2787,7 +3171,7 @@ fn tei_inline_verse_quote(
                     i += 1;
                     continue;
                 }
-                let ((mut content, inner), next) = tei_inline_run(toks, i + 1, "l", notes)?;
+                let ((mut content, inner), next) = tei_inline_run(toks, i + 1, "l", ctx)?;
                 trim_inline_edges(&mut content);
                 if !out.is_empty() {
                     out.push(Inline::Text(" / ".to_string()));
@@ -2801,7 +3185,9 @@ fn tei_inline_verse_quote(
                 if !out.is_empty() {
                     out.push(Inline::Text(" ".to_string()));
                 }
-                out.push(Inline::Text(t.trim().to_string()));
+                out.push(Inline::Text(
+                    collapse_ws(&decode_entities(t)).trim().to_string(),
+                ));
                 i += 1;
             }
             Tok::Open {
@@ -2826,13 +3212,13 @@ fn tei_inline_verse_quote(
                 }
             }
             Tok::Open { name, .. } if name == "placeName" => {
-                let ((content, inner), next) = tei_inline_run(toks, i + 1, "placeName", notes)?;
+                let ((content, inner), next) = tei_inline_run(toks, i + 1, "placeName", ctx)?;
                 out.extend(content);
                 vq_bodies.extend(inner);
                 i = next;
             }
             Tok::Open { name, .. } if name == "q" => {
-                let ((mut content, inner), next) = tei_inline_run(toks, i + 1, "q", notes)?;
+                let ((mut content, inner), next) = tei_inline_run(toks, i + 1, "q", ctx)?;
                 vq_bodies.extend(inner);
                 trim_inline_edges(&mut content);
                 out.push(Inline::Endo {
@@ -2862,7 +3248,7 @@ fn tei_inline_verse_quote(
                     i += 1;
                     continue;
                 }
-                let ((content, inner), next) = tei_inline_run(toks, i + 1, "bibl", notes)?;
+                let ((content, inner), next) = tei_inline_run(toks, i + 1, "bibl", ctx)?;
                 if !out.is_empty() {
                     out.push(Inline::Text(" ".to_string()));
                 }
@@ -2891,6 +3277,24 @@ fn tei_inline_verse_quote(
                     i += 1;
                 }
             }
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "app" => {
+                // an apparatus entry among the lines: its lem
+                // reading continues the quoted text
+                if *self_closing {
+                    i += 1;
+                    continue;
+                }
+                let ((mut content, inner), next) = tei_app_lem(toks, i + 1, ctx)?;
+                trim_inline_edges(&mut content);
+                if !out.is_empty() && !content.is_empty() {
+                    out.push(Inline::Text(" ".to_string()));
+                }
+                out.extend(content);
+                vq_bodies.extend(inner);
+                i = next;
+            }
             other => {
                 return Err(tei_err(format!("unsupported {other:?} in a verse quote")));
             }
@@ -2899,8 +3303,116 @@ fn tei_inline_verse_quote(
     Err(tei_err("unterminated verse <quote>".into()))
 }
 
+/// A parallel-segmentation apparatus entry (app) in an inline
+/// context: the lem reading is the text and runs as inlines; the
+/// variant readings (rdg), witness detail and apparatus notes are
+/// not text and drop — at-tei has no apparatus construct to keep
+/// them in. A rdgGrp is transparent: the lem it groups still
+/// counts. Returns the reading and the index past </app>.
+#[allow(clippy::type_complexity)]
+fn tei_app_lem(
+    toks: &[Tok],
+    mut i: usize,
+    ctx: &mut TeiCtx,
+) -> Result<((Vec<Inline>, Vec<Block>), usize)> {
+    let mut inlines: Vec<Inline> = Vec::new();
+    let mut bodies: Vec<Block> = Vec::new();
+    while i < toks.len() {
+        match &toks[i] {
+            Tok::Close(name) if name == "app" => return Ok(((inlines, bodies), i + 1)),
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "lem" => {
+                if *self_closing {
+                    i += 1;
+                    continue;
+                }
+                let ((content, inner), next) = tei_inline_run(toks, i + 1, "lem", ctx)?;
+                inlines.extend(content);
+                bodies.extend(inner);
+                i = next;
+            }
+            Tok::Open {
+                name,
+                self_closing: false,
+                ..
+            } if name == "rdgGrp" => i += 1,
+            Tok::Open {
+                name, self_closing, ..
+            } => {
+                if *self_closing {
+                    i += 1;
+                } else {
+                    i = skip_element(toks, i + 1, name.clone())?;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    Err(tei_err("unterminated <app>".into()))
+}
+
+/// A block-level apparatus entry: the lem's blocks when it holds
+/// block children, else its inline run as one paragraph.
+fn tei_app_lem_blocks(
+    toks: &[Tok],
+    mut i: usize,
+    depth: usize,
+    ctx: &mut TeiCtx,
+) -> Result<(Vec<Block>, usize)> {
+    let mut blocks: Vec<Block> = Vec::new();
+    while i < toks.len() {
+        match &toks[i] {
+            Tok::Close(name) if name == "app" => return Ok((blocks, i + 1)),
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "lem" => {
+                if *self_closing {
+                    i += 1;
+                    continue;
+                }
+                let mut probe = i + 1;
+                while matches!(&toks.get(probe), Some(Tok::Text(t)) if t.trim().is_empty()) {
+                    probe += 1;
+                }
+                let structural = matches!(&toks.get(probe), Some(Tok::Open { name, .. })
+                    if matches!(name.as_str(), "p" | "l" | "lg" | "sp" | "div" | "head" | "quote" | "ab"));
+                if structural {
+                    let (inner, next) = tei_blocks(toks, i + 1, "lem", depth, ctx)?;
+                    blocks.extend(inner);
+                    i = next;
+                } else {
+                    let ((mut content, inner), next) = tei_inline_run(toks, i + 1, "lem", ctx)?;
+                    trim_inline_edges(&mut content);
+                    if !content.is_empty() {
+                        blocks.push(Block::Paragraph(content));
+                    }
+                    blocks.extend(inner);
+                    i = next;
+                }
+            }
+            Tok::Open {
+                name,
+                self_closing: false,
+                ..
+            } if name == "rdgGrp" => i += 1,
+            Tok::Open {
+                name, self_closing, ..
+            } => {
+                if *self_closing {
+                    i += 1;
+                } else {
+                    i = skip_element(toks, i + 1, name.clone())?;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    Err(tei_err("unterminated <app>".into()))
+}
+
 /// A note body: paragraphs when present, else one inline run.
-fn tei_note_body(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Vec<Block>, usize)> {
+fn tei_note_body(toks: &[Tok], mut i: usize, ctx: &mut TeiCtx) -> Result<(Vec<Block>, usize)> {
     let mut children: Vec<Block> = Vec::new();
     let mut inline: Vec<Inline> = Vec::new();
     while i < toks.len() {
@@ -2927,21 +3439,21 @@ fn tei_note_body(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Vec<B
                         children.push(Block::Paragraph(content));
                     }
                 }
-                let ((mut content, bodies), next) = tei_inline_run(toks, i + 1, &n, notes)?;
+                let ((mut content, bodies), next) = tei_inline_run(toks, i + 1, &n, ctx)?;
                 trim_inline_edges(&mut content);
                 children.push(Block::Paragraph(content));
                 children.extend(bodies);
                 i = next;
             }
             Tok::Open { name, .. } if name == "lg" => {
-                let (block, bodies, next) = tei_verse(toks, i + 1, notes)?;
+                let (block, bodies, next) = tei_verse(toks, i + 1, ctx)?;
                 children.push(block);
                 children.extend(bodies);
                 i = next;
             }
             _ => {
                 // A plain inline body: one run to the close.
-                let ((content, bodies), next) = tei_inline_run(toks, i, "note", notes)?;
+                let ((content, bodies), next) = tei_inline_run(toks, i, "note", ctx)?;
                 inline.extend(content);
                 children.extend(bodies);
                 if !inline.is_empty() {
@@ -2966,7 +3478,7 @@ fn tei_note_body(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Vec<B
 fn tei_ab_lines(
     toks: &[Tok],
     mut i: usize,
-    notes: &mut usize,
+    ctx: &mut TeiCtx,
 ) -> Result<(Vec<Strophe>, Vec<Block>, usize)> {
     let mut strophes: Vec<Strophe> = Vec::new();
     let mut current: Vec<Vec<Inline>> = Vec::new();
@@ -2994,7 +3506,7 @@ fn tei_ab_lines(
                     i += 1;
                     continue;
                 }
-                let ((mut content, inner), next) = tei_inline_run(toks, i + 1, "l", notes)?;
+                let ((mut content, inner), next) = tei_inline_run(toks, i + 1, "l", ctx)?;
                 trim_inline_edges(&mut content);
                 current.push(content);
                 bodies.extend(inner);
@@ -3008,9 +3520,9 @@ fn tei_ab_lines(
                     i += 1;
                     continue;
                 }
-                *notes += 1;
-                let onym = format!("n{notes}");
-                let (children, next) = tei_note_body(toks, i + 1, notes)?;
+                ctx.notes += 1;
+                let onym = format!("n{}", ctx.notes);
+                let (children, next) = tei_note_body(toks, i + 1, ctx)?;
                 let deixis = Inline::Deixis {
                     symbol: "^".to_string(),
                     onym: onym.clone(),
@@ -3087,7 +3599,7 @@ fn tei_blocks(
     mut i: usize,
     until: &str,
     depth: usize,
-    notes: &mut usize,
+    ctx: &mut TeiCtx,
 ) -> Result<(Vec<Block>, usize)> {
     let mut blocks: Vec<Block> = Vec::new();
     while i < toks.len() {
@@ -3108,6 +3620,14 @@ fn tei_blocks(
             Tok::Text(t) => {
                 return Err(tei_err(format!("bare text at block level: `{}`", t.trim())));
             }
+            Tok::Open {
+                name,
+                self_closing: true,
+                ..
+            } if name == "div" => {
+                // <div/>: an empty division — nothing to emit
+                i += 1;
+            }
             Tok::Open { name, attrs, .. } if name == "div" => {
                 let level = div_level(attr(attrs, "type"), depth);
                 let symbol = SECTION_LADDER[level];
@@ -3118,14 +3638,24 @@ fn tei_blocks(
                 // let kanonizo number sequentially
                 let taxis: Option<Taxis> = None;
                 let _ = attr(attrs, "n");
-                let (mut children, next) = tei_blocks(toks, i + 1, "div", level, notes)?;
-                // A leading head becomes the section lemma.
-                let lemma = match children.first() {
+                let (mut children, next) = tei_blocks(toks, i + 1, "div", level, ctx)?;
+                // A leading head becomes the section lemma;
+                // milestones may stand before it (a book
+                // milestone opening its div).
+                let head_at = children
+                    .iter()
+                    .position(|b| {
+                        !matches!(b, Block::Paragraph(v)
+                            if matches!(v.as_slice(), [Inline::Milestone { .. }]))
+                    })
+                    .unwrap_or(0);
+                let lemma = match children.get(head_at) {
                     Some(Block::Paragraph(inlines))
                         if matches!(inlines.first(),
                             Some(Inline::Endo { symbol, .. }) if symbol == "\u{0}head") =>
                     {
-                        let Some(Block::Paragraph(mut inlines)) = Some(children.remove(0)) else {
+                        let Some(Block::Paragraph(mut inlines)) = Some(children.remove(head_at))
+                        else {
                             unreachable!()
                         };
                         let Some(Inline::Endo { content, .. }) = inlines.pop() else {
@@ -3135,12 +3665,21 @@ fn tei_blocks(
                     }
                     _ => Vec::new(),
                 };
+                // A div that held nothing but its head and the
+                // bibliography (read ahead, closing the document)
+                // would leave a hollow section behind.
+                let only_bibl = children.is_empty()
+                    && toks[i + 1..next]
+                        .iter()
+                        .any(|t| matches!(t, Tok::Open { name, .. } if name == "listBibl"));
                 if lemma.is_empty() {
                     // A headless div is transparent: its children
                     // splice here (litogramma headings require a
                     // lemma, and an edition number on a headless
                     // div already rides the milestones).
                     blocks.extend(children);
+                } else if only_bibl {
+                    // nothing to emit
                 } else {
                     blocks.push(Block::Para {
                         symbol: symbol.to_string(),
@@ -3165,7 +3704,7 @@ fn tei_blocks(
                 // Wrapped in a sentinel endo; the enclosing div
                 // promotes it to the lemma.
                 let ((content, bodies), next) = {
-                    let (run, next) = tei_inline_run(toks, i + 1, "head", notes)?;
+                    let (run, next) = tei_inline_run(toks, i + 1, "head", ctx)?;
                     (run, next)
                 };
                 blocks.push(Block::Paragraph(vec![Inline::Endo {
@@ -3178,19 +3717,23 @@ fn tei_blocks(
                 i = next;
             }
             Tok::Open { name, .. } if name == "said" => {
-                let (block, next) = tei_said_paragraph(toks, i, notes)?;
+                let (block, next) = tei_said_paragraph(toks, i, ctx)?;
                 blocks.push(block);
                 i = next;
             }
             Tok::Open {
                 name, self_closing, ..
             } if name == "app" => {
+                // A block-level apparatus entry: the lem reading
+                // is the text (block content when it holds
+                // blocks, else one paragraph); the variants drop.
                 if *self_closing {
                     i += 1;
-                } else {
-                    let n2 = name.clone();
-                    i = skip_element(toks, i + 1, n2)?;
+                    continue;
                 }
+                let (inner, next) = tei_app_lem_blocks(toks, i + 1, depth, ctx)?;
+                blocks.extend(inner);
+                i = next;
             }
             Tok::Open {
                 name, self_closing, ..
@@ -3198,7 +3741,7 @@ fn tei_blocks(
                 if *self_closing {
                     i += 1;
                 } else {
-                    let (items, next) = tei_list_person(toks, i + 1, notes)?;
+                    let (items, next) = tei_list_person(toks, i + 1, ctx)?;
                     blocks.extend(items);
                     i = next;
                 }
@@ -3245,7 +3788,7 @@ fn tei_blocks(
                 }
             }
             Tok::Open { name, .. } if name == "label" => {
-                let ((content, inner), next) = tei_inline_run(toks, i + 1, "label", notes)?;
+                let ((content, inner), next) = tei_inline_run(toks, i + 1, "label", ctx)?;
                 blocks.push(Block::Paragraph(vec![Inline::Endo {
                     symbol: ",".to_string(),
                     content,
@@ -3259,7 +3802,7 @@ fn tei_blocks(
                 i = next;
             }
             Tok::Open { name, .. } if name == "speaker" => {
-                let ((content, inner), next) = tei_inline_run(toks, i + 1, "speaker", notes)?;
+                let ((content, inner), next) = tei_inline_run(toks, i + 1, "speaker", ctx)?;
                 blocks.push(Block::Paragraph(vec![Inline::Endo {
                     symbol: ",".to_string(),
                     content,
@@ -3295,13 +3838,13 @@ fn tei_blocks(
                 if matches!(&toks.get(probe), Some(Tok::Open { name, .. }) if name == "said")
                     && tei_said_spans_paragraph(toks, probe)
                 {
-                    let (block, next) = tei_said_paragraph(toks, probe, notes)?;
+                    let (block, next) = tei_said_paragraph(toks, probe, ctx)?;
                     blocks.push(block);
                     i = next;
                     continue;
                 }
                 let ((content, bodies), next) = {
-                    let (run, next) = tei_inline_run(toks, i + 1, "p", notes)?;
+                    let (run, next) = tei_inline_run(toks, i + 1, "p", ctx)?;
                     (run, next)
                 };
                 // A paragraph-level ana annotates the paragraph:
@@ -3315,14 +3858,14 @@ fn tei_blocks(
                 i = next;
             }
             Tok::Open { name, .. } if name == "lg" => {
-                let (block, bodies, next) = tei_verse(toks, i + 1, notes)?;
+                let (block, bodies, next) = tei_verse(toks, i + 1, ctx)?;
                 blocks.push(block);
                 blocks.extend(bodies);
                 i = next;
             }
             Tok::Open { name, attrs, .. } if name == "sp" => {
                 let who = attr(attrs, "who").map(str::to_string);
-                let (speech, next) = tei_speech(toks, i + 1, who.as_deref(), depth, notes)?;
+                let (speech, next) = tei_speech(toks, i + 1, who.as_deref(), depth, ctx)?;
                 blocks.extend(speech);
                 i = next;
             }
@@ -3344,7 +3887,7 @@ fn tei_blocks(
             }
             Tok::Open { name, .. } if name == "l" => {
                 // A loose run of verse lines outside an lg.
-                let (strophe, line_bodies, next) = tei_line_run(toks, i, notes)?;
+                let (strophe, line_bodies, next) = tei_line_run(toks, i, ctx)?;
                 blocks.push(Block::Stichoi {
                     symbol: Some("~".to_string()),
                     taxis: None,
@@ -3359,7 +3902,7 @@ fn tei_blocks(
             }
             Tok::Open { name, .. } if name == "stage" => {
                 let ((content, bodies), next) = {
-                    let (run, next) = tei_inline_run(toks, i + 1, "stage", notes)?;
+                    let (run, next) = tei_inline_run(toks, i + 1, "stage", ctx)?;
                     (run, next)
                 };
                 blocks.push(Block::Para {
@@ -3375,7 +3918,7 @@ fn tei_blocks(
                 i = next;
             }
             Tok::Open { name, .. } if name == "quote" || name == "q" => {
-                let (children, next) = tei_quote_content(toks, i + 1, name.clone(), notes)?;
+                let (children, next) = tei_quote_content(toks, i + 1, name.clone(), ctx)?;
                 blocks.push(Block::Para {
                     symbol: "\"".to_string(),
                     taxis: None,
@@ -3390,31 +3933,44 @@ fn tei_blocks(
             Tok::Open { name, .. } if name == "cit" => {
                 // A cited quotation: the bibl becomes the
                 // blockquote's attribution hypograph.
-                let (block, next) = tei_cit(toks, i + 1, notes)?;
+                let (block, next) = tei_cit(toks, i + 1, ctx)?;
                 blocks.push(block);
                 i = next;
             }
             Tok::Open { name, .. } if name == "epigraph" => {
-                let (block, next) = tei_epigraph(toks, i + 1, notes)?;
+                let (block, next) = tei_epigraph(toks, i + 1, ctx)?;
                 blocks.push(block);
                 i = next;
             }
             Tok::Open { name, attrs, .. } if name == "figure" => {
                 let onym = attr(attrs, "xml:id").map(str::to_string);
-                let (block, next) = tei_figure(toks, i + 1, notes, onym)?;
+                let (block, bodies, next) = tei_figure(toks, i + 1, ctx, onym)?;
                 blocks.push(block);
+                blocks.extend(bodies);
                 i = next;
             }
             Tok::Open { name, .. } if name == "table" => {
-                let (block, next) = tei_table(toks, i + 1, notes)?;
+                let (block, bodies, next) = tei_table(toks, i + 1, ctx)?;
                 blocks.push(block);
+                blocks.extend(bodies);
                 i = next;
             }
             Tok::Open { name, attrs, .. } if name == "list" => {
                 let ordered = matches!(attr(attrs, "type"), Some("ordered"));
-                let (items, next) = tei_list(toks, i + 1, ordered, notes)?;
+                let (items, next) = tei_list(toks, i + 1, ordered, ctx)?;
+                // label/item pairs make it a definition list
+                let gloss = items
+                    .iter()
+                    .any(|b| matches!(b, Block::Para { symbol, .. } if symbol == "::"));
                 blocks.push(Block::Para {
-                    symbol: if ordered { ".." } else { "--" }.to_string(),
+                    symbol: if gloss {
+                        "::;"
+                    } else if ordered {
+                        ".."
+                    } else {
+                        "--"
+                    }
+                    .to_string(),
                     taxis: None,
                     lemma: Vec::new(),
                     children: items,
@@ -3440,7 +3996,7 @@ fn tei_blocks(
                     i += 1;
                     continue;
                 }
-                let (children, next) = tei_note_body(toks, i + 1, notes)?;
+                let (children, next) = tei_note_body(toks, i + 1, ctx)?;
                 blocks.push(Block::Para {
                     symbol: "^!".to_string(),
                     taxis: None,
@@ -3463,13 +4019,13 @@ fn tei_blocks(
                 }
             }
             Tok::Open { name, .. } if name == "castList" => {
-                let (items, next) = tei_cast_list(toks, i + 1, notes)?;
+                let (items, next) = tei_cast_list(toks, i + 1, "castList", ctx)?;
                 blocks.extend(items);
                 i = next;
             }
             Tok::Open { name, .. } if name == "dateline" || name == "trailer" => {
                 let n = name.clone();
-                let ((content, bodies), next) = tei_inline_run(toks, i + 1, &n, notes)?;
+                let ((content, bodies), next) = tei_inline_run(toks, i + 1, &n, ctx)?;
                 blocks.push(solo_endo("-/", content));
                 blocks.extend(bodies);
                 i = next;
@@ -3488,7 +4044,7 @@ fn tei_blocks(
                 let genoses = attr(attrs, "type")
                     .map(|t| vec![t.to_ascii_lowercase()])
                     .unwrap_or_default();
-                let (lines, bodies, next) = tei_ab_lines(toks, i + 1, notes)?;
+                let (lines, bodies, next) = tei_ab_lines(toks, i + 1, ctx)?;
                 blocks.push(Block::Stichoi {
                     symbol: Some("~".to_string()),
                     taxis: None,
@@ -3506,14 +4062,14 @@ fn tei_blocks(
             }
             Tok::Open { name, .. } if name == "salute" || name == "signed" || name == "ab" => {
                 let n = name.clone();
-                let ((content, bodies), next) = tei_inline_run(toks, i + 1, &n, notes)?;
+                let ((content, bodies), next) = tei_inline_run(toks, i + 1, &n, ctx)?;
                 blocks.push(Block::Paragraph(content));
                 blocks.extend(bodies);
                 i = next;
             }
             Tok::Open { name, .. } if name == "closer" || name == "opener" => {
                 let n = name.clone();
-                let (inner, next) = tei_blocks(toks, i + 1, &n, depth, notes)?;
+                let (inner, next) = tei_blocks(toks, i + 1, &n, depth, ctx)?;
                 blocks.extend(inner);
                 i = next;
             }
@@ -3536,7 +4092,7 @@ fn tei_quote_content(
     toks: &[Tok],
     i: usize,
     until: String,
-    notes: &mut usize,
+    ctx: &mut TeiCtx,
 ) -> Result<(Vec<Block>, usize)> {
     // Peek past insignificant whitespace and leading self-closing
     // milestones (a card/para milestone can head a verse quote)
@@ -3560,9 +4116,9 @@ fn tei_quote_content(
     if matches!(&toks.get(probe),
         Some(Tok::Open { name, .. }) if name == "p" || name == "l" || name == "lg")
     {
-        return tei_blocks(toks, i, &until, 0, notes);
+        return tei_blocks(toks, i, &until, 0, ctx);
     }
-    let ((content, bodies), next) = tei_inline_run(toks, i, &until, notes)?;
+    let ((content, bodies), next) = tei_inline_run(toks, i, &until, ctx)?;
     let mut blocks = vec![Block::Paragraph(content)];
     blocks.extend(bodies);
     Ok((blocks, next))
@@ -3570,7 +4126,7 @@ fn tei_quote_content(
 
 /// An lg: head becomes the verse lemma; l children are lines;
 /// nested lg groups are strophes.
-fn tei_verse(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Block, Vec<Block>, usize)> {
+fn tei_verse(toks: &[Tok], mut i: usize, ctx: &mut TeiCtx) -> Result<(Block, Vec<Block>, usize)> {
     let mut lemma: Vec<Inline> = Vec::new();
     let mut strophes: Vec<Strophe> = Vec::new();
     let mut current: Vec<Vec<Inline>> = Vec::new();
@@ -3598,7 +4154,7 @@ fn tei_verse(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Block, Ve
             Tok::Text(t) if t.trim().is_empty() => i += 1,
             Tok::Open { name, .. } if name == "head" => {
                 let ((content, inner), next) = {
-                    let (run, next) = tei_inline_run(toks, i + 1, "head", notes)?;
+                    let (run, next) = tei_inline_run(toks, i + 1, "head", ctx)?;
                     (run, next)
                 };
                 lemma = content;
@@ -3613,7 +4169,7 @@ fn tei_verse(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Block, Ve
                     continue;
                 }
                 let ((content, inner), next) = {
-                    let (run, next) = tei_inline_run(toks, i + 1, "l", notes)?;
+                    let (run, next) = tei_inline_run(toks, i + 1, "l", ctx)?;
                     (run, next)
                 };
                 current.push(content);
@@ -3626,17 +4182,97 @@ fn tei_verse(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Block, Ve
                 if !current.is_empty() {
                     strophes.push(Strophe(std::mem::take(&mut current)));
                 }
-                let (inner, inner_bodies, next) = tei_verse(toks, i + 1, notes)?;
+                let (inner, inner_bodies, next) = tei_verse(toks, i + 1, ctx)?;
                 let Block::Stichoi {
-                    strophes: inner_strophes,
+                    lemma: inner_lemma,
+                    strophes: mut inner_strophes,
                     ..
                 } = inner
                 else {
                     unreachable!()
                 };
+                if !inner_lemma.is_empty() {
+                    // A stanza title: a strophe carries no lemma,
+                    // so the head leads its strophe as a .head
+                    // phrase on a line of its own.
+                    let head = vec![Inline::Endo {
+                        symbol: ",".to_string(),
+                        content: inner_lemma,
+                        bracket_matching: true,
+                        ann: Annotations {
+                            onym: None,
+                            genoses: vec!["head".to_string()],
+                        },
+                    }];
+                    match inner_strophes.first_mut() {
+                        Some(strophe) => strophe.0.insert(0, head),
+                        None => inner_strophes.push(Strophe(vec![head])),
+                    }
+                }
                 strophes.extend(inner_strophes);
                 bodies.extend(inner_bodies);
                 i = next;
+            }
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "note" => {
+                if *self_closing {
+                    // <note/>: an empty note — nothing to emit
+                    i += 1;
+                    continue;
+                }
+                // A note between lines: the callout rides the end
+                // of the previous line.
+                ctx.notes += 1;
+                let onym = format!("n{}", ctx.notes);
+                let (children, next) = tei_note_body(toks, i + 1, ctx)?;
+                let deixis = Inline::Deixis {
+                    symbol: "^".to_string(),
+                    onym: onym.clone(),
+                    ann: Annotations::default(),
+                };
+                match current
+                    .last_mut()
+                    .or_else(|| strophes.last_mut().and_then(|s| s.0.last_mut()))
+                {
+                    Some(line) => line.push(deixis),
+                    None => current.push(vec![deixis]),
+                }
+                bodies.push(Block::Para {
+                    symbol: "^".to_string(),
+                    taxis: None,
+                    lemma: Vec::new(),
+                    children,
+                    hypograph: Vec::new(),
+                    bracket_matching: true,
+                    ann: Annotations {
+                        onym: Some(onym),
+                        genoses: Vec::new(),
+                    },
+                });
+                i = next;
+            }
+            Tok::Open {
+                name,
+                attrs,
+                self_closing,
+            } if name == "milestone" || name == "lb" || name == "pb" || name == "gap" => {
+                // Furniture between lines, as in a verse speech:
+                // a milestone is a line of its own, a gap a
+                // lacuna, a line or page break nothing.
+                if name == "milestone"
+                    && let Some(ms) = attr(attrs, "n")
+                        .filter(|n| !tei_milestone_is_title(n))
+                        .and_then(|n| tei_milestone_mono(n, attrs))
+                {
+                    current.push(vec![ms]);
+                } else if name == "gap" {
+                    current.push(vec![Inline::Text("[\u{2026}]".to_string())]);
+                }
+                i += 1;
+                if !self_closing {
+                    i = skip_element(toks, i, name.clone())?;
+                }
             }
             other => return Err(tei_err(format!("unsupported {other:?} in <lg>"))),
         }
@@ -3655,7 +4291,7 @@ fn tei_speech(
     mut i: usize,
     who: Option<&str>,
     depth: usize,
-    notes: &mut usize,
+    ctx: &mut TeiCtx,
 ) -> Result<(Vec<Block>, usize)> {
     let mut lemma: Vec<Inline> = Vec::new();
     // Note bodies from the speaker run (an editor's note on the
@@ -3664,11 +4300,11 @@ fn tei_speech(
     let mut lemma_bodies: Vec<Block> = Vec::new();
     // The speaker leads; everything after is block content.
     loop {
-        match &toks[i] {
-            Tok::Text(t) if t.trim().is_empty() => i += 1,
-            Tok::Open { name, .. } if name == "speaker" => {
+        match toks.get(i) {
+            Some(Tok::Text(t)) if t.trim().is_empty() => i += 1,
+            Some(Tok::Open { name, .. }) if name == "speaker" => {
                 let ((content, inner), next) = {
-                    let (run, next) = tei_inline_run(toks, i + 1, "speaker", notes)?;
+                    let (run, next) = tei_inline_run(toks, i + 1, "speaker", ctx)?;
                     (run, next)
                 };
                 lemma = content;
@@ -3714,7 +4350,7 @@ fn tei_speech(
     if pure_verse
         && matches!(&toks.get(probe), Some(Tok::Open { name, .. }) if name == "l" || name == "lg")
     {
-        let (lines, bodies, next) = tei_speech_lines(toks, probe, notes)?;
+        let (lines, bodies, next) = tei_speech_lines(toks, probe, ctx)?;
         // a speakerless <sp> (continuation after an interjection)
         // must not open a lemma-less verse-dialogue: its lines
         // splice as a plain stichoi block in the flow
@@ -3736,7 +4372,7 @@ fn tei_speech(
         out.extend(bodies);
         return Ok((out, next));
     }
-    let (children, next) = tei_blocks(toks, i, "sp", depth, notes)?;
+    let (children, next) = tei_blocks(toks, i, "sp", depth, ctx)?;
     // a speakerless <sp> (continuation) splices bare: dialogue
     // sims require a lemma
     if lemma.is_empty() {
@@ -3763,7 +4399,7 @@ fn tei_speech(
 fn tei_speech_lines(
     toks: &[Tok],
     mut i: usize,
-    notes: &mut usize,
+    ctx: &mut TeiCtx,
 ) -> Result<(Vec<Vec<Inline>>, Vec<Block>, usize)> {
     let mut lines: Vec<Vec<Inline>> = Vec::new();
     let mut bodies: Vec<Block> = Vec::new();
@@ -3780,7 +4416,7 @@ fn tei_speech_lines(
                     i += 1;
                     continue;
                 }
-                let ((mut content, inner), next) = tei_inline_run(toks, i + 1, "l", notes)?;
+                let ((mut content, inner), next) = tei_inline_run(toks, i + 1, "l", ctx)?;
                 trim_inline_edges(&mut content);
                 lines.push(content);
                 bodies.extend(inner);
@@ -3796,9 +4432,9 @@ fn tei_speech_lines(
                 }
                 // A note between lines: the callout rides the end
                 // of the previous line.
-                *notes += 1;
-                let onym = format!("n{notes}");
-                let (children, next) = tei_note_body(toks, i + 1, notes)?;
+                ctx.notes += 1;
+                let onym = format!("n{}", ctx.notes);
+                let (children, next) = tei_note_body(toks, i + 1, ctx)?;
                 let deixis = Inline::Deixis {
                     symbol: "^".to_string(),
                     onym: onym.clone(),
@@ -3823,7 +4459,7 @@ fn tei_speech_lines(
                 i = next;
             }
             Tok::Open { name, .. } if name == "stage" => {
-                let ((mut content, _), next) = tei_inline_run(toks, i + 1, "stage", notes)?;
+                let ((mut content, inner), next) = tei_inline_run(toks, i + 1, "stage", ctx)?;
                 trim_inline_edges(&mut content);
                 lines.push(vec![Inline::Endo {
                     symbol: ":(".to_string(),
@@ -3831,6 +4467,7 @@ fn tei_speech_lines(
                     bracket_matching: true,
                     ann: Annotations::default(),
                 }]);
+                bodies.extend(inner);
                 i = next;
             }
             Tok::Open {
@@ -3867,6 +4504,15 @@ fn tei_speech_lines(
 /// Whether the <said> opening at `i` runs to the end of its
 /// paragraph (only whitespace between its close and the </p>).
 fn tei_said_spans_paragraph(toks: &[Tok], i: usize) -> bool {
+    if matches!(
+        &toks[i],
+        Tok::Open {
+            self_closing: true,
+            ..
+        }
+    ) {
+        return false;
+    }
     let mut depth = 0usize;
     let mut j = i;
     while j < toks.len() {
@@ -3877,7 +4523,10 @@ fn tei_said_spans_paragraph(toks: &[Tok], i: usize) -> bool {
                 ..
             } if name == "said" => depth += 1,
             Tok::Close(name) if name == "said" => {
-                depth -= 1;
+                let Some(d) = depth.checked_sub(1) else {
+                    return false;
+                };
+                depth = d;
                 if depth == 0 {
                     j += 1;
                     while matches!(&toks.get(j), Some(Tok::Text(t)) if t.trim().is_empty()) {
@@ -3893,7 +4542,7 @@ fn tei_said_spans_paragraph(toks: &[Tok], i: usize) -> bool {
     false
 }
 
-fn tei_said_paragraph(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Block, usize)> {
+fn tei_said_paragraph(toks: &[Tok], mut i: usize, ctx: &mut TeiCtx) -> Result<(Block, usize)> {
     // i points at the <said> open.
     let said_attrs: Vec<(String, String)> = match &toks[i] {
         Tok::Open { attrs, .. } => attrs.clone(),
@@ -3934,16 +4583,27 @@ fn tei_said_paragraph(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(
     while matches!(&toks.get(probe), Some(Tok::Text(t)) if t.trim().is_empty()) {
         probe += 1;
     }
+    // A note in the label spawns a body that lands with the
+    // speech, ahead of the speech's own.
+    let mut bodies: Vec<Block> = Vec::new();
     if matches!(&toks.get(probe), Some(Tok::Open { name, .. }) if name == "label") {
-        let ((mut content, _), next) = tei_inline_run(toks, probe + 1, "label", notes)?;
+        let ((mut content, inner), next) = tei_inline_run(toks, probe + 1, "label", ctx)?;
         trim_inline_edges(&mut content);
-        if let Some(Inline::Text(t)) = content.last_mut() {
+        // the label's period is print furniture, even before a
+        // callout
+        if let Some(Inline::Text(t)) = content
+            .iter_mut()
+            .rev()
+            .find(|x| !matches!(x, Inline::Deixis { .. }))
+        {
             *t = t.trim_end_matches('.').to_string();
         }
         lemma = content;
+        bodies = inner;
         i = next;
     }
-    let ((mut content, bodies), next) = tei_inline_run(toks, i, "said", notes)?;
+    let ((mut content, said_bodies), next) = tei_inline_run(toks, i, "said", ctx)?;
+    bodies.extend(said_bodies);
     trim_inline_edges(&mut content);
     if !prefix.is_empty() {
         prefix.extend(content);
@@ -4013,7 +4673,7 @@ fn tei_said_paragraph(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(
 
 /// A cit: a block quotation whose bibl becomes the
 /// attribution hypograph.
-fn tei_cit(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Block, usize)> {
+fn tei_cit(toks: &[Tok], mut i: usize, ctx: &mut TeiCtx) -> Result<(Block, usize)> {
     let mut children: Vec<Block> = Vec::new();
     let mut hypograph: Vec<Inline> = Vec::new();
     while i < toks.len() {
@@ -4034,7 +4694,7 @@ fn tei_cit(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Block, usiz
             }
             Tok::Text(t) if t.trim().is_empty() => i += 1,
             Tok::Open { name, .. } if name == "quote" || name == "q" => {
-                let (inner, next) = tei_quote_content(toks, i + 1, name.clone(), notes)?;
+                let (inner, next) = tei_quote_content(toks, i + 1, name.clone(), ctx)?;
                 children.extend(inner);
                 i = next;
             }
@@ -4046,8 +4706,9 @@ fn tei_cit(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Block, usiz
                     i += 1;
                     continue;
                 }
-                let ((content, _), next) = tei_inline_run(toks, i + 1, "bibl", notes)?;
+                let ((content, bodies), next) = tei_inline_run(toks, i + 1, "bibl", ctx)?;
                 hypograph = content;
+                children.extend(bodies);
                 i = next;
             }
             other => return Err(tei_err(format!("unsupported {other:?} in <cit>"))),
@@ -4058,7 +4719,7 @@ fn tei_cit(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Block, usiz
 
 /// An epigraph: quote content plus a bibl attribution as the
 /// hypograph.
-fn tei_epigraph(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Block, usize)> {
+fn tei_epigraph(toks: &[Tok], mut i: usize, ctx: &mut TeiCtx) -> Result<(Block, usize)> {
     let mut children: Vec<Block> = Vec::new();
     let mut hypograph: Vec<Inline> = Vec::new();
     while i < toks.len() {
@@ -4079,13 +4740,13 @@ fn tei_epigraph(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Block,
             }
             Tok::Text(t) if t.trim().is_empty() => i += 1,
             Tok::Open { name, .. } if name == "quote" || name == "q" => {
-                let (inner, next) = tei_quote_content(toks, i + 1, name.clone(), notes)?;
+                let (inner, next) = tei_quote_content(toks, i + 1, name.clone(), ctx)?;
                 children.extend(inner);
                 i = next;
             }
             Tok::Open { name, .. } if name == "p" => {
                 let ((content, bodies), next) = {
-                    let (run, next) = tei_inline_run(toks, i + 1, "p", notes)?;
+                    let (run, next) = tei_inline_run(toks, i + 1, "p", ctx)?;
                     (run, next)
                 };
                 children.push(Block::Paragraph(content));
@@ -4105,7 +4766,7 @@ fn tei_epigraph(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Block,
                 }
             }
             Tok::Open { name, .. } if name == "lg" => {
-                let (block, bodies, next) = tei_verse(toks, i + 1, notes)?;
+                let (block, bodies, next) = tei_verse(toks, i + 1, ctx)?;
                 children.push(block);
                 children.extend(bodies);
                 i = next;
@@ -4118,11 +4779,12 @@ fn tei_epigraph(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Block,
                     i += 1;
                     continue;
                 }
-                let ((content, _), next) = {
-                    let (run, next) = tei_inline_run(toks, i + 1, "bibl", notes)?;
+                let ((content, bodies), next) = {
+                    let (run, next) = tei_inline_run(toks, i + 1, "bibl", ctx)?;
                     (run, next)
                 };
                 hypograph = content;
+                children.extend(bodies);
                 i = next;
             }
             other => return Err(tei_err(format!("unsupported {other:?} in <epigraph>"))),
@@ -4139,7 +4801,7 @@ fn tei_front(
     toks: &[Tok],
     mut i: usize,
     blocks: &mut Vec<Block>,
-    notes: &mut usize,
+    ctx: &mut TeiCtx,
 ) -> Result<usize> {
     let mut depth = 1;
     while i < toks.len() {
@@ -4160,23 +4822,25 @@ fn tei_front(
                 i += 1;
             }
             Tok::Open { name, .. } if name == "titlePart" => {
-                let ((content, _), next) = tei_inline_run(toks, i + 1, "titlePart", notes)?;
+                let ((content, bodies), next) = tei_inline_run(toks, i + 1, "titlePart", ctx)?;
                 blocks.push(solo_endo("=", content));
+                blocks.extend(bodies);
                 i = next;
             }
             Tok::Open { name, .. } if name == "byline" || name == "docAuthor" => {
                 let n = name.clone();
-                let ((content, _), next) = tei_inline_run(toks, i + 1, &n, notes)?;
+                let ((content, bodies), next) = tei_inline_run(toks, i + 1, &n, ctx)?;
                 blocks.push(solo_endo("=:", content));
+                blocks.extend(bodies);
                 i = next;
             }
             Tok::Open { name, .. } if name == "epigraph" => {
-                let (block, next) = tei_epigraph(toks, i + 1, notes)?;
+                let (block, next) = tei_epigraph(toks, i + 1, ctx)?;
                 blocks.push(block);
                 i = next;
             }
             Tok::Open { name, .. } if name == "argument" => {
-                let (children, next) = tei_blocks(toks, i + 1, "argument", 0, notes)?;
+                let (children, next) = tei_blocks(toks, i + 1, "argument", 0, ctx)?;
                 blocks.push(Block::Para {
                     symbol: "=\"".to_string(),
                     taxis: None,
@@ -4208,11 +4872,12 @@ fn tei_front(
 fn tei_figure(
     toks: &[Tok],
     mut i: usize,
-    notes: &mut usize,
+    ctx: &mut TeiCtx,
     onym: Option<String>,
-) -> Result<(Block, usize)> {
+) -> Result<(Block, Vec<Block>, usize)> {
     let mut lemma: Vec<Inline> = Vec::new();
     let mut children: Vec<Block> = Vec::new();
+    let mut bodies: Vec<Block> = Vec::new();
     while i < toks.len() {
         match &toks[i] {
             Tok::Close(name) if name == "figure" => {
@@ -4229,6 +4894,7 @@ fn tei_figure(
                             genoses: Vec::new(),
                         },
                     },
+                    bodies,
                     i + 1,
                 ));
             }
@@ -4249,8 +4915,9 @@ fn tei_figure(
                 }
             }
             Tok::Open { name, .. } if name == "head" => {
-                let ((content, _), next) = tei_inline_run(toks, i + 1, "head", notes)?;
+                let ((content, inner), next) = tei_inline_run(toks, i + 1, "head", ctx)?;
                 lemma = content;
+                bodies.extend(inner);
                 i = next;
             }
             Tok::Open { name, .. } if name == "figDesc" => {
@@ -4264,9 +4931,10 @@ fn tei_figure(
 
 /// A table: rows become stichoi lines, cells pipe-separated;
 /// head becomes the caption lemma.
-fn tei_table(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Block, usize)> {
+fn tei_table(toks: &[Tok], mut i: usize, ctx: &mut TeiCtx) -> Result<(Block, Vec<Block>, usize)> {
     let mut lemma: Vec<Inline> = Vec::new();
     let mut rows: Vec<Vec<Inline>> = Vec::new();
+    let mut bodies: Vec<Block> = Vec::new();
     while i < toks.len() {
         match &toks[i] {
             Tok::Close(name) if name == "table" => {
@@ -4280,35 +4948,41 @@ fn tei_table(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Block, us
                         bracket_matching: true,
                         ann: Annotations::default(),
                     },
+                    bodies,
                     i + 1,
                 ));
             }
             Tok::Text(t) if t.trim().is_empty() => i += 1,
             Tok::Open { name, .. } if name == "head" => {
-                let ((content, _), next) = tei_inline_run(toks, i + 1, "head", notes)?;
+                let ((content, inner), next) = tei_inline_run(toks, i + 1, "head", ctx)?;
                 lemma = content;
+                bodies.extend(inner);
                 i = next;
             }
             Tok::Open { name, .. } if name == "row" => {
-                let mut cells: Vec<String> = Vec::new();
+                // Cells keep their inline forms (a phrase, a
+                // name, a callout), pipe-separated in one line.
+                let mut row: Vec<Inline> = vec![Inline::Text("| ".to_string())];
+                let mut first = true;
                 i += 1;
                 loop {
-                    match &toks[i] {
-                        Tok::Close(name) if name == "row" => {
+                    match toks.get(i) {
+                        None => return Err(tei_err("unterminated <row>".into())),
+                        Some(Tok::Close(name)) if name == "row" => {
                             i += 1;
                             break;
                         }
-                        Tok::Text(t) if t.trim().is_empty() => i += 1,
-                        Tok::Open { name, .. } if name == "cell" => {
-                            let ((content, _), next) = tei_inline_run(toks, i + 1, "cell", notes)?;
-                            let text: String = content
-                                .iter()
-                                .filter_map(|x| match x {
-                                    Inline::Text(t) => Some(t.as_str()),
-                                    _ => None,
-                                })
-                                .collect();
-                            cells.push(text.trim().to_string());
+                        Some(Tok::Text(t)) if t.trim().is_empty() => i += 1,
+                        Some(Tok::Open { name, .. }) if name == "cell" => {
+                            let ((mut content, inner), next) =
+                                tei_inline_run(toks, i + 1, "cell", ctx)?;
+                            trim_inline_edges(&mut content);
+                            if !first {
+                                row.push(Inline::Text(" | ".to_string()));
+                            }
+                            first = false;
+                            row.extend(content);
+                            bodies.extend(inner);
                             i = next;
                         }
                         other => {
@@ -4316,7 +4990,8 @@ fn tei_table(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Block, us
                         }
                     }
                 }
-                rows.push(vec![Inline::Text(format!("| {} |", cells.join(" | ")))]);
+                row.push(Inline::Text(" |".to_string()));
+                rows.push(row);
             }
             other => return Err(tei_err(format!("unsupported {other:?} in <table>"))),
         }
@@ -4329,28 +5004,67 @@ fn tei_list(
     toks: &[Tok],
     mut i: usize,
     ordered: bool,
-    notes: &mut usize,
+    ctx: &mut TeiCtx,
 ) -> Result<(Vec<Block>, usize)> {
     let mut items: Vec<Block> = Vec::new();
     let mut n = 0u64;
+    // A gloss list pairs each label with the item after it: the
+    // pair is a definition item, the label its term.
+    let mut label: Option<Vec<Inline>> = None;
     while i < toks.len() {
         match &toks[i] {
             Tok::Close(name) if name == "list" => return Ok((items, i + 1)),
             Tok::Text(t) if t.trim().is_empty() => i += 1,
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "label" => {
+                if *self_closing {
+                    i += 1;
+                    continue;
+                }
+                let ((mut content, bodies), next) = tei_inline_run(toks, i + 1, "label", ctx)?;
+                trim_inline_edges(&mut content);
+                label = (!content.is_empty()).then_some(content);
+                items.extend(bodies);
+                i = next;
+            }
+            Tok::Open { name, .. } if name == "item" && label.is_some() => {
+                let ((content, bodies), next) = tei_inline_run(toks, i + 1, "item", ctx)?;
+                items.push(Block::Para {
+                    symbol: "::".to_string(),
+                    taxis: None,
+                    lemma: label.take().unwrap_or_default(),
+                    children: vec![Block::Para {
+                        symbol: ";".to_string(),
+                        taxis: None,
+                        lemma: Vec::new(),
+                        children: vec![Block::Paragraph(content)],
+                        hypograph: Vec::new(),
+                        bracket_matching: true,
+                        ann: Annotations::default(),
+                    }],
+                    hypograph: Vec::new(),
+                    bracket_matching: true,
+                    ann: Annotations::default(),
+                });
+                items.extend(bodies);
+                i = next;
+            }
             Tok::Open { name, .. } if name == "head" => {
                 // A list head reads as a preceding run-in.
-                let ((content, _), next) = tei_inline_run(toks, i + 1, "head", notes)?;
+                let ((content, bodies), next) = tei_inline_run(toks, i + 1, "head", ctx)?;
                 items.push(Block::Paragraph(vec![Inline::Endo {
                     symbol: "#_".to_string(),
                     content,
                     bracket_matching: true,
                     ann: Annotations::default(),
                 }]));
+                items.extend(bodies);
                 i = next;
             }
             Tok::Open { name, .. } if name == "item" => {
                 n += 1;
-                let ((content, bodies), next) = tei_inline_run(toks, i + 1, "item", notes)?;
+                let ((content, bodies), next) = tei_inline_run(toks, i + 1, "item", ctx)?;
                 items.push(Block::Para {
                     symbol: if ordered { ".-" } else { "-" }.to_string(),
                     taxis: ordered.then_some(Taxis::Explicit(n)),
@@ -4370,12 +5084,45 @@ fn tei_list(
 }
 
 /// A castList: castItems become dramatis-persona lines.
-fn tei_cast_list(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Vec<Block>, usize)> {
+fn tei_cast_list(
+    toks: &[Tok],
+    mut i: usize,
+    until: &str,
+    ctx: &mut TeiCtx,
+) -> Result<(Vec<Block>, usize)> {
     let mut items: Vec<Block> = Vec::new();
     while i < toks.len() {
         match &toks[i] {
-            Tok::Close(name) if name == "castList" => return Ok((items, i + 1)),
+            Tok::Close(name) if name == until => return Ok((items, i + 1)),
             Tok::Text(t) if t.trim().is_empty() => i += 1,
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "castGroup" => {
+                // A group of characters: its head is a run-in
+                // heading, its items join the cast in order.
+                if *self_closing {
+                    i += 1;
+                    continue;
+                }
+                let (inner, next) = tei_cast_list(toks, i + 1, "castGroup", ctx)?;
+                items.extend(inner);
+                i = next;
+            }
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "roleDesc" => {
+                // The description a group shares.
+                if *self_closing {
+                    i += 1;
+                    continue;
+                }
+                let ((content, bodies), next) = tei_inline_run(toks, i + 1, "roleDesc", ctx)?;
+                if !content.is_empty() {
+                    items.push(Block::Paragraph(content));
+                }
+                items.extend(bodies);
+                i = next;
+            }
             Tok::Open { name, attrs, .. } if name == "castItem" || name == "head" => {
                 let n = name.clone();
                 let onym = if n == "castItem" {
@@ -4383,18 +5130,19 @@ fn tei_cast_list(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Vec<B
                 } else {
                     None
                 };
-                let ((content, _), next) = tei_inline_run(toks, i + 1, &n, notes)?;
+                let ((content, bodies), next) = tei_inline_run(toks, i + 1, &n, ctx)?;
                 items.push(solo_endo_onym(
                     if n == "head" { "#_" } else { ":!" },
                     content,
                     onym,
                 ));
+                items.extend(bodies);
                 i = next;
             }
-            other => return Err(tei_err(format!("unsupported {other:?} in <castList>"))),
+            other => return Err(tei_err(format!("unsupported {other:?} in <{until}>"))),
         }
     }
-    Err(tei_err("unterminated <castList>".into()))
+    Err(tei_err(format!("unterminated <{until}>")))
 }
 
 /// A listPerson: each person becomes a dramatis-persona line -
@@ -4403,7 +5151,7 @@ fn tei_cast_list(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Vec<B
 /// character entry whose description is the note. A head is a
 /// run-in heading; nested lists flatten. The prosopographic
 /// detail (birth, death, sex, occupation, ...) is recorded loss.
-fn tei_list_person(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Vec<Block>, usize)> {
+fn tei_list_person(toks: &[Tok], mut i: usize, ctx: &mut TeiCtx) -> Result<(Vec<Block>, usize)> {
     let mut items: Vec<Block> = Vec::new();
     while i < toks.len() {
         match &toks[i] {
@@ -4416,7 +5164,7 @@ fn tei_list_person(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Vec
                     i += 1;
                     continue;
                 }
-                let (inner, next) = tei_list_person(toks, i + 1, notes)?;
+                let (inner, next) = tei_list_person(toks, i + 1, ctx)?;
                 items.extend(inner);
                 i = next;
             }
@@ -4427,7 +5175,7 @@ fn tei_list_person(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Vec
                     i += 1;
                     continue;
                 }
-                let ((mut content, bodies), next) = tei_inline_run(toks, i + 1, "head", notes)?;
+                let ((mut content, bodies), next) = tei_inline_run(toks, i + 1, "head", ctx)?;
                 trim_run(&mut content);
                 items.push(solo_endo("#_", content));
                 items.extend(bodies);
@@ -4445,7 +5193,7 @@ fn tei_list_person(toks: &[Tok], mut i: usize, notes: &mut usize) -> Result<(Vec
                 }
                 let n2 = name.clone();
                 let onym = xml_id_onym(attrs);
-                let (block, next) = tei_person(toks, i + 1, &n2, onym, notes)?;
+                let (block, next) = tei_person(toks, i + 1, &n2, onym, ctx)?;
                 items.extend(block);
                 i = next;
             }
@@ -4473,19 +5221,20 @@ fn tei_person(
     mut i: usize,
     until: &str,
     onym: Option<String>,
-    notes: &mut usize,
+    ctx: &mut TeiCtx,
 ) -> Result<(Vec<Block>, usize)> {
     let mut name: Option<Vec<Inline>> = None;
+    let mut name_bodies: Vec<Block> = Vec::new();
     let mut description: Vec<Block> = Vec::new();
     while i < toks.len() {
         match &toks[i] {
             Tok::Close(n) if n == until => {
                 let Some(mut name) = name else {
-                    return Ok((Vec::new(), i + 1));
+                    return Ok((name_bodies, i + 1));
                 };
                 trim_run(&mut name);
                 if name.is_empty() {
-                    return Ok((Vec::new(), i + 1));
+                    return Ok((name_bodies, i + 1));
                 }
                 let block = if description.is_empty() {
                     solo_endo_onym(":!", name, onym)
@@ -4503,7 +5252,9 @@ fn tei_person(
                         },
                     }
                 };
-                return Ok((vec![block], i + 1));
+                let mut out = vec![block];
+                out.extend(name_bodies);
+                return Ok((out, i + 1));
             }
             Tok::Text(_) => i += 1,
             Tok::Open {
@@ -4511,8 +5262,9 @@ fn tei_person(
                 self_closing,
                 ..
             } if n == "persName" && name.is_none() && !*self_closing => {
-                let ((content, _), next) = tei_inline_run(toks, i + 1, "persName", notes)?;
+                let ((content, bodies), next) = tei_inline_run(toks, i + 1, "persName", ctx)?;
                 name = Some(content);
+                name_bodies = bodies;
                 i = next;
             }
             Tok::Open {
@@ -4520,7 +5272,7 @@ fn tei_person(
                 self_closing,
                 ..
             } if n == "note" && description.is_empty() && !*self_closing => {
-                let (children, next) = tei_note_body(toks, i + 1, notes)?;
+                let (children, next) = tei_note_body(toks, i + 1, ctx)?;
                 description = children;
                 i = next;
             }
@@ -4549,7 +5301,7 @@ fn tei_inline_run(
     toks: &[Tok],
     mut i: usize,
     until: &str,
-    notes: &mut usize,
+    ctx: &mut TeiCtx,
 ) -> Result<((Vec<Inline>, Vec<Block>), usize)> {
     let mut inlines: Vec<Inline> = Vec::new();
     let mut bodies: Vec<Block> = Vec::new();
@@ -4620,7 +5372,7 @@ fn tei_inline_run(
                     },
                 };
                 let n = name.clone();
-                let ((content, inner_bodies), next) = tei_inline_run(toks, i + 1, &n, notes)?;
+                let ((content, inner_bodies), next) = tei_inline_run(toks, i + 1, &n, ctx)?;
                 inlines.push(Inline::Endo {
                     symbol: symbol.to_string(),
                     content,
@@ -4654,7 +5406,7 @@ fn tei_inline_run(
                 genoses.extend(tei_said_mode(attrs));
                 let marks = tei_said_marks(attrs);
                 let n = name.clone();
-                let ((content, inner_bodies), next) = tei_inline_run(toks, i + 1, &n, notes)?;
+                let ((content, inner_bodies), next) = tei_inline_run(toks, i + 1, &n, ctx)?;
                 inlines.push(Inline::Endo {
                     symbol: "\"\"".to_string(),
                     content: with_aphanes(marks, content),
@@ -4668,7 +5420,7 @@ fn tei_inline_run(
                 i = next;
             }
             Tok::Open { name, .. } if name == "stage" => {
-                let ((content, inner_bodies), next) = tei_inline_run(toks, i + 1, "stage", notes)?;
+                let ((content, inner_bodies), next) = tei_inline_run(toks, i + 1, "stage", ctx)?;
                 inlines.push(Inline::Endo {
                     symbol: ":(".to_string(),
                     content,
@@ -4680,23 +5432,38 @@ fn tei_inline_run(
             }
             Tok::Open { name, attrs, .. } if name == "ref" || name == "ptr" => {
                 let target = attr(attrs, "target").unwrap_or("").to_string();
-                if let Some(id) = target.strip_prefix('#')
-                    && !matches!(
-                        &toks[i],
-                        Tok::Open {
-                            self_closing: true,
-                            ..
-                        }
-                    )
-                {
+                let self_closing = matches!(
+                    &toks[i],
+                    Tok::Open {
+                        self_closing: true,
+                        ..
+                    }
+                );
+                // A target lists one or more pointers; when every
+                // one is internal (#id), each id is resolved on
+                // its own.
+                let ids: Vec<&str> = if target.split_whitespace().all(|t| t.starts_with('#')) {
+                    target
+                        .split_whitespace()
+                        .map(|t| &t[1..])
+                        .filter(|id| !id.is_empty())
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                if !ids.is_empty() {
                     // A paired ref whose matching note follows
                     // directly is a printed callout duplicate:
-                    // drop it, the deixis takes over.
-                    let mut probe = i + 1;
-                    while probe < toks.len()
-                        && !matches!(&toks[probe], Tok::Close(n2) if n2 == name)
-                    {
+                    // drop it, the deixis takes over. A
+                    // self-closing <ptr/> ends where it opens.
+                    let mut probe = i;
+                    if !self_closing {
                         probe += 1;
+                        while probe < toks.len()
+                            && !matches!(&toks[probe], Tok::Close(n2) if n2 == name)
+                        {
+                            probe += 1;
+                        }
                     }
                     let mut after = probe + 1;
                     while matches!(&toks.get(after), Some(Tok::Text(t)) if t.trim().is_empty()) {
@@ -4708,46 +5475,44 @@ fn tei_inline_run(
                         ..
                     }) = &toks.get(after)
                         && n2 == "note"
-                        && attr(a2, "xml:id") == Some(id)
+                        && attr(a2, "xml:id").is_some_and(|id| ids.contains(&id))
                     {
                         i = after;
                         continue;
                     }
                 }
-                let self_closing = matches!(
-                    &toks[i],
-                    Tok::Open {
-                        self_closing: true,
-                        ..
-                    }
-                );
                 let n = name.clone();
                 let (content, next) = if self_closing {
                     (Vec::new(), i + 1)
                 } else {
-                    let ((c, inner), next) = tei_inline_run(toks, i + 1, &n, notes)?;
+                    let ((c, inner), next) = tei_inline_run(toks, i + 1, &n, ctx)?;
                     bodies.extend(inner);
                     (c, next)
                 };
-                if let Some(id) = target.strip_prefix('#') {
+                if !ids.is_empty() {
                     // A pointer at a bibliography entry is a cite,
                     // and so is one typed bibr whose entry is
                     // missing. The cite annotates its printed
                     // reference: it opens a diaphane over the
                     // ref's text; an empty pointer is the bare
-                    // mark.
-                    let cited = attr(attrs, "type") == Some("bibr")
-                        || TEI_BIB_KEYS.with(|c| c.borrow().contains(id));
-                    if cited {
-                        let cite = Inline::Monosim {
-                            symbol: ">[".to_string(),
-                            param: id.to_string(),
-                            ann: Annotations::default(),
-                        };
-                        if content.is_empty() {
-                            inlines.push(cite);
+                    // mark. Several targets are several marks.
+                    let bibr = attr(attrs, "type") == Some("bibr");
+                    let mono = |id: &str| Inline::Monosim {
+                        symbol: if bibr || ctx.bib_keys.contains(id) {
+                            ">["
                         } else {
-                            let mut span = vec![cite];
+                            ">"
+                        }
+                        .to_string(),
+                        param: id.to_string(),
+                        ann: Annotations::default(),
+                    };
+                    let cited = bibr || ids.iter().any(|id| ctx.bib_keys.contains(*id));
+                    if cited {
+                        let mut span: Vec<Inline> = ids.iter().map(|id| mono(id)).collect();
+                        if content.is_empty() {
+                            inlines.extend(span);
+                        } else {
                             span.extend(content);
                             inlines.push(Inline::EndoDiaphane {
                                 content: span,
@@ -4758,11 +5523,7 @@ fn tei_inline_run(
                         // Internal reference: the text stays, the
                         // ref mono follows it.
                         inlines.extend(content);
-                        inlines.push(Inline::Monosim {
-                            symbol: ">".to_string(),
-                            param: id.to_string(),
-                            ann: Annotations::default(),
-                        });
+                        inlines.extend(ids.iter().map(|id| mono(id)));
                     }
                 } else if !target.is_empty() {
                     // External link.
@@ -4792,7 +5553,7 @@ fn tei_inline_run(
             Tok::Open { name, .. } if name == "choice" => {
                 // Reading text: expan/corr/reg, with abbr/sic/orig
                 // as the paradosis aphanes.
-                let (preferred, fallback, next) = tei_choice(toks, i + 1, notes)?;
+                let (preferred, fallback, next) = tei_choice(toks, i + 1, ctx)?;
                 inlines.extend(tei_choice_inlines(preferred, fallback));
                 i = next;
             }
@@ -4828,7 +5589,7 @@ fn tei_inline_run(
                     i += 1;
                     continue;
                 }
-                let ((content, inner), next) = tei_inline_run(toks, i + 1, "del", notes)?;
+                let ((content, inner), next) = tei_inline_run(toks, i + 1, "del", ctx)?;
                 inlines.push(Inline::Endo {
                     symbol: ",".to_string(),
                     content,
@@ -4854,7 +5615,7 @@ fn tei_inline_run(
                     continue;
                 }
                 let n = name.clone();
-                let ((content, inner), next) = tei_inline_run(toks, i + 1, &n, notes)?;
+                let ((content, inner), next) = tei_inline_run(toks, i + 1, &n, ctx)?;
                 inlines.push(tei_parsing_inline(&n, attrs, content));
                 bodies.extend(inner);
                 i = next;
@@ -4878,7 +5639,7 @@ fn tei_inline_run(
                     continue;
                 }
                 let n = name.clone();
-                let ((content, inner), next) = tei_inline_run(toks, i + 1, &n, notes)?;
+                let ((content, inner), next) = tei_inline_run(toks, i + 1, &n, ctx)?;
                 inlines.push(Inline::Endo {
                     symbol: ",".to_string(),
                     content: with_aphanes(marks, content),
@@ -4921,6 +5682,9 @@ fn tei_inline_run(
                     | "ex"
                     | "expan"
                     | "w"
+                    | "role"
+                    | "roleDesc"
+                    | "actor"
             ) =>
             {
                 // Transparent wrappers: the text carries, the
@@ -4931,7 +5695,7 @@ fn tei_inline_run(
                     continue;
                 }
                 let n = name.clone();
-                let ((content, inner), next) = tei_inline_run(toks, i + 1, &n, notes)?;
+                let ((content, inner), next) = tei_inline_run(toks, i + 1, &n, ctx)?;
                 inlines.extend(content);
                 bodies.extend(inner);
                 i = next;
@@ -4946,7 +5710,7 @@ fn tei_inline_run(
                     i += 1;
                     continue;
                 }
-                let ((content, inner), next) = tei_inline_run(toks, i + 1, "bibl", notes)?;
+                let ((content, inner), next) = tei_inline_run(toks, i + 1, "bibl", ctx)?;
                 if !matches!(inlines.last(), Some(Inline::Text(t)) if t.ends_with(char::is_whitespace))
                     && !inlines.is_empty()
                 {
@@ -4958,7 +5722,7 @@ fn tei_inline_run(
                 i = next;
             }
             Tok::Open { name, .. } if name == "soCalled" => {
-                let ((content, inner), next) = tei_inline_run(toks, i + 1, "soCalled", notes)?;
+                let ((content, inner), next) = tei_inline_run(toks, i + 1, "soCalled", ctx)?;
                 inlines.push(Inline::Endo {
                     symbol: "\"\"".to_string(),
                     content,
@@ -4969,7 +5733,7 @@ fn tei_inline_run(
                 i = next;
             }
             Tok::Open { name, .. } if name == "term" => {
-                let ((content, inner), next) = tei_inline_run(toks, i + 1, "term", notes)?;
+                let ((content, inner), next) = tei_inline_run(toks, i + 1, "term", ctx)?;
                 inlines.push(Inline::Endo {
                     symbol: "/".to_string(),
                     content,
@@ -4994,15 +5758,15 @@ fn tei_inline_run(
                 // litogramma footnote block emitted after the
                 // enclosing paragraph. Bodies may hold their own
                 // paragraphs; an empty note vanishes.
-                let save = *notes;
-                *notes += 1;
-                let onym = format!("n{notes}");
-                let (children, next) = tei_note_body(toks, i + 1, notes)?;
+                let save = ctx.notes;
+                ctx.notes += 1;
+                let onym = format!("n{}", ctx.notes);
+                let (children, next) = tei_note_body(toks, i + 1, ctx)?;
                 if children
                     .iter()
                     .all(|b| matches!(b, Block::Paragraph(v) if v.is_empty()))
                 {
-                    *notes = save;
+                    ctx.notes = save;
                     i = next;
                     continue;
                 }
@@ -5045,7 +5809,7 @@ fn tei_inline_run(
                 // classic solidus convention inside a quotation
                 // phrase.
                 let _ = attrs;
-                let (content, vq_bodies, next) = tei_inline_verse_quote(toks, i + 1, notes)?;
+                let (content, vq_bodies, next) = tei_inline_verse_quote(toks, i + 1, ctx)?;
                 inlines.push(Inline::Endo {
                     symbol: "\"\"".to_string(),
                     content,
@@ -5083,7 +5847,7 @@ fn tei_inline_run(
                     inlines.push(Inline::Text(" ".to_string()));
                 }
                 let n2 = name.clone();
-                let ((content, inner), next) = tei_inline_run(toks, i + 1, &n2, notes)?;
+                let ((content, inner), next) = tei_inline_run(toks, i + 1, &n2, ctx)?;
                 inlines.extend(content);
                 bodies.extend(inner);
                 i = next;
@@ -5096,7 +5860,7 @@ fn tei_inline_run(
                     i += 1;
                     continue;
                 }
-                let ((mut content, inner), next) = tei_inline_run(toks, i + 1, "quote", notes)?;
+                let ((mut content, inner), next) = tei_inline_run(toks, i + 1, "quote", ctx)?;
                 trim_inline_edges(&mut content);
                 inlines.push(Inline::Endo {
                     symbol: "\"\"".to_string(),
@@ -5110,12 +5874,16 @@ fn tei_inline_run(
             Tok::Open {
                 name, self_closing, ..
             } if name == "app" => {
-                // apparatus criticus: editorial variants, not text
+                // apparatus criticus: the lem reading is the
+                // text, the variants are not
                 if *self_closing {
                     i += 1;
-                } else {
-                    i = skip_element(toks, i + 1, "app".to_string())?;
+                    continue;
                 }
+                let ((content, inner), next) = tei_app_lem(toks, i + 1, ctx)?;
+                inlines.extend(content);
+                bodies.extend(inner);
+                i = next;
             }
             Tok::Open {
                 name, self_closing, ..
@@ -5155,7 +5923,7 @@ fn tei_inline_run(
                     continue;
                 }
                 let n2 = name.clone();
-                let ((content, inner), next) = tei_inline_run(toks, i + 1, &n2, notes)?;
+                let ((content, inner), next) = tei_inline_run(toks, i + 1, &n2, ctx)?;
                 inlines.push(Inline::Endo {
                     symbol: ",".to_string(),
                     content,
@@ -5177,7 +5945,7 @@ fn tei_inline_run(
                     i += 1;
                     continue;
                 }
-                let ((mut content, inner), next) = tei_inline_run(toks, i + 1, "l", notes)?;
+                let ((mut content, inner), next) = tei_inline_run(toks, i + 1, "l", ctx)?;
                 trim_inline_edges(&mut content);
                 if !inlines.is_empty() {
                     inlines.push(Inline::Text(" / ".to_string()));
@@ -5185,6 +5953,18 @@ fn tei_inline_run(
                 inlines.extend(content);
                 bodies.extend(inner);
                 i = next;
+            }
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "listBibl" => {
+                // The bibliography was read ahead of the text
+                // (tei_bibliography), wherever the list sits —
+                // in a note as well.
+                if *self_closing {
+                    i += 1;
+                } else {
+                    i = skip_element(toks, i + 1, "listBibl".to_string())?;
+                }
             }
             Tok::Open {
                 name, self_closing, ..
@@ -5250,7 +6030,7 @@ fn tei_inline_run(
                                 continue;
                             }
                             let n2 = name.clone();
-                            let ((content, inner), next) = tei_inline_run(toks, i + 1, &n2, notes)?;
+                            let ((content, inner), next) = tei_inline_run(toks, i + 1, &n2, ctx)?;
                             if !first {
                                 inlines.push(Inline::Text("; ".to_string()));
                             } else if !inlines.is_empty() {
@@ -5325,6 +6105,7 @@ fn org_err(msg: String) -> Error {
 }
 
 pub fn org_to_document(org: &str) -> Result<Document> {
+    let _depth = descend(org_err)?;
     let lines: Vec<&str> = org.lines().collect();
     let mut blocks: Vec<Block> = Vec::new();
     let mut paragraph: Vec<String> = Vec::new();
@@ -5448,6 +6229,23 @@ pub fn org_to_document(org: &str) -> Result<Document> {
                 return Err(org_err(format!("unsupported block `#+{rest}`")));
             }
             // Other keywords (#+AUTHOR:, #+OPTIONS:, ...) skip.
+            i += 1;
+            continue;
+        }
+
+        // A file link standing alone on its line is media (the
+        // exo's enmedia shape); inside prose it stays a link.
+        if let Some(path) = trimmed
+            .trim_start()
+            .strip_prefix("[[file:")
+            .and_then(|r| r.strip_suffix("]]"))
+            && !path.is_empty()
+            && !path.contains(']')
+        {
+            flush(&mut paragraph, &mut blocks)?;
+            blocks.push(Block::Enmedia {
+                param: path.to_string(),
+            });
             i += 1;
             continue;
         }
@@ -5589,14 +6387,25 @@ fn org_ordered_marker(line: &str) -> Option<(u64, &str)> {
 
 /// The body of a `#+BEGIN_X` block, up to its `#+END_X`.
 fn org_block_body(lines: &[&str], mut i: usize, kind: &str) -> Result<(String, usize)> {
-    let end = format!("END_{}", kind.split_whitespace().next().unwrap_or(kind));
+    let word = kind.split_whitespace().next().unwrap_or(kind);
+    let end = format!("END_{word}");
+    // A quote's body is Org again, so quotes nest: an inner
+    // BEGIN_QUOTE claims the next END_QUOTE. The other bodies
+    // are verbatim or lines and end at the first END.
+    let begin = (word == "QUOTE").then(|| format!("BEGIN_{word}"));
+    let mut depth = 0usize;
     let mut body = Vec::new();
     while i < lines.len() {
         let upper = lines[i].trim().to_ascii_uppercase();
-        if let Some(rest) = upper.strip_prefix("#+")
-            && rest.starts_with(&end)
-        {
-            return Ok((body.join("\n"), i + 1));
+        if let Some(rest) = upper.strip_prefix("#+") {
+            if rest.starts_with(&end) {
+                if depth == 0 {
+                    return Ok((body.join("\n"), i + 1));
+                }
+                depth -= 1;
+            } else if begin.as_deref().is_some_and(|b| rest.starts_with(b)) {
+                depth += 1;
+            }
         }
         body.push(lines[i].to_string());
         i += 1;
@@ -5622,7 +6431,10 @@ fn org_item_body(lines: &[&str], i: usize, first: &str) -> Result<(String, usize
 
 /// Org inline markup over one logical line of text.
 fn org_inlines(text: &str) -> Result<Vec<Inline>> {
+    let _depth = descend(org_err)?;
     let chars: Vec<char> = text.chars().collect();
+    let mut finder = Finder::new(&chars);
+    let mut closers: ScanMemo<char> = ScanMemo::new();
     let mut inlines: Vec<Inline> = Vec::new();
     let mut plain = String::new();
     let mut i = 0;
@@ -5636,7 +6448,7 @@ fn org_inlines(text: &str) -> Result<Vec<Inline>> {
         // Links: [[target]] / [[target][description]].
         if c == '['
             && chars.get(i + 1) == Some(&'[')
-            && let Some((target, desc, next)) = org_link(&chars, i + 2)
+            && let Some((target, desc, next)) = org_link(&mut finder, i + 2)
         {
             flush_plain(&mut plain, &mut inlines);
             if let Some(desc) = desc {
@@ -5649,27 +6461,46 @@ fn org_inlines(text: &str) -> Result<Vec<Inline>> {
             i = next;
             continue;
         }
-        // Footnote callouts: [fn:name].
-        if c == '[' && text[char_index(&chars, i)..].starts_with("[fn:") {
-            let rest: String = chars[i + 4..].iter().collect();
-            if let Some(end) = rest.find(']') {
-                let name = &rest[..end];
-                if !name.is_empty() && name.chars().all(|ch| ch.is_ascii_alphanumeric()) {
-                    flush_plain(&mut plain, &mut inlines);
-                    inlines.push(Inline::Deixis {
-                        symbol: "^".to_string(),
-                        onym: name.to_string(),
-                        ann: Annotations::default(),
-                    });
-                    i += 4 + end + 1;
-                    continue;
-                }
+        // Footnote callouts: [fn:name], the name alphanumeric.
+        if c == '[' && chars[i..].starts_with(&['[', 'f', 'n', ':']) {
+            let end = i
+                + 4
+                + chars[i + 4..]
+                    .iter()
+                    .take_while(|ch| ch.is_ascii_alphanumeric())
+                    .count();
+            if end > i + 4 && chars.get(end) == Some(&']') {
+                flush_plain(&mut plain, &mut inlines);
+                inlines.push(Inline::Deixis {
+                    symbol: "^".to_string(),
+                    onym: chars[i + 4..end].iter().collect(),
+                    ann: Annotations::default(),
+                });
+                i = end + 1;
+                continue;
             }
+        }
+        // Dedicated target `<<name>>`: an onym anchor (a radio
+        // target's triple angles stay prose).
+        if c == '<'
+            && chars.get(i + 1) == Some(&'<')
+            && (i == 0 || chars[i - 1] != '<')
+            && let Some(close) = finder.find(i + 2, &['>', '>'])
+            && close > i + 2
+            && chars[i + 2..close]
+                .iter()
+                .all(|ch| !ch.is_whitespace() && !matches!(ch, '<' | '>'))
+            && chars.get(close + 2) != Some(&'>')
+        {
+            flush_plain(&mut plain, &mut inlines);
+            inlines.push(Inline::OnymAnchor(chars[i + 2..close].iter().collect()));
+            i = close + 2;
+            continue;
         }
         // Emphasis family and inline verbatim.
         if matches!(c, '*' | '/' | '_' | '+' | '=' | '~')
             && org_open_ok(&chars, i)
-            && let Some(end) = org_close(&chars, i)
+            && let Some(end) = closers.find(c, i + 1, || org_close(&chars, i))
         {
             flush_plain(&mut plain, &mut inlines);
             let content: String = chars[i + 1..end].iter().collect();
@@ -5695,10 +6526,6 @@ fn org_inlines(text: &str) -> Result<Vec<Inline>> {
     Ok(inlines)
 }
 
-fn char_index(chars: &[char], i: usize) -> usize {
-    chars[..i].iter().map(|c| c.len_utf8()).sum()
-}
-
 fn org_link_inline(target: &str) -> Inline {
     Inline::Endo {
         symbol: "><".to_string(),
@@ -5708,19 +6535,23 @@ fn org_link_inline(target: &str) -> Inline {
     }
 }
 
-/// Parse from just past `[[`: target, optional description.
-fn org_link(chars: &[char], start: usize) -> Option<(String, Option<String>, usize)> {
-    let rest: String = chars[start..].iter().collect();
-    let close = rest.find("]]")?;
-    let inner = &rest[..close];
-    let next = start + close + 2;
-    match inner.split_once("][") {
-        Some((target, desc)) => Some((target.to_string(), Some(desc.to_string()), next)),
-        None => {
-            if inner.contains(']') {
+/// Parse from just past `[[` (a char index): target, optional
+/// description, and the index past the closing `]]`.
+fn org_link(finder: &mut Finder, start: usize) -> Option<(String, Option<String>, usize)> {
+    let chars = finder.chars;
+    let close = finder.find(start, &[']', ']'])?;
+    let next = close + 2;
+    match finder.find(start, &[']', '[']) {
+        Some(sep) if sep < close => Some((
+            chars[start..sep].iter().collect(),
+            Some(chars[sep + 2..close].iter().collect()),
+            next,
+        )),
+        _ => {
+            if finder.find(start, &[']']).is_some_and(|p| p < close) {
                 return None;
             }
-            Some((inner.to_string(), None, next))
+            Some((chars[start..close].iter().collect(), None, next))
         }
     }
 }
@@ -5770,6 +6601,7 @@ fn djot_err(msg: String) -> Error {
 }
 
 pub fn djot_to_document(dj: &str) -> Result<Document> {
+    let _depth = descend(djot_err)?;
     let lines: Vec<&str> = dj.lines().collect();
     let mut blocks: Vec<Block> = Vec::new();
     let mut paragraph: Vec<String> = Vec::new();
@@ -5809,12 +6641,13 @@ pub fn djot_to_document(dj: &str) -> Result<Document> {
             continue;
         }
         // Fenced code.
-        if let Some(rest) = trimmed.strip_prefix("```") {
+        if trimmed.starts_with("```") {
             flush(&mut paragraph, &mut blocks)?;
-            let lang = rest.trim().to_lowercase();
+            let ticks = trimmed.chars().take_while(|&c| c == '`').count();
+            let lang = trimmed[ticks..].trim().to_lowercase();
             let mut body = Vec::new();
             i += 1;
-            while i < lines.len() && !lines[i].trim_end().starts_with("```") {
+            while i < lines.len() && !closes_fence(lines[i], ticks) {
                 body.push(lines[i].to_string());
                 i += 1;
             }
@@ -5837,10 +6670,11 @@ pub fn djot_to_document(dj: &str) -> Result<Document> {
             let mut inner = Vec::new();
             while i < lines.len() {
                 let l = lines[i].trim_end();
-                if let Some(rest) = l.strip_prefix("> ") {
+                // `> text`, a bare `>`, or `>text` (the space is
+                // optional); the first line always matches, so
+                // the run advances.
+                if let Some(rest) = l.strip_prefix("> ").or_else(|| l.strip_prefix('>')) {
                     inner.push(rest.to_string());
-                } else if l == ">" {
-                    inner.push(String::new());
                 } else {
                     break;
                 }
@@ -5855,6 +6689,43 @@ pub fn djot_to_document(dj: &str) -> Result<Document> {
                 hypograph: Vec::new(),
                 bracket_matching: false,
                 ann: Annotations::default(),
+            });
+            continue;
+        }
+        // Footnote definition `[^label]: body`; indented lines
+        // (and blank lines before one) continue the body.
+        if let Some(after) = trimmed.strip_prefix("[^")
+            && let Some((label, body)) = after.split_once("]:")
+            && !label.is_empty()
+            && !label.contains(|c: char| c.is_whitespace() || c == '[' || c == ']')
+        {
+            flush(&mut paragraph, &mut blocks)?;
+            let mut inner = vec![body.trim().to_string()];
+            i += 1;
+            while i < lines.len() {
+                let l = lines[i];
+                let indented = |l: &str| l.starts_with([' ', '\t']) && !l.trim().is_empty();
+                if indented(l) {
+                    inner.push(l.trim().to_string());
+                } else if l.trim().is_empty() && lines.get(i + 1).is_some_and(|n| indented(n)) {
+                    inner.push(String::new());
+                } else {
+                    break;
+                }
+                i += 1;
+            }
+            let doc = djot_to_document(&inner.join("\n"))?;
+            blocks.push(Block::Para {
+                symbol: "^".to_string(),
+                taxis: None,
+                lemma: Vec::new(),
+                children: doc.blocks,
+                hypograph: Vec::new(),
+                bracket_matching: true,
+                ann: Annotations {
+                    onym: Some(label.to_string()),
+                    genoses: Vec::new(),
+                },
             });
             continue;
         }
@@ -5901,7 +6772,10 @@ pub fn djot_to_document(dj: &str) -> Result<Document> {
 /// Djot inline markup: `_` emphasis, `*` strong, backtick
 /// verbatim, backslash escapes.
 fn djot_inlines(text: &str) -> Result<Vec<Inline>> {
+    let _depth = descend(djot_err)?;
     let chars: Vec<char> = text.chars().collect();
+    let mut finder = Finder::new(&chars);
+    let mut closers: ScanMemo<char> = ScanMemo::new();
     let mut inlines: Vec<Inline> = Vec::new();
     let mut plain = String::new();
     let mut i = 0;
@@ -5921,19 +6795,19 @@ fn djot_inlines(text: &str) -> Result<Vec<Inline>> {
             continue;
         }
         if c == '`'
-            && let Some(rel) = chars[i + 1..].iter().position(|&ch| ch == '`')
+            && let Some(close) = finder.find(i + 1, &['`'])
         {
             flush_plain(&mut plain, &mut inlines);
             inlines.push(Inline::VerbatimInline {
-                content: chars[i + 1..i + 1 + rel].iter().collect(),
+                content: chars[i + 1..close].iter().collect(),
                 ann: Annotations::default(),
             });
-            i += rel + 2;
+            i = close + 1;
             continue;
         }
         if matches!(c, '_' | '*')
             && org_open_ok(&chars, i)
-            && let Some(end) = org_close(&chars, i)
+            && let Some(end) = closers.find(c, i + 1, || org_close(&chars, i))
         {
             flush_plain(&mut plain, &mut inlines);
             let content: String = chars[i + 1..end].iter().collect();
@@ -5948,11 +6822,30 @@ fn djot_inlines(text: &str) -> Result<Vec<Inline>> {
         }
         // Autolink `<URL>` — the visible-URL link.
         if c == '<'
-            && let Some((url, next)) = autolink_target(&chars, i)
+            && let Some((url, next)) = autolink_target(&mut finder, i)
         {
             flush_plain(&mut plain, &mut inlines);
             inlines.push(link_endo(url));
             i = next;
+            continue;
+        }
+        // Footnote callout `[^label]`: a deixis on the footnote
+        // symbol, as in at-markdown.
+        if c == '['
+            && chars.get(i + 1) == Some(&'^')
+            && let Some(close) = finder.find(i + 2, &[']'])
+            && close > i + 2
+            && chars[i + 2..close]
+                .iter()
+                .all(|ch| !ch.is_whitespace() && *ch != '[')
+        {
+            flush_plain(&mut plain, &mut inlines);
+            inlines.push(Inline::Deixis {
+                symbol: "^".to_string(),
+                onym: chars[i + 2..close].iter().collect(),
+                ann: Annotations::default(),
+            });
+            i = close + 1;
             continue;
         }
         // Inline link `[text](url)`: the org projection, as in
@@ -5960,33 +6853,29 @@ fn djot_inlines(text: &str) -> Result<Vec<Inline>> {
         if c == '['
             && (i == 0 || chars[i - 1] != '!')
             && chars.get(i + 1) != Some(&'^')
-            && let Some(rel) = chars[i + 1..].iter().position(|&ch| ch == ']')
+            && let Some(close) = finder.find(i + 1, &[']'])
+            && chars.get(close + 1) == Some(&'(')
+            && let Some(end) = finder.find(close + 2, &[')'])
         {
-            let close = i + 1 + rel;
-            if chars.get(close + 1) == Some(&'(')
-                && let Some(rel2) = chars[close + 2..].iter().position(|&ch| ch == ')')
-            {
-                let end = close + 2 + rel2;
-                let text: String = chars[i + 1..close].iter().collect();
-                let url: String = chars[close + 2..end]
-                    .iter()
-                    .collect::<String>()
-                    .trim()
-                    .to_string();
-                flush_plain(&mut plain, &mut inlines);
-                if url.is_empty() {
-                    inlines.extend(djot_inlines(&text)?);
-                } else if text.trim().is_empty() || text.trim() == url {
-                    inlines.push(link_endo(url));
-                } else {
-                    inlines.extend(djot_inlines(&text)?);
-                    inlines.push(Inline::Text(" (".to_string()));
-                    inlines.push(link_endo(url));
-                    inlines.push(Inline::Text(")".to_string()));
-                }
-                i = end + 1;
-                continue;
+            let text: String = chars[i + 1..close].iter().collect();
+            let url: String = chars[close + 2..end]
+                .iter()
+                .collect::<String>()
+                .trim()
+                .to_string();
+            flush_plain(&mut plain, &mut inlines);
+            if url.is_empty() {
+                inlines.extend(djot_inlines(&text)?);
+            } else if text.trim().is_empty() || text.trim() == url {
+                inlines.push(link_endo(url));
+            } else {
+                inlines.extend(djot_inlines(&text)?);
+                inlines.push(Inline::Text(" (".to_string()));
+                inlines.push(link_endo(url));
+                inlines.push(Inline::Text(")".to_string()));
             }
+            i = end + 1;
+            continue;
         }
         plain.push(c);
         i += 1;
@@ -6099,6 +6988,7 @@ fn docbook_blocks(
     until: String,
     notes: &mut usize,
 ) -> Result<(Vec<Block>, usize)> {
+    let _depth = descend(docbook_err)?;
     let mut blocks: Vec<Block> = Vec::new();
     while i < toks.len() {
         match &toks[i] {
@@ -6271,12 +7161,68 @@ fn docbook_blocks(
                 });
                 i = next;
             }
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "mediaobject" => {
+                // The exo's media shape: mediaobject > imageobject
+                // > imagedata, whose fileref is the enmedia param.
+                let mut fileref: Option<String> = None;
+                let mut open = !*self_closing;
+                i += 1;
+                while open {
+                    match toks.get(i) {
+                        None => return Err(docbook_err("unterminated <mediaobject>".into())),
+                        Some(Tok::Close(n)) if n == "mediaobject" => open = false,
+                        Some(Tok::Open { name: n, attrs, .. }) if n == "imagedata" => {
+                            if fileref.is_none() {
+                                fileref = attr(attrs, "fileref").map(str::to_string);
+                            }
+                        }
+                        Some(_) => {}
+                    }
+                    i += 1;
+                }
+                let Some(param) = fileref else {
+                    return Err(docbook_err(
+                        "mediaobject without an imagedata fileref".into(),
+                    ));
+                };
+                blocks.push(Block::Enmedia { param });
+            }
+            Tok::Open { name, .. } if name == "anchor" => {
+                // A bare anchor between blocks: a paragraph of its
+                // own holding the onym anchor.
+                let (anchor, next) = docbook_anchor(toks, i)?;
+                blocks.push(Block::Paragraph(vec![anchor]));
+                i = next;
+            }
             other => {
                 return Err(docbook_err(format!("unsupported {other:?} at block level")));
             }
         }
     }
     Err(docbook_err(format!("unterminated <{until}>")))
+}
+
+/// `<anchor xml:id="..."/>` at `toks[i]`: the onym anchor (the
+/// exo's shape) and the index past it.
+fn docbook_anchor(toks: &[Tok], i: usize) -> Result<(Inline, usize)> {
+    let Some(Tok::Open {
+        attrs,
+        self_closing,
+        ..
+    }) = toks.get(i)
+    else {
+        unreachable!("docbook_anchor is called at an anchor open tag")
+    };
+    let Some(id) = attr(attrs, "xml:id").or_else(|| attr(attrs, "id")) else {
+        return Err(docbook_err("anchor without xml:id".into()));
+    };
+    let mut next = i + 1;
+    if !*self_closing && matches!(toks.get(next), Some(Tok::Close(n)) if n == "anchor") {
+        next += 1;
+    }
+    Ok((Inline::OnymAnchor(id.to_string()), next))
 }
 
 /// Raw text content (programlisting).
@@ -6305,6 +7251,7 @@ fn docbook_inline_run(
     until: &str,
     notes: &mut usize,
 ) -> Result<((Vec<Inline>, Vec<Block>), usize)> {
+    let _depth = descend(docbook_err)?;
     let mut inlines: Vec<Inline> = Vec::new();
     let mut bodies: Vec<Block> = Vec::new();
     while i < toks.len() {
@@ -6387,6 +7334,11 @@ fn docbook_inline_run(
                         genoses: Vec::new(),
                     },
                 });
+                i = next;
+            }
+            Tok::Open { name, .. } if name == "anchor" => {
+                let (anchor, next) = docbook_anchor(toks, i)?;
+                inlines.push(anchor);
                 i = next;
             }
             Tok::Open { name, .. } if name == "quote" => {
@@ -6580,10 +7532,18 @@ pub fn bibtex_to_document(bib: &str) -> Result<Document> {
     })
 }
 
-/// Skip a braced group (after @comment).
+/// Skip an @comment: its braced group when one follows, else
+/// (BibTeX needs no braces there) the free text up to the next
+/// entry.
 fn bib_skip_group(chars: &[char], mut i: usize) -> Result<usize> {
-    while i < chars.len() && chars[i] != '{' {
+    while i < chars.len() && chars[i].is_whitespace() {
         i += 1;
+    }
+    if chars.get(i) != Some(&'{') {
+        while i < chars.len() && chars[i] != '@' {
+            i += 1;
+        }
+        return Ok(i);
     }
     let mut depth = 0;
     while i < chars.len() {
@@ -6642,9 +7602,16 @@ fn bib_value(chars: &[char], mut i: usize, name: &str) -> Result<(String, usize)
             Err(bib_err(format!("unterminated braced value of `{name}`")))
         }
         Some('"') => {
+            // Braces protect a quote inside a quoted value.
             let start = i + 1;
             let mut j = start;
-            while j < chars.len() && chars[j] != '"' {
+            let mut depth = 0usize;
+            while j < chars.len() && (chars[j] != '"' || depth > 0) {
+                match chars[j] {
+                    '{' => depth += 1,
+                    '}' => depth = depth.saturating_sub(1),
+                    _ => {}
+                }
                 j += 1;
             }
             if j >= chars.len() {
@@ -6695,7 +7662,7 @@ pub fn jats_to_document(xml: &str) -> Result<Document> {
             Tok::Open { name, .. } if name == "article" => i += 1,
             Tok::Close(name) if name == "article" => i += 1,
             Tok::Open { name, .. } if name == "front" => {
-                i = jats_front(&toks, i + 1, &mut blocks)?;
+                i = jats_front(&toks, i + 1, &mut blocks, &mut notes)?;
             }
             Tok::Open { name, .. } if name == "body" => {
                 let (inner, next) = jats_blocks(&toks, i + 1, "body", 0, &mut notes)?;
@@ -6722,8 +7689,15 @@ pub fn jats_to_document(xml: &str) -> Result<Document> {
     })
 }
 
-/// front: article-title, contrib names, abstract.
-fn jats_front(toks: &[Tok], mut i: usize, blocks: &mut Vec<Block>) -> Result<usize> {
+/// front: article-title, contrib names, abstract. Notes share
+/// the document's counter, so an abstract footnote and the
+/// first body footnote get distinct onyms.
+fn jats_front(
+    toks: &[Tok],
+    mut i: usize,
+    blocks: &mut Vec<Block>,
+    notes: &mut usize,
+) -> Result<usize> {
     let mut depth = 1;
     while i < toks.len() {
         match &toks[i] {
@@ -6743,7 +7717,7 @@ fn jats_front(toks: &[Tok], mut i: usize, blocks: &mut Vec<Block>) -> Result<usi
                 i += 1;
             }
             Tok::Open { name, .. } if name == "article-title" => {
-                let ((content, _), next) = jats_inline_run(toks, i + 1, "article-title", &mut 0)?;
+                let ((content, _), next) = jats_inline_run(toks, i + 1, "article-title", notes)?;
                 blocks.push(solo_endo("=", content));
                 i = next;
             }
@@ -6755,7 +7729,7 @@ fn jats_front(toks: &[Tok], mut i: usize, blocks: &mut Vec<Block>) -> Result<usi
                 i = next;
             }
             Tok::Open { name, .. } if name == "abstract" => {
-                let (children, next) = jats_blocks(toks, i + 1, "abstract", 0, &mut 0)?;
+                let (children, next) = jats_blocks(toks, i + 1, "abstract", 0, notes)?;
                 blocks.push(Block::Para {
                     symbol: "=\"".to_string(),
                     taxis: None,
@@ -6864,12 +7838,24 @@ fn jats_blocks(
             }
             Tok::Open { name, .. } if name == "title" => {
                 let ((content, inner), next) = jats_inline_run(toks, i + 1, "title", notes)?;
-                blocks.push(Block::Paragraph(vec![Inline::Endo {
-                    symbol: "\u{0}title".to_string(),
-                    content,
-                    bracket_matching: true,
-                    ann: Annotations::default(),
-                }]));
+                if until == "sec" && blocks.is_empty() {
+                    // The sec's heading: a sentinel the sec arm
+                    // lifts into its lemma; it never reaches the
+                    // document.
+                    blocks.push(Block::Paragraph(vec![Inline::Endo {
+                        symbol: "\u{0}title".to_string(),
+                        content,
+                        bracket_matching: true,
+                        ann: Annotations::default(),
+                    }]));
+                } else if until == "abstract" && blocks.is_empty() && inner.is_empty() {
+                    // The abstract's own label ("Abstract"): the
+                    // `="` block names itself and takes no lemma.
+                } else {
+                    return Err(jats_err(format!(
+                        "<title> outside the head of a <sec> (in <{until}>)"
+                    )));
+                }
                 blocks.extend(inner);
                 i = next;
             }
@@ -7112,7 +8098,7 @@ fn jats_ref(toks: &[Tok], mut i: usize, key: String) -> Result<(Block, usize)> {
                     };
                 }
                 if name == "mixed-citation" {
-                    let (text, next) = docbook_raw_text(toks, i + 1, "mixed-citation")?;
+                    let (text, next) = jats_flat_text(toks, i + 1, "mixed-citation")?;
                     push_field(
                         &mut fields,
                         "note",
@@ -7159,6 +8145,28 @@ fn jats_ref(toks: &[Tok], mut i: usize, key: String) -> Result<(Block, usize)> {
         }
     }
     Err(jats_err("unterminated <ref>".into()))
+}
+
+/// The text of an element with its child elements flattened:
+/// a mixed-citation reads as one string (names, titles and
+/// punctuation in source order).
+fn jats_flat_text(toks: &[Tok], mut i: usize, until: &str) -> Result<(String, usize)> {
+    let mut out = String::new();
+    let mut depth = 0usize;
+    while i < toks.len() {
+        match &toks[i] {
+            Tok::Close(name) if depth == 0 && name == until => return Ok((out, i + 1)),
+            Tok::Close(_) => depth = depth.saturating_sub(1),
+            Tok::Open {
+                self_closing: false,
+                ..
+            } => depth += 1,
+            Tok::Open { .. } => {}
+            Tok::Text(t) => out.push_str(&decode_entities(t)),
+        }
+        i += 1;
+    }
+    Err(jats_err(format!("unterminated <{until}>")))
 }
 
 /// A citation name: "Surname, Given".
@@ -7422,7 +8430,10 @@ pub fn usfm_to_document(usfm: &str) -> Result<Document> {
                 // The chapter number is the first token; the
                 // rest of the \c line (e.g. a dangling \ca
                 // alternate-number fragment) drops.
-                let n = arg.split_whitespace().next().unwrap_or("");
+                let n = arg
+                    .split_whitespace()
+                    .next()
+                    .ok_or_else(|| usfm_err("\\c without a chapter number".into()))?;
                 content.push(Block::Paragraph(vec![Inline::Monosim {
                     symbol: "##".to_string(),
                     param: n.to_string(),
@@ -7886,6 +8897,14 @@ pub fn usfm_apply_scheme(doc: &mut Document, scheme: &str) {
         })
     }
     let rename_bare = !has_scheme_blocks(&doc.blocks, scheme);
+    // The coordinate's book segment is the canonical USFM code:
+    // kanonizo canonicalizes the book lemma through the
+    // dialektos's `books` vocabulary (OSIS `Ps` and USFM `PSA`
+    // both land on `psa`), and the value must agree with it or
+    // the same verse gets a different coordinate per source
+    // format.
+    let dial = crate::dialektos::resolve_from(&crate::source::MemorySource::new(), "at-usfm").ok();
+    let books = dial.as_ref().and_then(|d| d.vocabularies.get("books"));
     fn inline_text(inlines: &[Inline]) -> String {
         let mut s = String::new();
         for i in inlines {
@@ -7913,7 +8932,12 @@ pub fn usfm_apply_scheme(doc: &mut Document, scheme: &str) {
                     ann.genoses = vec![ms.clone()];
                     *ms = scheme.to_string();
                 }
-                Inline::Monosim { symbol, param, .. } if symbol == "|" => {
+                // A verse before any chapter, or a chapter with
+                // no number, has no well-formed coordinate: the
+                // monosim stays as it is.
+                Inline::Monosim { symbol, param, .. }
+                    if symbol == "|" && !chapter.is_empty() && !param.is_empty() =>
+                {
                     let value = format!("{book}.{chapter}.{param}");
                     *inl = Inline::Milestone {
                         scheme: scheme.to_string(),
@@ -7921,7 +8945,7 @@ pub fn usfm_apply_scheme(doc: &mut Document, scheme: &str) {
                         ann: Annotations::default(),
                     };
                 }
-                Inline::Monosim { symbol, param, .. } if symbol == "##" => {
+                Inline::Monosim { symbol, param, .. } if symbol == "##" && !param.is_empty() => {
                     *chapter = param.clone();
                     let value = format!("{book}.{chapter}");
                     *inl = Inline::Milestone {
@@ -7943,6 +8967,7 @@ pub fn usfm_apply_scheme(doc: &mut Document, scheme: &str) {
         book: &str,
         chapter: &mut String,
         rename_bare: bool,
+        books: Option<&crate::dialektos::Vocabulary>,
     ) {
         for block in blocks {
             match block {
@@ -7953,11 +8978,14 @@ pub fn usfm_apply_scheme(doc: &mut Document, scheme: &str) {
                     ..
                 } if symbol == "#" => {
                     let code = inline_text(lemma);
+                    let code = books
+                        .map_or(code.as_str(), |books| books.canonicalize(&code))
+                        .to_string();
                     let mut ch = String::new();
-                    walk_blocks(children, scheme, &code, &mut ch, rename_bare);
+                    walk_blocks(children, scheme, &code, &mut ch, rename_bare, books);
                 }
                 Block::Para { children, .. } | Block::ParaDiaphane { children, .. } => {
-                    walk_blocks(children, scheme, book, chapter, rename_bare);
+                    walk_blocks(children, scheme, book, chapter, rename_bare, books);
                 }
                 Block::Paragraph(inlines) => {
                     walk_inlines(inlines, scheme, book, chapter, rename_bare);
@@ -7974,7 +9002,7 @@ pub fn usfm_apply_scheme(doc: &mut Document, scheme: &str) {
         }
     }
     let mut ch = String::new();
-    walk_blocks(&mut doc.blocks, scheme, "", &mut ch, rename_bare);
+    walk_blocks(&mut doc.blocks, scheme, "", &mut ch, rename_bare, books);
 }
 
 fn tanzil_err(msg: String) -> Error {
@@ -8132,22 +9160,44 @@ pub fn usx_to_document(xml: &str) -> Result<Document> {
                 let style = attr(attrs, "style")
                     .ok_or_else(|| usx_err("<para> without a style".into()))?
                     .to_string();
-                if *self_closing {
+                if *self_closing || style == "b" {
+                    // The strophe break is empty either way;
+                    // some serializers spell it as an open/close
+                    // pair.
+                    if *self_closing {
+                        i += 1;
+                    } else {
+                        let (inner, next) = usx_inlines(&toks, i + 1, "para")?;
+                        if inner
+                            .iter()
+                            .any(|x| !matches!(x, Inline::Text(t) if t.trim().is_empty()))
+                        {
+                            return Err(usx_err("<para style=\"b\"> with content".into()));
+                        }
+                        i = next;
+                    }
                     if style == "b" && !poetry.is_empty() {
                         strophes.push(Strophe(std::mem::take(&mut poetry)));
                     }
-                    i += 1;
                     continue;
                 }
                 let (inner, next) = usx_inlines(&toks, i + 1, "para")?;
                 i = next;
                 let canonical = usfm_canonical(&style).to_string();
+                // The same poetry-line styles the USFM importer
+                // accepts: indent levels, right-aligned, centered,
+                // and embedded lines.
                 let q_level = style == "q"
                     || (style.len() == 2
                         && style.starts_with('q')
-                        && style[1..].chars().all(|c| c.is_ascii_digit()));
+                        && style[1..].chars().all(|c| c.is_ascii_digit()))
+                    || matches!(style.as_str(), "qr" | "qc" | "qm" | "qm1" | "qm2" | "qm3");
                 if q_level {
-                    let level = if style == "q" { "q1" } else { &style };
+                    let level = match style.as_str() {
+                        "q" => "q1",
+                        "qm" => "qm1",
+                        other => other,
+                    };
                     poetry.push(vec![Inline::Endo {
                         symbol: ",".to_string(),
                         content: inner,
@@ -8612,9 +9662,12 @@ fn osis_title_genos(title_type: &str) -> &'static str {
 
 fn osis_blocks(toks: &[Tok], mut i: usize, until: &str) -> Result<(Vec<Block>, usize)> {
     let mut content: Vec<Block> = Vec::new();
+    // Section divs unwrap into the flow; their closers must not
+    // be taken for the book's.
+    let mut divs = 0usize;
     while i < toks.len() {
         match &toks[i] {
-            Tok::Close(name) if name == until => return Ok((content, i + 1)),
+            Tok::Close(name) if name == until && divs == 0 => return Ok((content, i + 1)),
             Tok::Text(t) if t.trim().is_empty() => i += 1,
             Tok::Text(t) => {
                 return Err(osis_err(format!(
@@ -8779,11 +9832,19 @@ fn osis_blocks(toks: &[Tok], mut i: usize, until: &str) -> Result<(Vec<Block>, u
                     content.push(Block::Paragraph(inlines));
                 }
             }
-            Tok::Open { name, .. } if name == "div" => {
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "div" => {
                 // Section groupings unwrap into the flow.
+                if !self_closing {
+                    divs += 1;
+                }
                 i += 1;
             }
-            Tok::Close(name) if name == "div" => i += 1,
+            Tok::Close(name) if name == "div" => {
+                divs = divs.saturating_sub(1);
+                i += 1;
+            }
             Tok::Open {
                 name, self_closing, ..
             } if name == "milestone" || name == "lb" || (name == "q" && *self_closing) => {
@@ -9223,14 +10284,15 @@ fn tei_text_of(toks: &[Tok], mut i: usize, until: &str) -> Result<(String, usize
 fn tei_lex0_document(toks: &[Tok]) -> Result<Document> {
     let mut blocks: Vec<Block> = Vec::new();
     let mut entry_ids: Vec<(usize, String)> = Vec::new();
+    let ctx = &mut TeiCtx::default();
     let mut i = 0;
     while i < toks.len() {
         match &toks[i] {
-            Tok::Text(t) if t.trim().is_empty() => i += 1,
+            Tok::Text(t) if t.trim_start_matches('\u{feff}').trim().is_empty() => i += 1,
             Tok::Open { name, .. } if name == "TEI" || name == "text" || name == "body" => i += 1,
             Tok::Close(name) if name == "TEI" || name == "text" || name == "body" => i += 1,
             Tok::Open { name, .. } if name == "teiHeader" => {
-                i = tei_header(toks, i + 1, &mut blocks)?;
+                i = tei_header(toks, i + 1, &mut blocks, ctx)?;
             }
             Tok::Open { name, .. } if name == "standOff" || name == "front" || name == "back" => {
                 i = skip_element(toks, i + 1, name.clone())?;
@@ -9242,7 +10304,7 @@ fn tei_lex0_document(toks: &[Tok]) -> Result<Document> {
                 let id = attr(attrs, "xml:id")
                     .or_else(|| attr(attrs, "id"))
                     .map(|s| s.to_string());
-                let (entry, next) = tei_lex0_entry(toks, i + 1, n)?;
+                let (entry, next) = tei_lex0_entry(toks, i + 1, "entry", n)?;
                 if let Some(id) = id {
                     entry_ids.push((blocks.len(), id));
                 }
@@ -9250,7 +10312,7 @@ fn tei_lex0_document(toks: &[Tok]) -> Result<Document> {
                 i = next;
             }
             Tok::Open { name, .. } if name == "head" => {
-                let ((inlines, _), next) = tei_inline_run(toks, i + 1, "head", &mut 0)?;
+                let ((inlines, bodies), next) = tei_inline_run(toks, i + 1, "head", ctx)?;
                 blocks.push(Block::Para {
                     symbol: "#".to_string(),
                     taxis: None,
@@ -9260,10 +10322,11 @@ fn tei_lex0_document(toks: &[Tok]) -> Result<Document> {
                     bracket_matching: false,
                     ann: Annotations::default(),
                 });
+                blocks.extend(bodies);
                 i = next;
             }
             Tok::Open { name, .. } if name == "p" => {
-                let ((inlines, bodies), next) = tei_inline_run(toks, i + 1, "p", &mut 0)?;
+                let ((inlines, bodies), next) = tei_inline_run(toks, i + 1, "p", ctx)?;
                 if !inlines.is_empty() {
                     blocks.push(Block::Paragraph(inlines));
                 }
@@ -9421,13 +10484,18 @@ fn assign_homograph_taxis(blocks: &mut [Block]) {
 
 /// One <entry>: the form block, grammar, etymology, senses and
 /// related entries, in source order.
-fn tei_lex0_entry(toks: &[Tok], mut i: usize, taxis_n: Option<u64>) -> Result<(Block, usize)> {
+fn tei_lex0_entry(
+    toks: &[Tok],
+    mut i: usize,
+    until: &str,
+    taxis_n: Option<u64>,
+) -> Result<(Block, usize)> {
     let mut headword = String::new();
     let mut children: Vec<Block> = Vec::new();
     let mut sense_no = 0u64;
     while i < toks.len() {
         match &toks[i] {
-            Tok::Close(name) if name == "entry" => {
+            Tok::Close(name) if name == until => {
                 let block = Block::Para {
                     symbol: "!".to_string(),
                     taxis: taxis_n.map(Taxis::Explicit),
@@ -9466,7 +10534,7 @@ fn tei_lex0_entry(toks: &[Tok], mut i: usize, taxis_n: Option<u64>) -> Result<(B
             }
             Tok::Open { name, attrs, .. } if name == "re" => {
                 let n = attr(attrs, "n").and_then(|v| v.parse::<u64>().ok());
-                let (entry, next) = tei_lex0_entry(toks, i + 1, n)?;
+                let (entry, next) = tei_lex0_entry(toks, i + 1, "re", n)?;
                 children.push(entry);
                 i = next;
             }
@@ -9485,7 +10553,7 @@ fn tei_lex0_entry(toks: &[Tok], mut i: usize, taxis_n: Option<u64>) -> Result<(B
             Tok::Text(_) => i += 1,
         }
     }
-    Err(tei_err("unterminated <entry>".into()))
+    Err(tei_err(format!("unterminated <{until}>")))
 }
 
 /// A <form>: the lemma orth feeds the headword; variant orths,
@@ -9695,7 +10763,7 @@ fn tei_lex0_cit(
                 let ((inlines, _), next) = tei_lex0_inlines(toks, i + 1, "quote")?;
                 if ctype == "translationEquivalent" || ctype == "translation" {
                     let genoses = lang.map(|l| vec![l]).unwrap_or_default();
-                    out.push(endo_inline("{", inlines, genoses));
+                    out.push(endo_inline("=>", inlines, genoses));
                 } else {
                     out.push(endo_inline("~", inlines, vec![]));
                 }

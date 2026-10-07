@@ -1,0 +1,19 @@
+@@@!atrep-exo
+@=at-markdown=>html
+
+@@/ HTML rendering of at-markdown's own sims. Everything shared
+@@/ with at-html (elements, escape table) is inherited through
+@@/ the lineage from at-html.html.exo; this overlay covers only
+@@/ the footnote extension, which at-html does not define. The
+@@/ shape follows litogramma.html.exo: a superscript link for
+@@/ the callout, an aside for the body.
+
+@-> *deixis ^
+<sup class="footnote-ref"><a href="#@(onym)">&#8224;</a></sup>
+>-@
+
+@-> ^
+<aside class="footnote"@[ id="@(onym)"]@>
+@(grammata)
+</aside>
+>-@

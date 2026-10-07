@@ -210,6 +210,23 @@ impl Morph {
             })
     }
 
+    /// The source sims the morphism leaves unmapped: neither a
+    /// table rule nor a group trigger. Empty for an explicit
+    /// morphism (totality is validated at resolution); a derived
+    /// embedding, and any composite over one, may be partial.
+    /// A partial morphism has no faithful `.hom` form: an
+    /// explicit file must be total, and reloading one closes the
+    /// gaps with implicit identities (or fails totality), so
+    /// callers serializing a morphism check this first.
+    pub fn unmapped(&self) -> Vec<String> {
+        self.source_dial
+            .sims
+            .keys()
+            .filter(|symbol| !self.map.contains_key(*symbol) && self.group_for(symbol).is_none())
+            .cloned()
+            .collect()
+    }
+
     /// A pure rename table: no group rules, and every action a
     /// rename (implicit identities and component-dropping renames
     /// included). The only first factor a grouping second factor
@@ -390,6 +407,36 @@ pub fn compose(f: &Morph, g: &Morph) -> Result<Morph> {
             f.source, f.target, g.source, g.target
         ))));
     }
+    // The components a rename loses at the intermediate hop: a
+    // lossy rename drops what its target does not support, and
+    // the composite must not resurrect them (fused == staged).
+    let lost_at = |symbol: &String, mid: &String| -> Vec<&'static str> {
+        let (
+            Some(SimForm::Para {
+                taxis: st,
+                lemma: sl,
+                hypograph: sh,
+                ..
+            }),
+            Some(SimForm::Para {
+                taxis: mt,
+                lemma: ml,
+                hypograph: mh,
+                ..
+            }),
+        ) = (
+            f.source_dial.sims.get(symbol).map(|d| &d.form),
+            f.target_dial.sims.get(mid).map(|d| &d.form),
+        )
+        else {
+            return Vec::new();
+        };
+        [("taxis", st, mt), ("lemma", sl, ml), ("hypograph", sh, mh)]
+            .into_iter()
+            .filter(|(_, s, m)| **s != Optionality::Unsupported && **m == Optionality::Unsupported)
+            .map(|(name, _, _)| name)
+            .collect()
+    };
     let mut map: HashMap<String, Action> = HashMap::new();
     for (symbol, action) in &f.map {
         let composite = match action {
@@ -429,6 +476,41 @@ pub fn compose(f: &Morph, g: &Morph) -> Result<Morph> {
                     to: onward,
                     genoses: more,
                 }) => {
+                    // A component lost at the intermediate hop
+                    // but carried again by the final target has
+                    // no rule spelling (a rename drops only what
+                    // its target cannot carry): no normal form,
+                    // staged application is the semantics.
+                    let resurrected: Vec<&str> =
+                        match g.target_dial.sims.get(onward).map(|d| &d.form) {
+                            Some(SimForm::Para {
+                                taxis,
+                                lemma,
+                                hypograph,
+                                ..
+                            }) => lost_at(symbol, to)
+                                .into_iter()
+                                .filter(|name| {
+                                    *match *name {
+                                        "taxis" => taxis,
+                                        "lemma" => lemma,
+                                        _ => hypograph,
+                                    } != Optionality::Unsupported
+                                })
+                                .collect(),
+                            _ => Vec::new(),
+                        };
+                    if !resurrected.is_empty() {
+                        return Err(Error::new(ErrorKind::InvalidMorph(format!(
+                            "cannot fuse {}=>{} with {}=>{}: the rename `{symbol}` -> `{to}` \
+                             drops the {} that `{onward}` carries again; apply the route staged",
+                            f.source,
+                            f.target,
+                            g.source,
+                            g.target,
+                            resurrected.join(" and ")
+                        ))));
+                    }
                     let mut genoses = genoses.clone();
                     genoses.extend(more.iter().cloned());
                     Some(Action::Rename {
@@ -437,6 +519,14 @@ pub fn compose(f: &Morph, g: &Morph) -> Result<Morph> {
                     })
                 }
                 Some(Action::Drop) => Some(Action::Drop),
+                // A lemma lost at the intermediate hop is not
+                // there for the dissolve to emit: the extract
+                // demotes to discard.
+                Some(Action::Dissolve(Lemma::Plain | Lemma::Heading { .. }))
+                    if lost_at(symbol, to).contains(&"lemma") =>
+                {
+                    Some(Action::Dissolve(Lemma::Discard))
+                }
                 Some(Action::Dissolve(d)) => Some(Action::Dissolve(d.clone())),
                 // Unmapped in g: unmapped in the composite (the
                 // same documents fail, naming the source symbol).
@@ -1095,7 +1185,12 @@ fn parse_morph_source(
                         tgt_dial.id
                     )));
                 };
-                if let Err(msg) = forms_compatible(&src_def.form, &tgt_def.form, !iso) {
+                let compatible = if iso {
+                    forms_iso_compatible(&src_def.form, &tgt_def.form)
+                } else {
+                    forms_compatible(&src_def.form, &tgt_def.form, true)
+                };
+                if let Err(msg) = compatible {
                     return Err(invalid(format!(
                         "rename `{symbol}` -> `{to}` is form-incompatible: {msg}"
                     )));
@@ -1293,11 +1388,24 @@ fn add_implicit_identities(
             continue;
         }
         if let Some(tgt_def) = tgt.sims.get(symbol)
-            && forms_compatible(&src_def.form, &tgt_def.form, lossy).is_ok()
+            && (if lossy {
+                forms_compatible(&src_def.form, &tgt_def.form, true)
+            } else {
+                forms_iso_compatible(&src_def.form, &tgt_def.form)
+            })
+            .is_ok()
         {
             map.insert(symbol.clone(), Action::rename(symbol));
         }
     }
+}
+
+/// An `.iso` serves both directions, so its renames (explicit
+/// and implicit) must be strictly form-compatible both ways:
+/// what resolves one way must resolve the other.
+fn forms_iso_compatible(a: &SimForm, b: &SimForm) -> std::result::Result<(), String> {
+    forms_compatible(a, b, false)?;
+    forms_compatible(b, a, false).map_err(|msg| format!("in the reverse direction, {msg}"))
 }
 
 /// Every component the source may carry must be supported by the
@@ -1829,10 +1937,14 @@ fn transform_blocks_table(blocks: &mut Vec<Block>, morph: &Morph) {
                 Block::ParaDiaphane { children, .. } => {
                     transform_blocks(children, morph);
                 }
+                // An englossis of the source dialektos (a
+                // transcluded sibling document, say) maps with
+                // the rest and declares the target afterwards.
                 Block::MonadEnglossis {
                     dialect, children, ..
                 } if *dialect == morph.source => {
                     transform_blocks(children, morph);
+                    *dialect = morph.target.clone();
                 }
                 _ => {}
             },

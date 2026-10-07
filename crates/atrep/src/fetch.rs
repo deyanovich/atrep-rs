@@ -17,7 +17,9 @@ pub struct Fetched {
 }
 
 /// One fetch attempt; non-2xx responses and transport failures are
-/// errors.
+/// errors. A transport failure or a 5xx response is an `Io` error,
+/// which the retry policy treats as transient; a 4xx is the
+/// resource's own answer, a `MissingResource`, and final.
 pub trait Fetcher {
     fn fetch(&self, url: &str) -> Result<Fetched>;
 }
@@ -77,7 +79,17 @@ impl Fetcher for HttpFetcher {
         let missing = |e: &dyn std::fmt::Display| {
             Error::new(ErrorKind::MissingResource(format!("{url}: {e}")))
         };
-        let mut resp = self.agent.get(url).call().map_err(|e| missing(&e))?;
+        let transient = |e: &dyn std::fmt::Display| {
+            Error::new(ErrorKind::Io(std::io::Error::other(format!("{url}: {e}"))))
+        };
+        // A 4xx (and an over-limit body) is final; anything else —
+        // 5xx, timeout, connection trouble — may clear on retry.
+        let classify = |e: ureq::Error| match e {
+            ureq::Error::StatusCode(code) if code < 500 => missing(&e),
+            ureq::Error::BodyExceedsLimit(_) => missing(&e),
+            _ => transient(&e),
+        };
+        let mut resp = self.agent.get(url).call().map_err(classify)?;
         let content_type = resp
             .headers()
             .get("content-type")
@@ -88,7 +100,7 @@ impl Fetcher for HttpFetcher {
             .with_config()
             .limit(1024 * 1024 * 1024) // 1 GiB pilot cap
             .read_to_vec()
-            .map_err(|e| missing(&e))?;
+            .map_err(classify)?;
         Ok(Fetched {
             bytes,
             content_type,
@@ -96,7 +108,9 @@ impl Fetcher for HttpFetcher {
     }
 }
 
-/// Run `f.fetch(url)` under the configured retry policy.
+/// Run `f.fetch(url)` under the configured retry policy: only a
+/// transient failure (an `Io` error, see `Fetcher`) is retried; a
+/// definite answer such as a 404 is returned at once.
 pub fn fetch_with_retry(f: &dyn Fetcher, cfg: &FetchConfig, url: &str) -> Result<Fetched> {
     let mut last = None;
     for attempt in 0..=cfg.retries {
@@ -105,7 +119,8 @@ pub fn fetch_with_retry(f: &dyn Fetcher, cfg: &FetchConfig, url: &str) -> Result
         }
         match f.fetch(url) {
             Ok(fetched) => return Ok(fetched),
-            Err(e) => last = Some(e),
+            Err(e) if matches!(e.kind, ErrorKind::Io(_)) => last = Some(e),
+            Err(e) => return Err(e),
         }
     }
     Err(last.expect("at least one attempt"))
@@ -190,9 +205,11 @@ mod tests {
     use super::*;
     use std::cell::Cell;
 
-    /// Stub fetcher failing the first `fail` attempts.
+    /// Stub fetcher failing the first `fail` attempts, transiently
+    /// (a transport error) or for good (a 404).
     struct Flaky {
         fail: u32,
+        permanent: bool,
         calls: Cell<u32>,
     }
 
@@ -201,9 +218,13 @@ mod tests {
             let n = self.calls.get() + 1;
             self.calls.set(n);
             if n <= self.fail {
-                Err(Error::new(ErrorKind::MissingResource(format!(
-                    "{url}: transient"
-                ))))
+                Err(if self.permanent {
+                    Error::new(ErrorKind::MissingResource(format!("{url}: 404")))
+                } else {
+                    Error::new(ErrorKind::Io(std::io::Error::other(format!(
+                        "{url}: transient"
+                    ))))
+                })
             } else {
                 Ok(Fetched {
                     bytes: b"ok".to_vec(),
@@ -225,6 +246,7 @@ mod tests {
     fn retry_succeeds_after_transient_failure() {
         let f = Flaky {
             fail: 1,
+            permanent: false,
             calls: Cell::new(0),
         };
         let fetched = fetch_with_retry(&f, &cfg(1), "http://x/").unwrap();
@@ -236,11 +258,24 @@ mod tests {
     fn retry_exhausted_is_error() {
         let f = Flaky {
             fail: 2,
+            permanent: false,
             calls: Cell::new(0),
         };
         let err = fetch_with_retry(&f, &cfg(1), "http://x/").unwrap_err();
-        assert!(matches!(err.kind, ErrorKind::MissingResource(_)));
+        assert!(matches!(err.kind, ErrorKind::Io(_)));
         assert_eq!(f.calls.get(), 2);
+    }
+
+    #[test]
+    fn a_definite_answer_is_not_retried() {
+        let f = Flaky {
+            fail: 2,
+            permanent: true,
+            calls: Cell::new(0),
+        };
+        let err = fetch_with_retry(&f, &cfg(2), "http://x/").unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::MissingResource(_)));
+        assert_eq!(f.calls.get(), 1);
     }
 
     #[test]

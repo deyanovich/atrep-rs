@@ -41,7 +41,16 @@ pub struct DirSource {
 
 impl DirSource {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        DirSource { root: root.into() }
+        let root: PathBuf = root.into();
+        // A bare file name's parent is the empty path: joining
+        // against it resolves in the working directory, but
+        // reading the empty directory fails, so name it.
+        let root = if root.as_os_str().is_empty() {
+            PathBuf::from(".")
+        } else {
+            root
+        };
+        DirSource { root }
     }
 }
 

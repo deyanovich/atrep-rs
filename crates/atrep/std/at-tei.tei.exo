@@ -23,6 +23,7 @@
 & &amp;
 < &lt;
 > &gt;
+" &quot;
 %@
 
 @-> *document
@@ -476,7 +477,7 @@
 >-@
 
 @-> ><
-<ref target="@((grammata))"/>
+<ref target="@(grammata)"/>
 >-@
 
 @-> >

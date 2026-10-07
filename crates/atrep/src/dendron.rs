@@ -244,7 +244,7 @@ fn serialize_block(block: &Block, out: &mut String) {
             push_annotations(ann, out);
             if !hypograph.is_empty() {
                 out.push(' ');
-                push_inlines(hypograph, out, true);
+                push_inlines(hypograph, out, false);
             }
             out.push('\n');
         }
@@ -294,7 +294,7 @@ fn serialize_block(block: &Block, out: &mut String) {
             push_annotations(ann, out);
             if !hypograph.is_empty() {
                 out.push(' ');
-                push_inlines(hypograph, out, true);
+                push_inlines(hypograph, out, false);
             }
             out.push('\n');
         }
@@ -456,7 +456,7 @@ fn push_inlines_in(
             }
             Inline::EndoDiaphane { content, ann } => {
                 out.push_str("@@.");
-                push_inlines(content, out, false);
+                push_inlines_in(content, out, false, Some("."));
                 out.push_str(".@@");
                 push_annotations(ann, out);
             }
@@ -491,7 +491,7 @@ fn push_inlines_in(
             }
             Inline::EndoAxioma { onym, content } => {
                 out.push_str("@@:");
-                push_inlines(content, out, false);
+                push_inlines_in(content, out, false, Some(":"));
                 out.push_str(":@@(");
                 out.push_str(onym);
                 out.push(')');
@@ -507,8 +507,9 @@ fn push_inlines_in(
             }
         }
         // After any non-text inline that ends in a sim boundary, a
-        // following literal pipe must be escaped.
-        after_boundary = !matches!(inline, Inline::Text(_));
+        // following literal pipe must be escaped. An onym anchor
+        // takes no suffix, so nothing after it reads as one.
+        after_boundary = !matches!(inline, Inline::Text(_) | Inline::OnymAnchor(_));
         after_genos = match inline {
             Inline::Endo { ann, .. }
             | Inline::Monosim { ann, .. }
@@ -527,7 +528,10 @@ fn push_inlines_in(
 /// the `|` separator. A trailing `|` directly before a sim is
 /// escaped so it is not consumed as a separator. A literal `\` needs
 /// no escaping (any following `@` is itself emitted escaped, so the
-/// sequence stays unambiguous).
+/// sequence stays unambiguous) — except before `|`, where the
+/// parser reads `\|` as an escaped pipe: the pipe is then escaped,
+/// `\\|`, so the backslash stays literal. See
+/// [`check_serializable`] for the one sequence with no spelling.
 fn push_escaped_text(text: &str, out: &mut String, after_boundary: bool, next_is_sim: bool) {
     if after_boundary {
         let mut chars = text.chars();
@@ -541,11 +545,89 @@ fn push_escaped_text(text: &str, out: &mut String, after_boundary: bool, next_is
     for (i, c) in text.chars().enumerate() {
         match c {
             '@' => out.push_str("\\@"),
+            '|' if out.ends_with('\\') => out.push_str("\\|"),
             '|' if i == 0 && after_boundary => out.push_str("\\|"),
             '|' if i + 1 == n && next_is_sim => out.push_str("\\|"),
             _ => out.push(c),
         }
     }
+}
+
+/// Check that a document has a canonical spelling. The grammar has
+/// none for a literal `\` directly before a sim: the serialized
+/// `\@` would read back as an escaped `@` (spec: Sigil Escaping
+/// defines `\@` and `\|` only). Everything else serializes
+/// unambiguously.
+pub fn check_serializable(doc: &Document) -> crate::error::Result<()> {
+    fn inlines(seq: &[Inline]) -> crate::error::Result<()> {
+        for (i, inline) in seq.iter().enumerate() {
+            match inline {
+                Inline::Text(t) => {
+                    let next_is_sim = seq
+                        .get(i + 1)
+                        .is_some_and(|n| !matches!(n, Inline::Text(_)));
+                    if t.ends_with('\\') && next_is_sim {
+                        let tail: String = t
+                            .chars()
+                            .rev()
+                            .take(12)
+                            .collect::<String>()
+                            .chars()
+                            .rev()
+                            .collect();
+                        return Err(crate::error::Error::new(crate::error::ErrorKind::Syntax(
+                            format!(
+                                "a literal backslash directly before a sim has no canonical \
+                                 spelling (text ends `{tail}`); wrap it in a verbatim inline"
+                            ),
+                        )));
+                    }
+                }
+                Inline::Endo { content, .. }
+                | Inline::EndoDiaphane { content, .. }
+                | Inline::EndoAxioma { content, .. } => inlines(content)?,
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+    fn blocks(seq: &[Block]) -> crate::error::Result<()> {
+        for block in seq {
+            match block {
+                Block::Paragraph(seq) => inlines(seq)?,
+                Block::Para {
+                    lemma,
+                    children,
+                    hypograph,
+                    ..
+                } => {
+                    inlines(lemma)?;
+                    blocks(children)?;
+                    inlines(hypograph)?;
+                }
+                Block::Stichoi {
+                    lemma,
+                    strophes,
+                    hypograph,
+                    ..
+                } => {
+                    inlines(lemma)?;
+                    for strophe in strophes {
+                        for line in &strophe.0 {
+                            inlines(line)?;
+                        }
+                    }
+                    inlines(hypograph)?;
+                }
+                Block::ParaDiaphane { children, .. }
+                | Block::MonadEnglossis { children, .. }
+                | Block::ParaAxioma { children, .. } => blocks(children)?,
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+    blocks(&doc.blocks)
 }
 
 /// Serialize in the plerographic spelling (spec: "Metagraphe"):

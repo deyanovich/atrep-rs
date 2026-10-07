@@ -177,7 +177,12 @@ impl Slicer {
                             .push(crate::dendron::Strophe(current));
                     }
                 }
+                // The block itself — its lemma and onym — rides
+                // the first group that has lines (a milestone
+                // opening the first line leaves group 0 empty);
+                // continuations are bare, as for a Para.
                 let n = groups.len();
+                let mut first = true;
                 for (i, (coord, strophes)) in groups.into_iter().enumerate() {
                     if let Some((value, mann)) = coord {
                         self.cut(value, mann);
@@ -188,7 +193,7 @@ impl Slicer {
                     self.push(Block::Stichoi {
                         symbol: symbol.clone(),
                         taxis,
-                        lemma: lemma.clone(),
+                        lemma: if first { lemma.clone() } else { Vec::new() },
                         strophes,
                         hypograph: if i + 1 == n {
                             hypograph.clone()
@@ -196,7 +201,7 @@ impl Slicer {
                             Vec::new()
                         },
                         bracket_matching,
-                        ann: if i == 0 {
+                        ann: if first {
                             ann.clone()
                         } else {
                             Annotations {
@@ -205,6 +210,7 @@ impl Slicer {
                             }
                         },
                     });
+                    first = false;
                 }
             }
             Block::ParaDiaphane { children, ann } => {
@@ -363,6 +369,9 @@ pub fn zygosis_split(
                 .collect()
         })
         .collect();
+    for ((id, _), trace) in sliced.iter().zip(&traces) {
+        unique_coords(&format!("witness `{id}`"), scheme, trace)?;
+    }
     let order = aligned_order(&traces)?;
 
     // Assemble the zygoma.
@@ -382,16 +391,24 @@ pub fn zygosis_split(
             out.push(tag(id, proem.blocks.clone()));
         }
     }
+    // Each witness's slices by coordinate (unique per witness),
+    // so the assembly does not rescan every slice per coordinate.
+    let by_coord: Vec<std::collections::HashMap<&str, &Slice>> = sliced
+        .iter()
+        .map(|(_, slices)| {
+            slices
+                .iter()
+                .filter_map(|s| s.coord.as_ref().map(|(v, _)| (v.as_str(), s)))
+                .collect()
+        })
+        .collect();
     for coord in &order {
         // The milestone head, annotated from the first witness
         // that carries it.
-        let ann = sliced
+        let ann = by_coord
             .iter()
-            .flat_map(|(_, slices)| slices.iter())
-            .find_map(|s| match &s.coord {
-                Some((v, a)) if v == coord => Some(a.clone()),
-                _ => None,
-            })
+            .find_map(|slices| slices.get(coord.as_str()))
+            .and_then(|s| s.coord.as_ref().map(|(_, a)| a.clone()))
             .unwrap_or_default();
         out.push(Block::Paragraph(vec![Inline::Milestone {
             scheme: scheme.to_string(),
@@ -400,10 +417,10 @@ pub fn zygosis_split(
         }]));
         let parts: Vec<(String, Vec<Block>)> = sliced
             .iter()
-            .filter_map(|(id, slices)| {
+            .zip(&by_coord)
+            .filter_map(|((id, _), slices)| {
                 slices
-                    .iter()
-                    .find(|s| matches!(&s.coord, Some((v, _)) if v == coord))
+                    .get(coord.as_str())
                     .filter(|s| !s.blocks.is_empty())
                     .map(|s| (id.clone(), s.blocks.clone()))
             })
@@ -453,10 +470,107 @@ fn blocks_chars(blocks: &[Block]) -> usize {
         .map(|b| match b {
             Block::Paragraph(inlines) => inlines.iter().map(inline_chars).sum(),
             Block::ParaDiaphane { children, .. } => blocks_chars(children),
-            Block::Para { children, .. } => blocks_chars(children),
+            Block::Para {
+                lemma,
+                children,
+                hypograph,
+                ..
+            } => {
+                lemma.iter().map(inline_chars).sum::<usize>()
+                    + blocks_chars(children)
+                    + hypograph.iter().map(inline_chars).sum::<usize>()
+            }
+            Block::Stichoi {
+                lemma,
+                strophes,
+                hypograph,
+                ..
+            } => {
+                lemma.iter().map(inline_chars).sum::<usize>()
+                    + strophes
+                        .iter()
+                        .flat_map(|s| s.0.iter())
+                        .map(|line| line_chars(line))
+                        .sum::<usize>()
+                    + hypograph.iter().map(inline_chars).sum::<usize>()
+            }
             _ => 0,
         })
         .sum()
+}
+
+fn line_chars(line: &[Inline]) -> usize {
+    line.iter().map(inline_chars).sum()
+}
+
+/// Halve a verse block: at the strophe head nearest the char
+/// midpoint when there is one (preferred outright, as in
+/// quasialign), else at the nearest line boundary. Lines stay
+/// whole. The block itself — lemma and onym — stays with the
+/// first half, the hypograph with the second.
+fn split_stichoi(block: &Block) -> Option<(Block, Block)> {
+    let Block::Stichoi {
+        symbol,
+        taxis,
+        lemma,
+        strophes,
+        hypograph,
+        bracket_matching,
+        ann,
+    } = block
+    else {
+        return None;
+    };
+    let total: usize = strophes
+        .iter()
+        .flat_map(|s| s.0.iter())
+        .map(|l| line_chars(l))
+        .sum();
+    // (strophe, line, distance from the midpoint) per tier.
+    let mut head: Option<(usize, usize, usize)> = None;
+    let mut inner: Option<(usize, usize, usize)> = None;
+    let mut cum = 0usize;
+    for (si, strophe) in strophes.iter().enumerate() {
+        for (li, line) in strophe.0.iter().enumerate() {
+            if (si, li) != (0, 0) {
+                let dist = cum.abs_diff(total / 2);
+                let tier = if li == 0 { &mut head } else { &mut inner };
+                if tier.is_none_or(|(_, _, d)| dist < d) {
+                    *tier = Some((si, li, dist));
+                }
+            }
+            cum += line_chars(line);
+        }
+    }
+    let (si, li, _) = head.or(inner)?;
+    let mut left: Vec<Strophe> = strophes[..si].to_vec();
+    let mut right: Vec<Strophe> = Vec::new();
+    if li > 0 {
+        left.push(Strophe(strophes[si].0[..li].to_vec()));
+    }
+    right.push(Strophe(strophes[si].0[li..].to_vec()));
+    right.extend_from_slice(&strophes[si + 1..]);
+    let half = |lemma: Vec<Inline>, strophes, hypograph: Vec<Inline>, ann| Block::Stichoi {
+        symbol: symbol.clone(),
+        taxis: *taxis,
+        lemma,
+        strophes,
+        hypograph,
+        bracket_matching: *bracket_matching,
+        ann,
+    };
+    Some((
+        half(lemma.clone(), left, Vec::new(), ann.clone()),
+        half(
+            Vec::new(),
+            right,
+            hypograph.clone(),
+            Annotations {
+                onym: None,
+                genoses: ann.genoses.clone(),
+            },
+        ),
+    ))
 }
 
 /// A cut point inside a paragraph: the top-level inline index and
@@ -485,7 +599,7 @@ fn cuts_after(inlines: &[Inline], ends: &[char]) -> Vec<(Cut, usize)> {
                     while k < chars.len() && chars[k].is_whitespace() {
                         k += 1;
                     }
-                    if k > j + 1 && k < chars.len() {
+                    if cut_lands(&chars, j, k) {
                         cuts.push((
                             Cut {
                                 inline: i,
@@ -503,6 +617,16 @@ fn cuts_after(inlines: &[Inline], ends: &[char]) -> Vec<(Cut, usize)> {
         cum += inline_chars(inline);
     }
     cuts
+}
+
+/// Whether the end character at `j`, with whitespace running to
+/// `k`, yields an interior cut at `k`: punctuation must be
+/// followed by whitespace (no cut inside `3.14`), a whitespace
+/// end is its own gap, and both sides must hold text.
+fn cut_lands(chars: &[char], j: usize, k: usize) -> bool {
+    k < chars.len()
+        && (k > j + 1 || chars[j].is_whitespace())
+        && chars[..j].iter().any(|c| !c.is_whitespace())
 }
 
 /// Split a paragraph's inlines at the cut, trimming the seam.
@@ -552,8 +676,9 @@ fn choose_cut(inlines: &[Inline], same_index: Option<usize>) -> Option<Cut> {
 
 /// Halve one witness's slice: multi-block slices split at the
 /// block boundary nearest the char midpoint; single-paragraph
-/// slices split inside the paragraph. Anything else (verse, a
-/// lone structured sim) is unsplittable.
+/// slices split inside the paragraph, a single verse block
+/// between its strophes or lines. Anything else (a lone
+/// structured sim) is unsplittable.
 fn split_blocks(blocks: &[Block], same_index: Option<usize>) -> Option<(Vec<Block>, Vec<Block>)> {
     if blocks.len() > 1 {
         let total = blocks_chars(blocks);
@@ -577,6 +702,10 @@ fn split_blocks(blocks: &[Block], same_index: Option<usize>) -> Option<(Vec<Bloc
                 return None;
             }
             Some((vec![Block::Paragraph(l)], vec![Block::Paragraph(r)]))
+        }
+        [block @ Block::Stichoi { .. }] => {
+            let (l, r) = split_stichoi(block)?;
+            Some((vec![l], vec![r]))
         }
         _ => None,
     }
@@ -736,7 +865,7 @@ fn text_cut_offsets(t: &str, ends: &[char]) -> Vec<usize> {
             while k < chars.len() && chars[k].is_whitespace() {
                 k += 1;
             }
-            if k > j + 1 && k < chars.len() {
+            if cut_lands(&chars, j, k) {
                 offsets.push(k);
             }
             j = k;
@@ -932,28 +1061,52 @@ impl ViewWalker<'_> {
                         view.sentence.push(site);
                     }
                 }
-                for inline in line {
-                    match inline {
-                        Inline::Milestone {
-                            scheme: s, value, ..
-                        } if s == self.scheme
-                            || (value.starts_with(&format!("{}:", self.scheme))
-                                && value.contains('|')) =>
-                        {
-                            if value.contains('|') && !self.refine {
-                                if let Some(ci) = self.current {
-                                    self.views[ci].1.has_quasi = true;
-                                }
-                            } else {
-                                self.views.push((value.clone(), SegView::blank()));
-                                self.current = Some(self.views.len() - 1);
-                            }
-                        }
-                        other => {
-                            if let Some(ci) = self.current {
-                                self.views[ci].1.len += inline_chars(other);
-                            }
-                        }
+                self.scan_nested(line, true);
+            }
+        }
+    }
+
+    /// Whether a milestone belongs to the scanned scheme: its
+    /// own, or a namespaced quasi cut under it.
+    fn is_anchor(&self, scheme: &str, value: &str) -> bool {
+        scheme == self.scheme
+            || (value.starts_with(&format!("{}:", self.scheme)) && value.contains('|'))
+    }
+
+    /// Track a milestone of the scheme: real anchors always open
+    /// a segment; under --refine the existing cuts anchor too, so
+    /// the finer pass subdivides BETWEEN them, extending their
+    /// binary paths. Otherwise an existing quasi cut marks its
+    /// segment as already subdivided — hands off.
+    fn anchor(&mut self, value: &str) {
+        if value.contains('|') && !self.refine {
+            if let Some(ci) = self.current {
+                self.views[ci].1.has_quasi = true;
+            }
+        } else {
+            self.views.push((value.to_string(), SegView::blank()));
+            self.current = Some(self.views.len() - 1);
+        }
+    }
+
+    /// Scan a run with no cut sites of its own — a verse line or
+    /// the inside of an endo: milestones still track segments
+    /// (the Slicer cuts through endos, so quasialign must see
+    /// the same segments), text contributes length only when
+    /// `content`.
+    fn scan_nested(&mut self, inlines: &[Inline], content: bool) {
+        for inline in inlines {
+            match inline {
+                Inline::Milestone {
+                    scheme: s, value, ..
+                } if self.is_anchor(s, value) => self.anchor(value),
+                Inline::Endo { content: inner, .. }
+                | Inline::EndoDiaphane { content: inner, .. } => {
+                    self.scan_nested(inner, content);
+                }
+                other => {
+                    if content && let Some(ci) = self.current {
+                        self.views[ci].1.len += inline_chars(other);
                     }
                 }
             }
@@ -968,23 +1121,10 @@ impl ViewWalker<'_> {
             match inline {
                 Inline::Milestone {
                     scheme: s, value, ..
-                } if s == self.scheme
-                    || (value.starts_with(&format!("{}:", self.scheme)) && value.contains('|')) =>
-                {
-                    if value.contains('|') && !self.refine {
-                        // An existing quasi cut: its segment is
-                        // already subdivided — hands off.
-                        if let Some(ci) = self.current {
-                            self.views[ci].1.has_quasi = true;
-                        }
-                    } else {
-                        // real anchors always; under --refine the
-                        // existing cuts anchor too, so the finer
-                        // pass subdivides BETWEEN them, extending
-                        // their binary paths
-                        self.views.push((value.clone(), SegView::blank()));
-                        self.current = Some(self.views.len() - 1);
-                    }
+                } if self.is_anchor(s, value) => self.anchor(value),
+                Inline::Endo { content: inner, .. }
+                | Inline::EndoDiaphane { content: inner, .. } => {
+                    self.scan_nested(inner, content);
                 }
                 Inline::Text(t) if content => {
                     if let Some(ci) = self.current {
@@ -1270,15 +1410,28 @@ pub fn quasialign(
             }
         })
         .collect();
-    // The union of real coordinates in first-seen order.
+    for (i, views) in all_views.iter().enumerate() {
+        unique_coords(
+            &format!("document {}", i + 1),
+            scheme,
+            views.iter().map(|(c, _)| c),
+        )?;
+    }
+    // The union of real coordinates in first-seen order, and
+    // each document's views by coordinate (unique per document).
     let mut order: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for views in &all_views {
         for (coord, _) in views {
-            if !order.contains(coord) {
+            if seen.insert(coord) {
                 order.push(coord.clone());
             }
         }
     }
+    let by_coord: Vec<std::collections::HashMap<&str, &SegView>> = all_views
+        .iter()
+        .map(|views| views.iter().map(|(c, v)| (c.as_str(), v)).collect())
+        .collect();
     let mut skipped: Vec<String> = Vec::new();
     let mut all_cuts: Vec<Vec<(String, Site)>> = vec![Vec::new(); docs.len()];
     // existing scheme-bare cut values per document (collision
@@ -1298,16 +1451,11 @@ pub fn quasialign(
         })
         .collect();
     for coord in &order {
-        let holders: Vec<usize> = all_views
+        let (holders, views): (Vec<usize>, Vec<&SegView>) = by_coord
             .iter()
             .enumerate()
-            .filter(|(_, views)| views.iter().any(|(c, _)| c == coord))
-            .map(|(i, _)| i)
-            .collect();
-        let views: Vec<&SegView> = holders
-            .iter()
-            .map(|&i| &all_views[i].iter().find(|(c, _)| c == coord).unwrap().1)
-            .collect();
+            .filter_map(|(i, views)| views.get(coord.as_str()).map(|v| (i, *v)))
+            .unzip();
         if views.iter().any(|v| v.has_quasi) {
             skipped.push(coord.clone());
             continue;
@@ -1321,27 +1469,33 @@ pub fn quasialign(
         // anchor opens its path with `|`. Either way the value
         // handed to apply_cuts is scheme-bare. Under --refine the
         // window's labels are zero-deepened (`0.` prefixes) until
-        // none collides with an existing cut value: a deeper zero
-        // still sorts strictly inside the open interval after the
-        // anchor, so document order is preserved.
+        // none collides with an existing cut value in any holder
+        // (one depth for the round, so the labels stay
+        // witness-invariant): a deeper zero still sorts strictly
+        // inside the open interval after the anchor, so document
+        // order is preserved. Without a collision the path simply
+        // extends (3|0.1 -> 3|0.1.1).
         let bare = coord
             .strip_prefix(&format!("{scheme}:"))
             .unwrap_or(coord)
             .to_string();
         let joiner = if bare.contains('|') { "." } else { "|" };
-        for (slot, plan) in holders.iter().zip(plans) {
-            let mut depth = if refine { 1usize } else { 0 };
-            loop {
-                let zeros = "0.".repeat(depth);
-                let clash = plan.iter().any(|(label, _)| {
-                    existing[*slot].contains(&format!("{bare}{joiner}{zeros}{label}"))
-                });
-                if !clash {
-                    break;
-                }
-                depth += 1;
-            }
+        let labels: Vec<&String> = plans.iter().flatten().map(|(label, _)| label).collect();
+        let mut depth = 0usize;
+        loop {
             let zeros = "0.".repeat(depth);
+            let clash = labels.iter().any(|label| {
+                holders
+                    .iter()
+                    .any(|slot| existing[*slot].contains(&format!("{bare}{joiner}{zeros}{label}")))
+            });
+            if !clash {
+                break;
+            }
+            depth += 1;
+        }
+        let zeros = "0.".repeat(depth);
+        for (slot, plan) in holders.iter().zip(plans) {
             all_cuts[*slot].extend(
                 plan.iter()
                     .map(|(label, site)| (format!("{bare}{joiner}{zeros}{label}"), site.clone())),
@@ -1375,18 +1529,34 @@ struct Hunk {
 }
 
 /// Word-level LCS diff.
+///
+/// The traceback asks one thing of the LCS table: at a mismatch,
+/// whether `lcs[i+1][j] >= lcs[i][j+1]`. There `lcs[i][j]` is the
+/// larger of the two, so the test is exactly "stepping down from
+/// (i, j) loses nothing" — a vertical delta of zero. The table
+/// is therefore kept as one bit per cell (set where the delta is
+/// one), filled from two rolling rows: the same decisions as the
+/// full table at a sixty-fourth of its size.
 fn diff_words(a: &[String], b: &[String]) -> Vec<Hunk> {
     let (n, m) = (a.len(), b.len());
-    let mut lcs = vec![vec![0usize; m + 1]; n + 1];
+    let mut drops = vec![0u64; (n * m).div_ceil(64)];
+    let mut below = vec![0usize; m + 1];
+    let mut row = vec![0usize; m + 1];
     for i in (0..n).rev() {
         for j in (0..m).rev() {
-            lcs[i][j] = if a[i] == b[j] {
-                lcs[i + 1][j + 1] + 1
+            row[j] = if a[i] == b[j] {
+                below[j + 1] + 1
             } else {
-                lcs[i + 1][j].max(lcs[i][j + 1])
+                below[j].max(row[j + 1])
             };
+            if row[j] != below[j] {
+                drops[(i * m + j) / 64] |= 1 << ((i * m + j) % 64);
+            }
         }
+        std::mem::swap(&mut row, &mut below);
     }
+    // `lcs[i+1][j] >= lcs[i][j+1]` at a mismatch (i < n, j < m).
+    let down_keeps = |i: usize, j: usize| drops[(i * m + j) / 64] & (1 << ((i * m + j) % 64)) == 0;
     let mut hunks = Vec::new();
     let (mut i, mut j) = (0usize, 0usize);
     while i < n || j < m {
@@ -1398,7 +1568,7 @@ fn diff_words(a: &[String], b: &[String]) -> Vec<Hunk> {
         let start = i;
         let mut variant = Vec::new();
         loop {
-            if i < n && (j == m || lcs[i + 1][j] >= lcs[i][j + 1]) {
+            if i < n && (j == m || down_keeps(i, j)) {
                 i += 1;
             } else if j < m {
                 variant.push(b[j].clone());
@@ -1477,6 +1647,10 @@ struct Inserter {
     scheme: String,
     coord: Option<String>,
     word: usize,
+    /// A coordinate the Slicer hoists before a container whose
+    /// lemma is being counted under it, with the word count to
+    /// resume at when its milestone is met inside the children.
+    hoisted: Option<(String, usize)>,
     pending: Pending,
     ready: Vec<Block>,
 }
@@ -1555,7 +1729,12 @@ impl Inserter {
                 Inline::Milestone { scheme, value, ann } => {
                     if scheme == self.scheme {
                         self.coord = Some(value.clone());
-                        self.word = 0;
+                        // A hoisted coordinate resumes its count:
+                        // the enclosing lemma's words came first.
+                        self.word = match self.hoisted.take_if(|(v, _)| *v == value) {
+                            Some((_, word)) => word,
+                            None => 0,
+                        };
                     }
                     out.push(Inline::Milestone { scheme, value, ann });
                 }
@@ -1584,7 +1763,32 @@ impl Inserter {
         out
     }
 
+    /// Where a container's lemma words count. The Slicer hoists
+    /// a cut that opens the container's first content before the
+    /// container, so the lemma lands in that coordinate's slice:
+    /// the Slicer itself is the oracle (a probe on a copy), and
+    /// the walk switches to the hoisted coordinate ahead of its
+    /// milestone, which then resumes the count instead of
+    /// resetting it.
+    fn hoist(&mut self, block: &Block) -> Option<String> {
+        let mut probe = Slicer::new(&self.scheme);
+        probe.feed(block.clone());
+        let slice = probe.slices.iter().find(|s| !s.blocks.is_empty())?;
+        let (value, _) = slice.coord.as_ref()?;
+        if !matches!(&self.hoisted, Some((v, _)) if v == value) {
+            self.coord = Some(value.clone());
+            self.word = 0;
+        }
+        Some(value.clone())
+    }
+
     fn walk_block(&mut self, b: Block) -> Block {
+        let hoisted = match &b {
+            Block::Para { lemma, .. } | Block::Stichoi { lemma, .. } if !lemma.is_empty() => {
+                self.hoist(&b)
+            }
+            _ => None,
+        };
         match b {
             Block::Paragraph(inl) => Block::Paragraph(self.walk_inlines(inl)),
             Block::Para {
@@ -1597,6 +1801,9 @@ impl Inserter {
                 ann,
             } => {
                 let lemma = self.walk_inlines(lemma);
+                if let Some(value) = hoisted {
+                    self.hoisted = Some((value, self.word));
+                }
                 // Drain queued notes after each child so the
                 // apparatus entry stays on its anchor's page.
                 let mut walked = Vec::new();
@@ -1627,6 +1834,9 @@ impl Inserter {
                 ann,
             } => {
                 let lemma = self.walk_inlines(lemma);
+                if let Some(value) = hoisted {
+                    self.hoisted = Some((value, self.word));
+                }
                 let strophes = strophes
                     .into_iter()
                     .map(|s| {
@@ -1673,6 +1883,27 @@ impl Inserter {
 /// the earliest-listed witness's head wins ties, and a deadlock
 /// means the witnesses disagree on coordinate order - an error,
 /// never a silent choice.
+/// A coordinate is citable identity: one witness carries it at
+/// most once. A repeat would otherwise surface as a misleading
+/// order contradiction in the merge, or be dropped unnoticed by
+/// quasialign.
+fn unique_coords<'a>(
+    who: &str,
+    scheme: &str,
+    coords: impl IntoIterator<Item = &'a String>,
+) -> Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    for coord in coords {
+        if !seen.insert(coord.as_str()) {
+            let bare = coord.strip_prefix(&format!("{scheme}:")).unwrap_or(coord);
+            return Err(zyg_err(format!(
+                "{who} carries milestone `{scheme}:{bare}` more than once"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn aligned_order(traces: &[Vec<String>]) -> Result<Vec<String>> {
     let mut pointers = vec![0usize; traces.len()];
     let positions: Vec<std::collections::HashMap<&str, usize>> = traces
@@ -1788,6 +2019,9 @@ pub fn collation(witnesses: &[(String, Document)], scheme: &str, base: &str) -> 
     // witnesses' shared coordinates must merge order-
     // consistently; a contradiction is an error, never a
     // silent choice.
+    for ((id, _), trace) in maps.iter().zip(&traces) {
+        unique_coords(&format!("witness `{id}`"), scheme, trace)?;
+    }
     aligned_order(&traces)?;
     let base_map = maps
         .iter()
@@ -1872,6 +2106,7 @@ pub fn collation(witnesses: &[(String, Document)], scheme: &str, base: &str) -> 
         scheme: scheme.to_string(),
         coord: None,
         word: 0,
+        hoisted: None,
         pending,
         ready: Vec::new(),
     };

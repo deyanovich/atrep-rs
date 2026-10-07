@@ -1,0 +1,281 @@
+@@@!atrep-exo
+@=lexigramma=>latex
+
+@@/ LaTeX exomorphosis for lexigramma. Koine's rules arrive
+@@/ through the lineage (std koine.latex.exo); this file adds
+@@/ the dictionary constructs and the class. The default
+@@/ register is the LSJ: a dense two-column dictionary page,
+@@/ fbb roman with GFS Porson Greek switched by interchar
+@@/ class, hanging entries under bold headwords with
+@@/ superscript homograph numbers, sense markers bold and
+@@/ depth-styled (Roman, arabic, letter), labels italic in
+@@/ their brackets, citations italic with their sources
+@@/ upright.
+
+@-> *document
+\documentclass{atrep-lexigramma}
+\begin{document}
+@(grammata)
+\end{document}
+>-@
+
+@@/ ----- the entry and its senses -----
+
+@-> !
+\begin{ltentry}{@(lemma)}{@[@(taxis)]@}@[\ltlabel{@(onym)}]@
+@(grammata)
+\end{ltentry}
+>-@
+
+@-> :
+\begin{ltsense}{@(taxis)}{@[@(lemma)]@}
+@(grammata)
+\end{ltsense}
+>-@
+
+@@/ ----- the form block -----
+
+@-> *solo =~
+\ltvariant{@[@(genoses)]@}{@(grammata)}
+>-@
+
+@-> *solo =%
+\ltpron{@[@(genoses)]@}{@(grammata)}
+>-@
+
+@-> *solo =-
+\ltsyll{@(grammata)}
+>-@
+
+@-> *solo =&
+\ltgram{@(grammata)}
+>-@
+
+@-> *solo =<
+\ltetym{@(grammata)}
+>-@
+
+@@/ Inflected forms are lookup keys, not page content.
+
+@@/ The languages line is metadata, not page content.
+
+@-> *solo =/
+
+>-@
+
+@-> *solo =*
+
+>-@
+
+@@/ ----- inline dictionary furniture -----
+
+@-> &
+\ltgramlabel{@(grammata)}
+>-@
+
+@-> [
+\ltusg{@[@(genoses)]@}{@(grammata)}
+>-@
+
+@-> =>
+\ltequiv{@[@(genoses)]@}{@(grammata)}
+>-@
+
+@-> ~
+\ltcit{@(grammata)}
+>-@
+
+@-> =~~
+\begin{ltcitblock}
+@(grammata)
+\end{ltcitblock}
+>-@
+
+@@/ Cross-references print the target headword itself (the
+@@/ autonym), not a counter: the koine ref rule is overridden.
+
+@-> >
+\ltxref{@(param)}
+>-@
+
+@=* atrep-lexigramma.cls END-OF-CLASS
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesClass{atrep-lexigramma}[2026/07/13 v0.1 LSJ dictionary presentation for lexigramma]
+
+% The LSJ register: a 9/10.6 two-column dictionary page after
+% Liddell-Scott-Jones - fbb roman, GFS Porson Greek by
+% interchar class, entries hanging under bold headwords with
+% superscript homograph numbers, senses breaking with bold
+% depth-styled markers (Roman at depth one, arabic at two,
+% letters at three), usage labels italic in brackets,
+% citations italic with upright sources. Implements the koine
+% semantic layer and the lexigramma dictionary layer.
+
+\DeclareOption*{\PassOptionsToClass{\CurrentOption}{article}}
+\ProcessOptions\relax
+\LoadClass[9pt,twoside]{extarticle}
+
+\RequirePackage{fontspec}
+\setmainfont{fbb}
+\setmonofont{Liberation Mono}[Scale=MatchLowercase]
+\newfontfamily\lt@greek{GFSPorson.otf}[Scale=MatchLowercase]
+% Headwords are bold Greek; Porson carries no bold, so the
+% headword face is Old Standard's.
+\newfontfamily\lt@oldstd{OldStandard-Regular.otf}[
+  BoldFont = OldStandard-Bold.otf,
+  Scale = MatchLowercase]
+% The interchar Greek switch must not fire inside a headword:
+% the group disables it and Old Standard Bold holds.
+\newcommand\lt@hw{\XeTeXinterchartokenstate=0 \lt@oldstd\bfseries}
+\RequirePackage{microtype}
+\RequirePackage[paperwidth=178mm,paperheight=254mm,top=16mm,bottom=18mm,inner=14mm,outer=12mm,columnsep=5mm]{geometry}
+\RequirePackage{multicol}
+\RequirePackage{graphicx}
+\RequirePackage{url}
+\RequirePackage{polyglossia}
+\setmainlanguage{english}
+\setotherlanguage[variant=ancient]{greek}
+
+\renewcommand\normalsize{\@setfontsize\normalsize{9}{10.6}}
+\renewcommand\small{\@setfontsize\small{8.2}{9.6}}
+\renewcommand\footnotesize{\@setfontsize\footnotesize{7.4}{8.6}}
+\normalsize
+\setlength\parindent{0pt}
+\setlength\parskip{0pt}
+\emergencystretch=1.6em
+\tolerance=3000
+
+% Greek runs switch to Porson: one interchar class spans both
+% Greek blocks; switches are stateless family changes.
+\XeTeXinterchartokenstate=1
+\newXeTeXintercharclass\lt@grclass
+\count@="0370
+\loop
+  \XeTeXcharclass\count@=\lt@grclass
+  \advance\count@ 1
+  \ifnum\count@<"0400
+\repeat
+\count@="1F00
+\loop
+  \XeTeXcharclass\count@=\lt@grclass
+  \advance\count@ 1
+  \ifnum\count@<"2000
+\repeat
+\XeTeXinterchartoks 0 \lt@grclass = {\lt@greek}
+\XeTeXinterchartoks 4095 \lt@grclass = {\lt@greek}
+\XeTeXinterchartoks \lt@grclass 0 = {\rmfamily}
+\XeTeXinterchartoks \lt@grclass 4095 = {\rmfamily}
+
+% ---- running heads: first and last headword of the spread,
+% dictionary furniture, filled by the entries ----
+\def\lt@title{}
+\def\lt@work{}
+\def\ps@ltseries{%
+  \def\@oddhead{{\small\rlap{\textbf{\rightmark}}\hfil\thepage\hfil\llap{\textbf{\leftmark}}}}%
+  \def\@evenhead{{\small\rlap{\textbf{\rightmark}}\hfil\thepage\hfil\llap{\textbf{\leftmark}}}}%
+  \def\@oddfoot{}\let\@evenfoot\@oddfoot}
+\pagestyle{ltseries}
+
+% ---- the dictionary layer ----
+
+% An entry hangs under its headword; the headword is bold with
+% a superscript homograph number; entries separate by a small
+% space, senses break within.
+\newenvironment{ltentry}[2]{%
+  \par\addvspace{2.2pt}%
+  \begingroup
+  \setcounter{lt@depth}{0}%
+  \noindent\hangindent=0.9em\hangafter=1
+  {\lt@hw #1}%
+  \if\relax\detokenize{#2}\relax\else\textsuperscript{\lt@hw #2}\fi
+  \markboth{#1}{#1}%
+  \hskip 0.4em\ignorespaces}
+  {\par\endgroup}
+
+% Sense markers style by depth: Roman, arabic, letter. The
+% taxis is explicit and validated; display is the register's.
+\newcounter{lt@depth}
+\newcommand\lt@sensemark[1]{%
+  \ifcase\value{lt@depth}\or
+    \textbf{\uppercase\expandafter{\romannumeral #1}.}\or
+    \textbf{#1.}\else
+    \textbf{\lt@alpha{#1}.}\fi}
+\def\lt@alpha#1{\ifcase#1\or a\or b\or c\or d\or e\or f\or g\or h\or i\or j\or k\or l\or m\fi}
+\newenvironment{ltsense}[2]{%
+  \addtocounter{lt@depth}{1}%
+  \ifnum\value{lt@depth}>1\unskip\hskip 0.45em\else\par\hangindent=0.9em\hangafter=0\fi
+  \lt@sensemark{#1}~%
+  \if\relax\detokenize{#2}\relax\else\emph{#2}\hskip 0.35em\fi
+  \ignorespaces}
+  {\addtocounter{lt@depth}{-1}\unskip}
+
+% The form block: inline runs after the headword.
+\newcommand\ltvariant[2]{\unskip\ {\lt@greek #2},\ignorespaces}
+\newcommand\ltpron[2]{\unskip\ [#2],\ignorespaces}
+\newcommand\ltsyll[1]{\unskip\ #1,\ignorespaces}
+\newcommand\ltgram[1]{\unskip\ {\itshape #1}:\ignorespaces}
+\newcommand\ltetym[1]{\unskip\ (#1)\ignorespaces}
+\newcommand\ltgramlabel[1]{{\itshape #1}}
+\newcommand\ltusg[2]{{\itshape [#2]}}
+\newcommand\ltequiv[2]{{\bfseries #2}}
+\newcommand\ltcit[1]{{\itshape #1}}
+\newenvironment{ltcitblock}{\par\begingroup\small\leftskip=1.2em}{\par\endgroup}
+
+% ---- the koine layer ----
+\newcommand\lttitle[1]{\gdef\lt@title{#1}}
+\newcommand\ltsubtitle[1]{}
+\newcommand\ltauthor[1]{}
+\newcommand\lteditor[1]{}
+\newcommand\lthead[2]{%
+  \ifcsname lt@h@#1\endcsname
+    \csname lt@h@#1\endcsname{#2}%
+  \else
+    \par\medskip\noindent\textbf{#2}\par\nobreak
+  \fi}
+\@namedef{lt@h@section}#1{\par\addvspace{1\baselineskip}%
+  {\centering\large\bfseries #1\par}\addvspace{0.5\baselineskip}\@afterindentfalse\@afterheading}
+\@namedef{lt@h@subsection}#1{\par\addvspace{0.8\baselineskip}%
+  {\centering\bfseries #1\par}\addvspace{0.4\baselineskip}\@afterindentfalse\@afterheading}
+\@namedef{lt@h@subsubsection}#1{\par\addvspace{0.6\baselineskip}%
+  {\centering\itshape #1\par}\addvspace{0.3\baselineskip}}
+\newcommand\ltrunin[1]{\textbf{#1}}
+\newcommand\ltbreak[1]{\par\addvspace{0.6\baselineskip}{\centering #1\par}\addvspace{0.6\baselineskip}}
+\newcommand\ltlabel[1]{\label{#1}}
+\newcommand\ltem[1]{\emph{#1}}
+\newcommand\ltstrong[1]{\textbf{#1}}
+\newcommand\ltstrongem[1]{\textbf{\emph{#1}}}
+\newcommand\ltannot[2]{#2}
+\newcommand\ltq[1]{`#1'}
+\newenvironment{ltitemize}{\itemize}{\enditemize}
+\newenvironment{ltenumerate}{\enumerate}{\endenumerate}
+\newenvironment{ltdescription}{\description}{\enddescription}
+\newcommand\ltitem{\item}
+\newcommand\ltitemdef[1]{\item[#1]}
+\newenvironment{ltquote}{\quote}{\endquote}
+\newcommand\ltquotehypo[1]{\begin{flushright}--- #1\end{flushright}}
+\newcounter{lt@notetext}
+\newcommand\ltnotemark{\footnotemark{}}
+\newcommand\ltnotetext[1]{\stepcounter{lt@notetext}%
+  \footnotetext[\value{lt@notetext}]{#1}}
+\newenvironment{ltverse}{\par\begingroup\leftskip=1.6em\parindent=0pt
+  \def\ltnl{\par}\everypar{\hangindent=0.8em\hangafter=1}}
+  {\par\endgroup}
+\newcommand\ltnl{\\\relax}
+\newcommand\ltstanza{\par\addvspace{0.4\baselineskip}}
+\newcommand\ltref[1]{\ref{#1}}
+% A cross-reference by headword: the onym prints as the
+% headword, a trailing -<n> homograph suffix as superscript.
+\def\ltxref@split#1-#2\@nil{{\lt@hw #1}\textsuperscript{\lt@hw #2}}
+\newcommand\ltxref[1]{%
+  \in@{-}{#1}%
+  \ifin@\ltxref@split#1\@nil\else{\lt@hw #1}\fi}
+\newcommand\lturl[1]{\url{#1}}
+\newcommand\ltmilestone[2]{}
+\newcommand\ltmedia[1]{\includegraphics[width=0.7\linewidth]{#1}}
+
+% Two columns throughout.
+\AtBeginDocument{\begin{multicols}{2}}
+\AtEndDocument{\end{multicols}}
+
+\endinput
+END-OF-CLASS

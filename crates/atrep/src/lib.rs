@@ -12,6 +12,7 @@
 pub mod atramento;
 pub mod dendron;
 pub mod dialektos;
+pub mod dsl;
 pub mod endo;
 pub mod epimerismos;
 pub mod error;
@@ -44,8 +45,15 @@ pub fn check_file(path: &Path) -> Result<Document> {
         )))
     })?;
     let source = String::from_utf8(bytes).map_err(|_| Error::new(ErrorKind::InvalidUtf8))?;
-    let normalized: String = source.nfc().collect();
+    let normalized: String = strip_bom(&source).nfc().collect();
     parser::parse_document(&normalized, path)
+}
+
+/// Source without a leading byte-order mark (U+FEFF), which some
+/// editors prepend and which is not content: left in place it
+/// hides the dialektos declaration.
+pub fn strip_bom(source: &str) -> &str {
+    source.strip_prefix('\u{feff}').unwrap_or(source)
 }
 
 /// Result of [`check_any`]: a document or a dialektos definition.
@@ -59,7 +67,7 @@ pub enum Checked {
 /// shebang) declares the `atrep` meta-dialektos, i.e. the file is a
 /// dialektos definition rather than a document.
 pub fn is_definition_source(source: &str) -> bool {
-    let mut lines = source.lines();
+    let mut lines = strip_bom(source).lines();
     let mut first = lines.next().unwrap_or("");
     if first.starts_with("#!") {
         first = lines.next().unwrap_or("");
@@ -99,6 +107,7 @@ pub fn check_any(path: &Path) -> Result<Checked> {
 /// error locations; the file is not read. This is the entry point
 /// for callers holding unsaved buffers (editors, the LSP).
 pub fn check_source(source: &str, path: &Path) -> Result<Checked> {
+    let source = strip_bom(source);
     if is_definition_source(source) {
         dialektos::parse_source(source, path).map(Checked::Dialektos)
     } else {

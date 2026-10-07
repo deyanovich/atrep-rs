@@ -20,11 +20,24 @@
 //! loss: images and binaries, genre, lang, dates and the
 //! document/publish info, inline styles, external links' text.
 
+use std::cell::Cell;
+use std::collections::HashSet;
+
 use crate::dendron::{Annotations, Block, Document, Inline, Strophe};
 use crate::endo::{
     Tok, attr, collapse_ws, decode_entities, skip_element, tokenize_xml, trim_inline_edges,
 };
-use crate::error::Result;
+use crate::error::{Error, ErrorKind, Result};
+
+/// Elements nested deeper than this are refused rather than
+/// recursed into: a debug build spends some 12 KB of stack per
+/// level, so this keeps a 2 MB thread safe, and it is far beyond
+/// any book (sections nest a handful deep, inline styles fewer).
+const MAX_NEST: usize = 64;
+
+fn fb2_err(msg: String) -> Error {
+    Error::new(ErrorKind::Syntax(format!("fb2 import: {msg}")))
+}
 
 /// A binary carried by an FB2 file: its id (the name the images
 /// refer to), content type, and bytes. On import it is meant to
@@ -110,6 +123,42 @@ fn content_type_of(name: &str) -> &'static str {
     }
 }
 
+/// The file name a binary id gets under `media/`: path
+/// separators become dashes, so no id can name a path outside
+/// that directory (an image href is a file name, never a path);
+/// an id that is only dots names nothing. Applied to the image
+/// href and to the binary id alike, so the two still meet.
+fn media_name(id: &str) -> Option<String> {
+    let name: String = id
+        .chars()
+        .map(|c| if c == '/' || c == '\\' { '-' } else { c })
+        .collect();
+    (!name.is_empty() && name != "." && name != "..").then_some(name)
+}
+
+/// The onym a note id gets: itself when it is a valid onym, else
+/// a renaming that keeps its alphanumerics (`_1` → `fb2-1`), so
+/// the callout and the body still meet.
+fn note_onym(id: &str) -> Option<String> {
+    if crate::sigil::is_valid_onym(id) {
+        return Some(id.to_string());
+    }
+    let mut out = String::from("fb2");
+    let mut gap = true;
+    for c in id.chars() {
+        if c.is_alphanumeric() {
+            if gap {
+                out.push('-');
+                gap = false;
+            }
+            out.push(c);
+        } else {
+            gap = true;
+        }
+    }
+    (out.len() > 3).then_some(out)
+}
+
 // ---------------------------------------------------------------
 // Import
 // ---------------------------------------------------------------
@@ -155,115 +204,47 @@ fn endo(symbol: &str, content: Vec<Inline>, genoses: Vec<String>) -> Inline {
     }
 }
 
-/// Inline content up to the close of `until`.
-fn inlines(toks: &[Tok], mut i: usize, until: &str) -> Result<(Vec<Inline>, usize)> {
-    let mut out: Vec<Inline> = Vec::new();
-    while i < toks.len() {
-        match &toks[i] {
-            Tok::Close(n) if n == until => {
-                trim_inline_edges(&mut out);
-                return Ok((out, i + 1));
-            }
-            Tok::Close(_) => i += 1,
-            Tok::Text(t) => {
-                let t = collapse_ws(&decode_entities(t));
-                if !t.is_empty() {
-                    out.push(Inline::Text(t));
-                }
-                i += 1;
-            }
+/// The section ids a file declares, from a pass over the tokens
+/// before parsing: those in the notes bodies (as the onyms their
+/// notes get) and those in the main bodies. A link resolves only
+/// to an id that exists; the rest stay text.
+fn declared_ids(toks: &[Tok]) -> (HashSet<String>, HashSet<String>) {
+    let mut notes: HashSet<String> = HashSet::new();
+    let mut sections: HashSet<String> = HashSet::new();
+    let mut in_notes: Option<bool> = None;
+    for tok in toks {
+        match tok {
             Tok::Open {
                 name,
                 attrs,
                 self_closing,
-            } => {
-                let name = name.clone();
-                if *self_closing {
-                    // image, empty-line inside a paragraph: nothing
-                    i += 1;
-                    continue;
-                }
-                match name.as_str() {
-                    "emphasis" => {
-                        let (c, next) = inlines(toks, i + 1, "emphasis")?;
-                        out.push(endo("/", c, Vec::new()));
-                        i = next;
-                    }
-                    "strong" => {
-                        let (c, next) = inlines(toks, i + 1, "strong")?;
-                        out.push(endo("*", c, Vec::new()));
-                        i = next;
-                    }
-                    "strikethrough" | "sub" | "sup" => {
-                        let (c, next) = inlines(toks, i + 1, &name)?;
-                        out.push(endo(",", c, vec![name.clone()]));
-                        i = next;
-                    }
-                    "code" => {
-                        let (t, next) = text_until(toks, i + 1, "code");
-                        out.push(Inline::VerbatimInline {
-                            content: t,
-                            ann: Annotations::default(),
-                        });
-                        i = next;
-                    }
-                    "a" => {
-                        let target = href(attrs).unwrap_or("").to_string();
-                        let is_note =
-                            attr(attrs, "type") == Some("note") || target.starts_with('#');
-                        let (c, next) = inlines(toks, i + 1, "a")?;
-                        if is_note && let Some(id) = target.strip_prefix('#') {
-                            if crate::sigil::is_valid_onym(id) {
-                                out.push(Inline::Deixis {
-                                    symbol: "^".to_string(),
-                                    onym: id.to_string(),
-                                    ann: Annotations::default(),
-                                });
-                            } else {
-                                out.extend(c);
+            } if name == "body" && !*self_closing => {
+                in_notes = Some(attr(attrs, "name").is_some_and(|n| n != "main"));
+            }
+            Tok::Close(n) if n == "body" => in_notes = None,
+            Tok::Open {
+                name,
+                attrs,
+                self_closing,
+            } if name == "section" && !*self_closing => {
+                if let Some(id) = attr(attrs, "id") {
+                    match in_notes {
+                        Some(true) => {
+                            if let Some(onym) = note_onym(id) {
+                                notes.insert(onym);
                             }
-                        } else if !target.is_empty() {
-                            out.extend(c);
-                            out.push(Inline::Text(" (".to_string()));
-                            out.push(endo("><", vec![Inline::Text(target)], Vec::new()));
-                            out.push(Inline::Text(")".to_string()));
-                        } else {
-                            out.extend(c);
                         }
-                        i = next;
-                    }
-                    other => {
-                        // style and anything else: transparent
-                        let (c, next) = inlines(toks, i + 1, other)?;
-                        out.extend(c);
-                        i = next;
+                        Some(false) if crate::sigil::is_valid_onym(id) => {
+                            sections.insert(id.to_string());
+                        }
+                        _ => {}
                     }
                 }
             }
+            _ => {}
         }
     }
-    trim_inline_edges(&mut out);
-    Ok((out, i))
-}
-
-/// A title element: one or more `p` lines, joined with spaces.
-fn title_inlines(toks: &[Tok], mut i: usize) -> Result<(Vec<Inline>, usize)> {
-    let mut out: Vec<Inline> = Vec::new();
-    while i < toks.len() {
-        match &toks[i] {
-            Tok::Close(n) if n == "title" => return Ok((out, i + 1)),
-            Tok::Open { name, .. } if name == "p" => {
-                let (c, next) = inlines(toks, i + 1, "p")?;
-                if !out.is_empty() && !c.is_empty() {
-                    out.push(Inline::Text(" ".to_string()));
-                }
-                out.extend(c);
-                i = next;
-            }
-            _ => i += 1,
-        }
-    }
-    Ok((out, i))
+    (notes, sections)
 }
 
 fn solo(symbol: &str, content: Vec<Inline>) -> Block {
@@ -302,6 +283,12 @@ fn section_symbol(depth: usize) -> &'static str {
 
 struct Importer {
     notes: Vec<Block>,
+    /// Onyms of the notes the notes bodies declare.
+    note_ids: HashSet<String>,
+    /// Ids of the sections the main bodies declare.
+    section_ids: HashSet<String>,
+    /// Current element nesting, bounded by [`MAX_NEST`].
+    nest: Cell<usize>,
 }
 
 /// Blocks parsed up to a close, with the title and text-author
@@ -309,10 +296,186 @@ struct Importer {
 type Parsed = (Vec<Block>, Vec<Inline>, Vec<Inline>, usize);
 
 impl Importer {
+    fn enter(&self) -> Result<()> {
+        let n = self.nest.get() + 1;
+        if n > MAX_NEST {
+            return Err(fb2_err(format!(
+                "elements nested deeper than {MAX_NEST} levels"
+            )));
+        }
+        self.nest.set(n);
+        Ok(())
+    }
+
+    fn leave(&self) {
+        self.nest.set(self.nest.get() - 1);
+    }
+
+    /// Inline content up to the close of `until`.
+    fn inlines(&self, toks: &[Tok], i: usize, until: &str) -> Result<(Vec<Inline>, usize)> {
+        self.enter()?;
+        let parsed = self.inlines_inner(toks, i, until)?;
+        self.leave();
+        Ok(parsed)
+    }
+
+    fn inlines_inner(
+        &self,
+        toks: &[Tok],
+        mut i: usize,
+        until: &str,
+    ) -> Result<(Vec<Inline>, usize)> {
+        let mut out: Vec<Inline> = Vec::new();
+        while i < toks.len() {
+            match &toks[i] {
+                Tok::Close(n) if n == until => {
+                    trim_inline_edges(&mut out);
+                    return Ok((out, i + 1));
+                }
+                Tok::Close(_) => i += 1,
+                Tok::Text(t) => {
+                    let t = collapse_ws(&decode_entities(t));
+                    if !t.is_empty() {
+                        out.push(Inline::Text(t));
+                    }
+                    i += 1;
+                }
+                Tok::Open {
+                    name,
+                    attrs,
+                    self_closing,
+                } => {
+                    let name = name.clone();
+                    if *self_closing {
+                        // image, empty-line inside a paragraph: nothing
+                        i += 1;
+                        continue;
+                    }
+                    match name.as_str() {
+                        "emphasis" => {
+                            let (c, next) = self.inlines(toks, i + 1, "emphasis")?;
+                            out.push(endo("/", c, Vec::new()));
+                            i = next;
+                        }
+                        "strong" => {
+                            let (c, next) = self.inlines(toks, i + 1, "strong")?;
+                            out.push(endo("*", c, Vec::new()));
+                            i = next;
+                        }
+                        "strikethrough" | "sub" | "sup" => {
+                            let (c, next) = self.inlines(toks, i + 1, &name)?;
+                            out.push(endo(",", c, vec![name.clone()]));
+                            i = next;
+                        }
+                        "code" => {
+                            let (t, next) = text_until(toks, i + 1, "code");
+                            out.push(Inline::VerbatimInline {
+                                content: t,
+                                ann: Annotations::default(),
+                            });
+                            i = next;
+                        }
+                        "a" => {
+                            let target = href(attrs).unwrap_or("").to_string();
+                            let (c, next) = self.inlines(toks, i + 1, "a")?;
+                            if let Some(id) = target.strip_prefix('#') {
+                                if attr(attrs, "type") == Some("note") {
+                                    // A note callout: the deixis
+                                    // replaces the link text when
+                                    // the notes body has the note;
+                                    // without a body the text stays.
+                                    match note_onym(id).filter(|o| self.note_ids.contains(o)) {
+                                        Some(onym) => out.push(Inline::Deixis {
+                                            symbol: "^".to_string(),
+                                            onym,
+                                            ann: Annotations::default(),
+                                        }),
+                                        None => out.extend(c),
+                                    }
+                                } else if self.section_ids.contains(id) {
+                                    // An internal link: a reference
+                                    // to the section.
+                                    out.push(Inline::Monosim {
+                                        symbol: ">".to_string(),
+                                        param: id.to_string(),
+                                        ann: Annotations::default(),
+                                    });
+                                } else {
+                                    out.extend(c);
+                                }
+                            } else if !target.is_empty() {
+                                // An external link: the autolink
+                                // alone when its text is the URL
+                                // (the shape the exporter writes),
+                                // else the text with the URL after.
+                                let mut text = String::new();
+                                plain(&c, &mut text);
+                                let link =
+                                    endo("><", vec![Inline::Text(target.clone())], Vec::new());
+                                if c.is_empty() || text.trim() == target {
+                                    out.push(link);
+                                } else {
+                                    out.extend(c);
+                                    out.push(Inline::Text(" (".to_string()));
+                                    out.push(link);
+                                    out.push(Inline::Text(")".to_string()));
+                                }
+                            } else {
+                                out.extend(c);
+                            }
+                            i = next;
+                        }
+                        other => {
+                            // style and anything else: transparent
+                            let (c, next) = self.inlines(toks, i + 1, other)?;
+                            out.extend(c);
+                            i = next;
+                        }
+                    }
+                }
+            }
+        }
+        trim_inline_edges(&mut out);
+        Ok((out, i))
+    }
+
+    /// A title element: one or more `p` lines, joined with spaces.
+    fn title_inlines(&self, toks: &[Tok], mut i: usize) -> Result<(Vec<Inline>, usize)> {
+        let mut out: Vec<Inline> = Vec::new();
+        while i < toks.len() {
+            match &toks[i] {
+                Tok::Close(n) if n == "title" => return Ok((out, i + 1)),
+                Tok::Open { name, .. } if name == "p" => {
+                    let (c, next) = self.inlines(toks, i + 1, "p")?;
+                    if !out.is_empty() && !c.is_empty() {
+                        out.push(Inline::Text(" ".to_string()));
+                    }
+                    out.extend(c);
+                    i = next;
+                }
+                _ => i += 1,
+            }
+        }
+        Ok((out, i))
+    }
+
     /// Blocks up to the close of `until`, at section depth `depth`.
     /// Returns the blocks, the title inlines met (a section's
     /// own), and the text-author inlines met (cite/epigraph/poem).
-    fn blocks(&mut self, toks: &[Tok], mut i: usize, until: &str, depth: usize) -> Result<Parsed> {
+    fn blocks(&mut self, toks: &[Tok], i: usize, until: &str, depth: usize) -> Result<Parsed> {
+        self.enter()?;
+        let parsed = self.blocks_inner(toks, i, until, depth)?;
+        self.leave();
+        Ok(parsed)
+    }
+
+    fn blocks_inner(
+        &mut self,
+        toks: &[Tok],
+        mut i: usize,
+        until: &str,
+        depth: usize,
+    ) -> Result<Parsed> {
         let mut blocks: Vec<Block> = Vec::new();
         let mut title: Vec<Inline> = Vec::new();
         let mut author: Vec<Inline> = Vec::new();
@@ -332,8 +495,9 @@ impl Importer {
                             // koine's canonical asterism
                             blocks.push(solo("**", vec![Inline::Text(" * * * ".to_string())]));
                         } else if name == "image"
-                            && let Some(id) = href(&attrs).and_then(|h| h.strip_prefix('#'))
-                            && !id.is_empty()
+                            && let Some(id) = href(&attrs)
+                                .and_then(|h| h.strip_prefix('#'))
+                                .and_then(media_name)
                         {
                             // The binary is written as media/<id>
                             // beside the document (the CLI does);
@@ -347,26 +511,26 @@ impl Importer {
                     }
                     match name.as_str() {
                         "title" => {
-                            let (t, next) = title_inlines(toks, i + 1)?;
+                            let (t, next) = self.title_inlines(toks, i + 1)?;
                             title = t;
                             i = next;
                         }
                         "p" => {
-                            let (c, next) = inlines(toks, i + 1, "p")?;
+                            let (c, next) = self.inlines(toks, i + 1, "p")?;
                             if !c.is_empty() {
                                 blocks.push(Block::Paragraph(c));
                             }
                             i = next;
                         }
                         "subtitle" => {
-                            let (c, next) = inlines(toks, i + 1, "subtitle")?;
+                            let (c, next) = self.inlines(toks, i + 1, "subtitle")?;
                             if !c.is_empty() {
                                 blocks.push(solo("#_", c));
                             }
                             i = next;
                         }
                         "text-author" => {
-                            let (c, next) = inlines(toks, i + 1, "text-author")?;
+                            let (c, next) = self.inlines(toks, i + 1, "text-author")?;
                             if !author.is_empty() && !c.is_empty() {
                                 author.push(Inline::Text(" ".to_string()));
                             }
@@ -451,7 +615,7 @@ impl Importer {
                     }
                     match name.as_str() {
                         "title" => {
-                            let (t, next) = title_inlines(toks, i + 1)?;
+                            let (t, next) = self.title_inlines(toks, i + 1)?;
                             lemma = t;
                             i = next;
                         }
@@ -471,7 +635,7 @@ impl Importer {
                                         break;
                                     }
                                     Tok::Open { name, .. } if name == "v" => {
-                                        let (c, next) = inlines(toks, i + 1, "v")?;
+                                        let (c, next) = self.inlines(toks, i + 1, "v")?;
                                         lines.push(c);
                                         i = next;
                                     }
@@ -491,7 +655,7 @@ impl Importer {
                             }
                         }
                         "text-author" => {
-                            let (c, next) = inlines(toks, i + 1, "text-author")?;
+                            let (c, next) = self.inlines(toks, i + 1, "text-author")?;
                             if !hypograph.is_empty() && !c.is_empty() {
                                 hypograph.push(Inline::Text(" ".to_string()));
                             }
@@ -499,7 +663,7 @@ impl Importer {
                             i = next;
                         }
                         "date" => {
-                            let (c, next) = inlines(toks, i + 1, "date")?;
+                            let (c, next) = self.inlines(toks, i + 1, "date")?;
                             if !c.is_empty() {
                                 after.push(solo("-/", c));
                             }
@@ -546,7 +710,7 @@ impl Importer {
                             }
                             Tok::Open { name, .. } if name == "td" || name == "th" => {
                                 let n = name.clone();
-                                let (c, next) = inlines(toks, i + 1, &n)?;
+                                let (c, next) = self.inlines(toks, i + 1, &n)?;
                                 line.push(Inline::Text("| ".to_string()));
                                 line.extend(c);
                                 line.push(Inline::Text(" ".to_string()));
@@ -585,9 +749,7 @@ impl Importer {
                     attrs,
                     self_closing,
                 } if name == "section" && !*self_closing => {
-                    let onym = attr(attrs, "id")
-                        .filter(|id| crate::sigil::is_valid_onym(id))
-                        .map(str::to_string);
+                    let onym = attr(attrs, "id").and_then(note_onym);
                     let (children, _, _, next) = self.blocks(toks, i + 1, "section", 0)?;
                     if let Some(onym) = onym {
                         self.notes
@@ -614,9 +776,15 @@ pub fn fb2_to_document(xml: &str) -> Result<Document> {
 pub fn fb2_to_document_with_media(xml: &str) -> Result<(Document, Vec<Fb2Media>)> {
     let toks = tokenize_xml(xml)?;
     let mut media: Vec<Fb2Media> = Vec::new();
-    let mut imp = Importer { notes: Vec::new() };
+    let (note_ids, section_ids) = declared_ids(&toks);
+    let mut imp = Importer {
+        notes: Vec::new(),
+        note_ids,
+        section_ids,
+        nest: Cell::new(0),
+    };
     let mut title: Vec<Inline> = Vec::new();
-    let mut author: Vec<Inline> = Vec::new();
+    let mut authors: Vec<Vec<Inline>> = Vec::new();
     let mut annotation: Vec<Block> = Vec::new();
     let mut body: Vec<Block> = Vec::new();
     let mut i = 0;
@@ -636,7 +804,7 @@ pub fn fb2_to_document_with_media(xml: &str) -> Result<(Document, Vec<Fb2Media>)
                             name, self_closing, ..
                         } if !*self_closing => match name.as_str() {
                             "book-title" => {
-                                let (c, next) = inlines(&toks, i + 1, "book-title")?;
+                                let (c, next) = imp.inlines(&toks, i + 1, "book-title")?;
                                 title = c;
                                 i = next;
                             }
@@ -671,8 +839,8 @@ pub fn fb2_to_document_with_media(xml: &str) -> Result<(Document, Vec<Fb2Media>)
                                         _ => i += 1,
                                     }
                                 }
-                                if author.is_empty() && !parts.is_empty() {
-                                    author = vec![Inline::Text(parts.join(" "))];
+                                if !parts.is_empty() {
+                                    authors.push(vec![Inline::Text(parts.join(" "))]);
                                 }
                             }
                             "annotation" => {
@@ -699,8 +867,7 @@ pub fn fb2_to_document_with_media(xml: &str) -> Result<(Document, Vec<Fb2Media>)
                     .unwrap_or("application/octet-stream")
                     .to_string();
                 let (text, next) = text_until(&toks, i + 1, "binary");
-                if !id.is_empty()
-                    && !id.contains('/')
+                if let Some(id) = media_name(&id)
                     && let Some(bytes) = base64_decode(&text)
                 {
                     media.push(Fb2Media {
@@ -766,7 +933,7 @@ pub fn fb2_to_document_with_media(xml: &str) -> Result<(Document, Vec<Fb2Media>)
     if !title.is_empty() {
         blocks.push(solo("=", title));
     }
-    if !author.is_empty() {
+    for author in authors {
         blocks.push(solo("=:", author));
     }
     if !annotation.is_empty() {
@@ -900,6 +1067,10 @@ impl<'a> Exporter<'a> {
                         esc(onym)
                     ));
                 }
+            }
+            Inline::Monosim { symbol, param, .. } if symbol == ">" => {
+                // A reference: the link the HTML exo writes for it.
+                out.push_str(&format!("<a l:href=\"#{p}\">[{p}]</a>", p = esc(param)));
             }
             Inline::Monosim { .. }
             | Inline::OnymAnchor(_)
@@ -1133,6 +1304,32 @@ fn is_section(block: &Block) -> bool {
     matches!(block, Block::Para { symbol, .. } if SECTION_SYMBOLS.contains(&symbol.as_str()))
 }
 
+/// Onymized note bodies at any depth, in document order.
+fn collect_notes<'a>(blocks: &'a [Block], notes: &mut Vec<(&'a str, &'a [Block])>) {
+    for block in blocks {
+        match block {
+            Block::Para {
+                symbol,
+                children,
+                ann,
+                ..
+            } => {
+                if NOTE_SYMBOLS.contains(&symbol.as_str()) {
+                    if let Some(o) = &ann.onym {
+                        notes.push((o.as_str(), children));
+                    }
+                } else {
+                    collect_notes(children, notes);
+                }
+            }
+            Block::ParaDiaphane { children, .. } | Block::MonadEnglossis { children, .. } => {
+                collect_notes(children, notes);
+            }
+            _ => {}
+        }
+    }
+}
+
 fn is_front_or_note(block: &Block) -> bool {
     match block {
         Block::Paragraph(inlines) => {
@@ -1156,9 +1353,10 @@ pub fn document_to_fb2_with(
     doc: &Document,
     read_media: &dyn Fn(&str) -> Option<Vec<u8>>,
 ) -> String {
-    // Front matter and notes.
+    // Front matter and notes (note bodies may sit inside a
+    // division; they are gathered from any depth).
     let mut title: Option<&[Inline]> = None;
-    let mut author: Option<&[Inline]> = None;
+    let mut authors: Vec<&[Inline]> = Vec::new();
     let mut annotation: Option<&[Block]> = None;
     let mut notes: Vec<(&str, &[Block])> = Vec::new();
     for block in &doc.blocks {
@@ -1172,28 +1370,20 @@ pub fn document_to_fb2_with(
                 {
                     match symbol.as_str() {
                         "=" if title.is_none() => title = Some(content),
-                        "=:" if author.is_none() => author = Some(content),
+                        "=:" => authors.push(content),
                         _ => {}
                     }
                 }
             }
             Block::Para {
-                symbol,
-                children,
-                ann,
-                ..
-            } => {
-                if symbol == "=\"" && annotation.is_none() {
-                    annotation = Some(children);
-                } else if NOTE_SYMBOLS.contains(&symbol.as_str())
-                    && let Some(o) = &ann.onym
-                {
-                    notes.push((o.as_str(), children));
-                }
+                symbol, children, ..
+            } if symbol == "=\"" && annotation.is_none() => {
+                annotation = Some(children);
             }
             _ => {}
         }
     }
+    collect_notes(&doc.blocks, &mut notes);
     let exporter = Exporter {
         notes: notes
             .iter()
@@ -1205,7 +1395,7 @@ pub fn document_to_fb2_with(
     let mut out = String::from(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<FictionBook xmlns=\"http://www.gribuser.ru/xml/fictionbook/2.0\" xmlns:l=\"http://www.w3.org/1999/xlink\">\n<description>\n<title-info>\n",
     );
-    if let Some(a) = author {
+    for a in authors {
         let mut name = String::new();
         plain(a, &mut name);
         let name = name.trim();

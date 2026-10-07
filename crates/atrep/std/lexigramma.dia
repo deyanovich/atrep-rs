@@ -1,0 +1,114 @@
+@@@!atrep
+
+@@/ lexigramma: the dictionary markup language - a fresh
+@@/ dialektos (not a litogramma extension: an entry is a
+@@/ record, not discourse) built on koine, the common dialect,
+@@/ for inline formatting, quotations, lists, notes and
+@@/ references. Coverage target: TEI Lex-0 equivalence - the
+@@/ strict DARIAH profile of TEI ch. 9 - improved where
+@@/ reproducing major dictionaries (LSJ, OED, the bilinguals)
+@@/ demands it. Where Lex-0 still permits prose-shaped laxity,
+@@/ lexigramma demands structure: kanonizo validates the sense
+@@/ tree and the homograph numbering, and there is no
+@@/ dictScrap.
+@@/
+@@/ Conventions:
+@@/ - Entries are autonym: the headword is the onym, homographs
+@@/   disambiguate by taxis (bank-1, bank-2), and
+@@/   cross-references address entries by name through the
+@@/   koine ref @>(headword) with a typing genos.
+@@/ - Sense taxis is explicit and validated at every depth,
+@@/   numeric; alphabetic display (2a) is the register's
+@@/   rendering of depth two. Sense numbers are citable
+@@/   identity (s.v. δίκη, sense 3).
+@@/ - Presentation (bold headwords, label italics, column
+@@/   layout) belongs entirely to exomorphoses.
+@@/ - An abbreviations list is a koine definition list typed
+@@/   .abbreviations after the title: each item's lemma the
+@@/   abbreviation as the labels print it, its definition the
+@@/   expansion. Labels in the text stay the abbreviation; the
+@@/   list resolves them.
+@@/ - Text shown only in a full reading (a secondary gloss, the
+@@/   expanded translation) is an inline diaphane typed
+@@/   .secondary; a short rendering may leave it out.
+@@/ - Media attached to an entry (a pronunciation recording, an
+@@/   illustration) is the core enmedia block inside the entry.
+
+@@::koine
+
+@=== entry
+@![(taxis)] lemma
+autonym
+grammata
+!@
+@"dictionary entry; the lemma is the headword and registers as the onym, the taxis is the homograph number (per-lemma 1..n); nests for idioms, phrasal verbs and compounds (TEI Lex-0 entry/re)"@
+===@
+
+@=== sense
+@:(taxis) [lemma]
+grammata
+:@
+@"sense; explicit numeric taxis at every depth, validated; nested senses subdivide; the optional lemma is a gloss-title; definition text is the plain paragraphs within (TEI Lex-0 sense/def)"@
+===@
+
+@=== variant
+@=~ grammata ~=@
+@"variant form of the headword: alternate spelling, dialect form, inflected principal part; repeatable, genos-refinable (.spelling, .dialect, .inflection) (TEI Lex-0 form/orth)"@
+===@
+
+@=== pronunciation
+@=% grammata %=@
+@"pronunciation; repeatable, genos-typed by system (.ipa, .respell) (TEI Lex-0 form/pron)"@
+===@
+
+@=== syllabification
+@=- grammata -=@
+@"syllabified or hyphenated headword (TEI Lex-0 form/hyph)"@
+===@
+
+@=== grammar
+@=& grammata &=@
+@"the entry's grammatical line: part of speech, gender, inflectional class; genos-refinable (.pos, .gen, .num) (TEI Lex-0 gramGrp)"@
+===@
+
+@=== grammar-label
+@& grammata &@
+@"inline grammatical label within a sense or form line (pl., fem., intr.); genos-refinable like the grammar line (TEI Lex-0 gram)"@
+===@
+
+@=== etymology
+@=< grammata >=@
+@"etymology: the derivation chain, language names carried as usage labels with .lang (TEI Lex-0 etym)"@
+===@
+
+@=== usage-label
+@[ grammata ]@
+@"usage label, in the brackets dictionaries print them in; genos-typed: .reg register, .dom domain, .geo geography, .time period, .lang language (TEI Lex-0 usg)"@
+===@
+
+@=== equivalent
+@=> grammata <=@
+@"translation equivalent in a bilingual entry; the target language rides a genos (.fr, .de, .grc) (TEI Lex-0 cit[@type=translationEquivalent])"@
+===@
+
+@=== citation
+@~ grammata ~@
+@"inline citation: the quoted illustrative text; the source follows as a koine ref into the source registry, the locus and date as plain text (TEI Lex-0 cit/quote)"@
+===@
+
+@=== citation-block
+@=~~
+grammata
+~~=@
+@"citation paragraph, the OED shape: date, author, work, locus, quotation as one dated block; repeatable within a sense"@
+===@
+
+@=== inflection
+@=* grammata *=@
+@"inflected form of the headword, registered as a lookup key and nothing more: print registers do not display it, the Kindle exomorphosis compiles it into the lookup index; repeatable, typically embedded from a sourced inflection dataset at authoring time (e.g. tools/inflect-ru.py from OpenRussian); typed .sort it is the key the headword is sorted and found under when that differs from the headword as displayed (a headword whose displayed part is not indexed: DSL's braces) (TEI Lex-0 form[type=inflected])"@
+===@
+
+@=== languages
+@=/ grammata /=@
+@"the dictionary's languages as language codes, the index (headword) language first, then the contents language; one line after the title; a monolingual dictionary names one"@
+===@

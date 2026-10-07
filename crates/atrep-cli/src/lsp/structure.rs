@@ -17,6 +17,7 @@ use lsp_types::{
     DocumentSymbol, FoldingRange, Hover, HoverContents, MarkupContent, MarkupKind, Position, Range,
     SelectionRange, SymbolKind,
 };
+use unicode_normalization::UnicodeNormalization;
 
 /// A parsed document's structure, ready to answer requests.
 pub struct Structure {
@@ -27,13 +28,16 @@ pub struct Structure {
 
 /// Parse the buffer and assemble its outline. `None` for
 /// definition sources and for documents that do not parse (the
-/// diagnostics channel already reports the error).
+/// diagnostics channel already reports the error). The parse sees
+/// the NFC form, as `check` does; lines are kept as the buffer
+/// has them, since positions refer to it.
 pub fn analyze(source: &str, path: &Path) -> Option<Structure> {
     if atrep::is_definition_source(source) {
         return None;
     }
-    let (doc, blocks, dial) = atrep::parser::parse_document_outline(source, path).ok()?;
-    let outline = outline::assemble(&doc, blocks, source, &dial);
+    let normalized: String = source.nfc().collect();
+    let (doc, blocks, dial) = atrep::parser::parse_document_outline(&normalized, path).ok()?;
+    let outline = outline::assemble(&doc, blocks, &normalized, &dial);
     Some(Structure {
         outline,
         dial,
@@ -95,6 +99,9 @@ impl Structure {
         // block's depth is not deeper than its own.
         let mut stack: Vec<(usize, DocumentSymbol)> = Vec::new();
         let blocks = &self.outline.blocks;
+        // Computed once: it costs blocks x onyms, and every block
+        // consults it.
+        let standalone = self.standalone_onyms();
         for (i, b) in blocks.iter().enumerate() {
             while let Some((d, _)) = stack.last()
                 && *d >= b.depth
@@ -105,7 +112,7 @@ impl Structure {
             let mut sym = self.block_symbol(b);
             // Point items owned by this block: those on its lines
             // that no deeper block claims.
-            let children = self.point_children(b, &blocks[i + 1..]);
+            let children = self.point_children(b, &blocks[i + 1..], &standalone);
             if !children.is_empty() {
                 sym.children = Some(children);
             }
@@ -165,11 +172,13 @@ impl Structure {
 
     /// Milestones and standalone anchors on `b`'s lines that fall
     /// inside no deeper block (`rest` = the blocks after `b` in
-    /// document order; the nested ones come first).
+    /// document order; the nested ones come first; `standalone` =
+    /// `standalone_onyms()`, computed by the caller).
     fn point_children(
         &self,
         b: &OutlineBlockNamed,
         rest: &[OutlineBlockNamed],
+        standalone: &[(&str, usize)],
     ) -> Vec<DocumentSymbol> {
         let claimed = |line: usize| -> bool {
             rest.iter()
@@ -182,7 +191,7 @@ impl Structure {
                 out.push(self.point_symbol(&m.key, m.line, SymbolKind::KEY));
             }
         }
-        for o in self.standalone_onyms() {
+        for o in standalone {
             if o.1 >= b.start && o.1 <= b.end && !claimed(o.1) {
                 out.push(self.point_symbol(o.0, o.1, SymbolKind::CONSTANT));
             }

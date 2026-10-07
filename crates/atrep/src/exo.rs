@@ -119,6 +119,11 @@ const STD_EXOS: &[(&str, &str, &str)] = &[
         "md",
         include_str!("../std/at-markdown.md.exo"),
     ),
+    (
+        "at-markdown",
+        "html",
+        include_str!("../std/at-markdown.html.exo"),
+    ),
     ("at-djot", "dj", include_str!("../std/at-djot.dj.exo")),
     (
         "at-docbook",
@@ -177,6 +182,16 @@ const STD_EXOS: &[(&str, &str, &str)] = &[
         "bibliogramma",
         "bibtex",
         include_str!("../std/bibliogramma.bibtex.exo"),
+    ),
+    (
+        "lexigramma",
+        "latex",
+        include_str!("../std/lexigramma.latex.exo"),
+    ),
+    (
+        "lexigramma",
+        "kindle",
+        include_str!("../std/lexigramma.kindle.exo"),
     ),
 ];
 
@@ -305,6 +320,24 @@ struct Rule {
     template: Vec<Seg>,
     /// `*row` rules: the declared cell separator.
     separator: Option<char>,
+    /// The monosim symbols the template names through sim-name
+    /// slots (gate slots included), collected once at parse time.
+    named: Vec<String>,
+}
+
+/// Collect the monosim symbols `segs` names through sim-name
+/// slots.
+fn named_symbols(segs: &[Seg], out: &mut Vec<String>) {
+    for seg in segs {
+        match seg {
+            Seg::Slot {
+                name: SlotName::Named(symbol),
+                ..
+            } => out.push(symbol.clone()),
+            Seg::Group(inner) => named_symbols(inner, out),
+            _ => {}
+        }
+    }
 }
 
 /// A parsed exomorphosis definition.
@@ -487,6 +520,11 @@ fn filter_remap(mut exo: Exo, kind: &InheritKind) -> Exo {
                             PatternKey::Sim(_) => PatternKey::Sim(alias.clone()),
                             PatternKey::Solo(_) => PatternKey::Solo(alias.clone()),
                             PatternKey::DeixisKey(_) => PatternKey::DeixisKey(alias.clone()),
+                            PatternKey::Row(_) => PatternKey::Row(alias.clone()),
+                            PatternKey::Cell(_) => PatternKey::Cell(alias.clone()),
+                            PatternKey::TermKey(_, term) => {
+                                PatternKey::TermKey(alias.clone(), term)
+                            }
                             structural => structural,
                         };
                         (key, rules)
@@ -714,10 +752,13 @@ pub fn parse_exo_source(
                     format!("duplicate pattern `{pattern_text}`"),
                 ));
             }
+            let mut named = Vec::new();
+            named_symbols(&template, &mut named);
             variants.push(Rule {
                 genoses,
                 template,
                 separator,
+                named,
             });
             i = end + 1;
             continue;
@@ -1085,9 +1126,15 @@ static HEADER_GENOS: std::sync::LazyLock<String> =
     std::sync::LazyLock::new(|| "header".to_string());
 
 /// Split a line's inlines on a separator character occurring in
-/// text nodes; leading/trailing whitespace of each cell trims,
-/// empty edge cells (from leading/trailing separators) drop.
+/// text nodes; leading/trailing whitespace of each cell trims. A
+/// separator opening or closing the line is a frame, not a cell
+/// boundary: the one empty cell it produces drops, so that
+/// `|  | Iliad |` keeps its empty first column.
 fn split_cells(line: &[Inline], separator: char) -> Vec<Vec<Inline>> {
+    let framed_start =
+        matches!(line.first(), Some(Inline::Text(t)) if t.trim_start().starts_with(separator));
+    let framed_end =
+        matches!(line.last(), Some(Inline::Text(t)) if t.trim_end().ends_with(separator));
     let mut cells: Vec<Vec<Inline>> = vec![Vec::new()];
     for inline in line {
         match inline {
@@ -1124,10 +1171,10 @@ fn split_cells(line: &[Inline], separator: char) -> Vec<Vec<Inline>> {
             }
         }
     }
-    while cells.first().is_some_and(Vec::is_empty) {
+    if framed_start && cells.first().is_some_and(Vec::is_empty) {
         cells.remove(0);
     }
-    while cells.last().is_some_and(Vec::is_empty) {
+    if framed_end && cells.len() > 1 && cells.last().is_some_and(Vec::is_empty) {
         cells.pop();
     }
     cells
@@ -1230,35 +1277,18 @@ impl Renderer<'_> {
         out
     }
 
-    /// The monosim symbols a template names through sim-name
-    /// slots (gate slots included).
-    fn named_symbols<'s>(segs: &'s [Seg], out: &mut Vec<&'s str>) {
-        for seg in segs {
-            match seg {
-                Seg::Slot {
-                    name: SlotName::Named(symbol),
-                    ..
-                } => out.push(symbol),
-                Seg::Group(inner) => Self::named_symbols(inner, out),
-                _ => {}
-            }
-        }
-    }
-
     /// Render the inline content a rule's node holds directly. A
     /// monosim the rule names through a sim-name slot is taken
     /// over by the rule: the host emits its parameter, so the
     /// monosim's own rule does not render it a second time.
     fn render_held(&self, rule: &Rule, inlines: &[Inline]) -> Result<String> {
-        let mut named = Vec::new();
-        Self::named_symbols(&rule.template, &mut named);
-        if named.is_empty() {
+        if rule.named.is_empty() {
             return self.render_inlines(inlines);
         }
         let mut out = String::new();
         for inline in inlines {
             if let Inline::Monosim { symbol, .. } = inline
-                && named.contains(&symbol.as_str())
+                && rule.named.contains(symbol)
             {
                 continue;
             }
@@ -1407,13 +1437,15 @@ impl Renderer<'_> {
             }
             saw_dash
         };
-        let header_rows = lines.iter().position(|l| is_header_rule(l));
+        // The first dash line is the header rule; a later line
+        // of dashes is a row of dash cells.
+        let header_rule = lines.iter().position(|l| is_header_rule(l));
         let mut out = Vec::new();
         for (idx, line) in lines.iter().enumerate() {
-            if is_header_rule(line) {
+            if header_rule == Some(idx) {
                 continue;
             }
-            let header = header_rows.is_some_and(|h| idx < h);
+            let header = header_rule.is_some_and(|h| idx < h);
             let genoses: &[String] = if header {
                 std::slice::from_ref(&HEADER_GENOS)
             } else {
@@ -1678,6 +1710,9 @@ impl Renderer<'_> {
                         raw_depth: std::cell::Cell::new(0),
                     };
                     let content = inner.render_blocks(children)?;
+                    // Whatever the inner renderer routed to its
+                    // own auxiliary outputs travels up with it.
+                    self.aux.borrow_mut().extend(inner.aux.into_inner());
                     self.aux
                         .borrow_mut()
                         .push((dialect.clone(), aux_target, content));
@@ -1692,7 +1727,9 @@ impl Renderer<'_> {
                         aux: std::cell::RefCell::new(Vec::new()),
                         raw_depth: std::cell::Cell::new(self.raw_depth.get()),
                     };
-                    inner.render_blocks(children)?
+                    let content = inner.render_blocks(children)?;
+                    self.aux.borrow_mut().extend(inner.aux.into_inner());
+                    content
                 };
                 let slots = Slots {
                     grammata: Some(grammata),

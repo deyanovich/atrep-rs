@@ -13,12 +13,17 @@ use crate::dialektos::{self, Dialektos, NamedLookup, Optionality, SimDef, SimFor
 use crate::error::{Error, ErrorKind, Location, Result};
 use crate::sigil::{self, Sigil};
 
+/// Nesting bound on blocks and inline simmeres together: the
+/// parser recurses once per level, and a document nested past this
+/// is rejected with a syntax error rather than a stack overflow.
+const MAX_NESTING: usize = 256;
+
 fn parse_inner(
     source: &str,
     path: &Path,
 ) -> Result<(Document, Vec<crate::outline::OutlineBlock>, Dialektos)> {
     let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
-    let mut lines: Vec<String> = source
+    let mut lines: Vec<String> = crate::strip_bom(source)
         .lines()
         .map(|l| l.trim_end_matches('\r').to_string())
         .collect();
@@ -153,17 +158,18 @@ struct SimRef<'a> {
 /// Resolve the text after a monograph sigil as a sim reference:
 /// brachygraphic (longest symbol match) or plerographic
 /// (`{name}`). `Ok(None)` when no symbol matches; an unknown or
-/// ambiguous braced name is an error.
+/// ambiguous braced name is an error. `loc` is computed only for
+/// an error (the scanner's location walk is linear in the text).
 fn resolve_sim_ref<'a>(
     dial: &'a Dialektos,
     text: &str,
-    loc: Location,
+    loc: impl FnOnce() -> Location,
 ) -> Result<Option<SimRef<'a>>> {
     if let Some(rest) = text.strip_prefix('{') {
         let Some(end) = rest.find('}') else {
             return Err(Error::at(
                 ErrorKind::Syntax("unterminated plerographic name reference".into()),
-                loc,
+                loc(),
             ));
         };
         let name = &rest[..end];
@@ -176,14 +182,14 @@ fn resolve_sim_ref<'a>(
             })),
             NamedLookup::None => Err(Error::at(
                 ErrorKind::UndefinedSim(format!("{{{name}}}")),
-                loc,
+                loc(),
             )),
             NamedLookup::Ambiguous => Err(Error::at(
                 ErrorKind::Syntax(format!(
                     "sim name `{name}` is duplicated in this dialektos and \
                      not plerographically addressable"
                 )),
-                loc,
+                loc(),
             )),
         };
     }
@@ -207,6 +213,11 @@ fn deixis_not_taxis(def: &SimDef, rest: &str) -> bool {
         return false;
     };
     let group = &inner[..end];
+    // An empty group is never a deixis (no onym is empty): it is
+    // an auto-taxis, which a taxis-less sim then rejects as such.
+    if group.is_empty() {
+        return false;
+    }
     let taxis_supported = !matches!(
         def.form,
         SimForm::Para {
@@ -290,7 +301,14 @@ impl Parser {
 
     fn parse_blocks(&mut self, dial: &Dialektos, closer: Option<&str>) -> Result<Vec<Block>> {
         self.depth += 1;
-        let result = self.parse_blocks_inner(dial, closer);
+        let result = if self.depth > MAX_NESTING {
+            Err(Error::at(
+                ErrorKind::Syntax(format!("nesting exceeds {MAX_NESTING} levels")),
+                self.loc(self.idx.saturating_sub(1)),
+            ))
+        } else {
+            self.parse_blocks_inner(dial, closer)
+        };
         self.depth -= 1;
         result
     }
@@ -348,11 +366,11 @@ impl Parser {
                 if after.starts_with('(') {
                     return Ok(ParaStep::Text); // standalone onym in a paragraph
                 }
-                match resolve_sim_ref(dial, &after, self.loc(self.idx))? {
+                match resolve_sim_ref(dial, &after, || self.loc(self.idx))? {
                     Some(r) if matches!(r.def.form, SimForm::Para { .. }) => {
                         // A group after the reference that cannot be
-                        // a taxis (any group on a taxis-less sim; a
-                        // non-empty non-numeric group otherwise)
+                        // a taxis (a non-empty group on a taxis-less
+                        // sim; a non-empty non-numeric group otherwise)
                         // means this line starts an ordinary
                         // paragraph containing a deixis.
                         let rest = &after[r.bytes..];
@@ -615,11 +633,8 @@ impl Parser {
                 if !current.is_empty() {
                     strophes.push(Strophe(std::mem::take(&mut current)));
                 }
-            } else {
-                // Leading and internal whitespace is authorial
-                // content in a stichos; only trailing whitespace
-                // is dropped.
-                current.push(self.scan_line(dial, raw.trim_end(), self.idx)?);
+            } else if let Some(line) = self.scan_stichos(dial, &raw, self.idx)? {
+                current.push(line);
             }
             self.idx += 1;
         }
@@ -641,6 +656,27 @@ impl Parser {
             bracket_matching: true,
             ann,
         })
+    }
+
+    /// Scan a stichos line. Leading and internal whitespace is
+    /// authorial content; only trailing whitespace is dropped,
+    /// including what an end-of-line comment leaves behind. A
+    /// line that is only a comment is no stichos at all (`None`):
+    /// pushed empty, it would serialize as a strophe break.
+    fn scan_stichos(
+        &self,
+        dial: &Dialektos,
+        raw: &str,
+        line: usize,
+    ) -> Result<Option<Vec<Inline>>> {
+        let mut inlines = self.scan_line(dial, raw.trim_end(), line)?;
+        if let Some(Inline::Text(t)) = inlines.last_mut() {
+            t.truncate(t.trim_end().len());
+            if t.is_empty() {
+                inlines.pop();
+            }
+        }
+        Ok((!inlines.is_empty()).then_some(inlines))
     }
 
     /// Consume the current line as a para/stichoi episim line:
@@ -797,9 +833,8 @@ impl Parser {
                     if !current.is_empty() {
                         strophes.push(Strophe(std::mem::take(&mut current)));
                     }
-                } else {
-                    // Whitespace preservation as in the core form.
-                    current.push(self.scan_line(dial, raw.trim_end(), self.idx)?);
+                } else if let Some(line) = self.scan_stichos(dial, &raw, self.idx)? {
+                    current.push(line);
                 }
                 self.idx += 1;
             }
@@ -859,6 +894,7 @@ impl Parser {
     fn collect_paragraph(&mut self, dial: &Dialektos, closer: Option<&str>) -> Result<Block> {
         let start = self.idx;
         let mut collected: Vec<String> = Vec::new();
+        let mut indents: Vec<usize> = Vec::new();
         while self.idx < self.lines.len() {
             let line = self.lines[self.idx].trim_start().to_string();
             if line.is_empty() {
@@ -872,11 +908,12 @@ impl Parser {
             if !collected.is_empty() && self.is_block_start(dial, &line)? {
                 break;
             }
+            indents.push(self.lines[self.idx].chars().count() - line.chars().count());
             collected.push(line);
             self.idx += 1;
         }
         let text = collected.join("\n");
-        let inlines = self.scan_line(dial, &text, start)?;
+        let inlines = self.scan_text(dial, &text, start, indents)?;
         Ok(Block::Paragraph(inlines))
     }
 
@@ -893,21 +930,38 @@ impl Parser {
             1 => {
                 // Lookahead only: braced-name errors surface in the
                 // real parse, never here.
-                !after.starts_with('(')
-                    && matches!(
-                        resolve_sim_ref(dial, &after, self.loc(self.idx)),
-                        Ok(Some(r)) if matches!(r.def.form, SimForm::Para { .. })
-                    )
+                if after.starts_with('(') {
+                    return Ok(false);
+                }
+                match resolve_sim_ref(dial, &after, || self.loc(self.idx)) {
+                    // As in step_para: a group that cannot be a
+                    // taxis makes this a paragraph line carrying
+                    // a deixis.
+                    Ok(Some(r)) if matches!(r.def.form, SimForm::Para { .. }) => {
+                        !deixis_not_taxis(r.def, &after[r.bytes..])
+                    }
+                    _ => false,
+                }
             }
             3 => {
                 let tri = self.tri();
                 match after.chars().next() {
                     Some('/') => {
-                        // Only a standalone comment (close at line end
-                        // or on a later line) breaks the paragraph.
+                        // Only a standalone comment breaks the
+                        // paragraph: closed at the end of this line,
+                        // or on a later line with nothing after the
+                        // close (as step_trigraph decides it). An
+                        // unclosed comment errors in the real parse.
                         let close = format!("/{tri}");
                         let rest = after[1..].trim();
-                        !rest.contains(close.as_str()) || rest.ends_with(close.as_str())
+                        if rest.contains(close.as_str()) {
+                            return Ok(rest.ends_with(close.as_str()));
+                        }
+                        self.lines[self.idx + 1..]
+                            .iter()
+                            .map(|l| l.trim())
+                            .find(|l| l.contains(close.as_str()))
+                            .is_none_or(|l| l.ends_with(close.as_str()))
                     }
                     Some('!' | '"' | '.' | ':' | '=' | '(' | '+') => true,
                     _ => false,
@@ -939,12 +993,26 @@ impl Parser {
 
     /// Scan a single-line (or paragraph) text into inlines.
     fn scan_line(&self, dial: &Dialektos, text: &str, line: usize) -> Result<Vec<Inline>> {
+        self.scan_text(dial, text, line, Vec::new())
+    }
+
+    /// [`scan_line`] for text whose lines were trimmed of
+    /// `indents` leading characters each (see [`Scanner::indents`]).
+    fn scan_text(
+        &self,
+        dial: &Dialektos,
+        text: &str,
+        line: usize,
+        indents: Vec<usize>,
+    ) -> Result<Vec<Inline>> {
         let mut scanner = Scanner {
             chars: text.chars().collect(),
             pos: 0,
             sigil: self.sigil,
             file: self.file.clone(),
             base_line: line,
+            depth: self.depth,
+            indents,
         };
         let inlines = scanner.scan(dial, None)?;
         if scanner.pos < scanner.chars.len() {
@@ -963,6 +1031,8 @@ impl Parser {
             sigil: self.sigil,
             file: self.file.clone(),
             base_line: line,
+            depth: self.depth,
+            indents: Vec::new(),
         };
         let ann = scanner.scan_annotations()?;
         let rest: String = scanner.chars[scanner.pos..].iter().collect();
@@ -1027,20 +1097,30 @@ struct Scanner {
     sigil: Sigil,
     file: PathBuf,
     base_line: usize,
+    /// Nesting level, continuing the parser's block depth; tracks
+    /// scan recursion.
+    depth: usize,
+    /// Characters trimmed from the start of each line of the text
+    /// (a paragraph's indentation), so that columns report source
+    /// positions; empty for a single line scanned as written.
+    indents: Vec<usize>,
 }
 
 impl Scanner {
     fn loc(&self) -> Location {
         let mut line = self.base_line + 1;
         let mut col = 1;
+        let mut row = 0;
         for &c in &self.chars[..self.pos.min(self.chars.len())] {
             if c == '\n' {
                 line += 1;
                 col = 1;
+                row += 1;
             } else {
                 col += 1;
             }
         }
+        col += self.indents.get(row).copied().unwrap_or(0);
         Location {
             file: self.file.clone(),
             line,
@@ -1104,6 +1184,20 @@ impl Scanner {
     }
 
     fn scan(&mut self, dial: &Dialektos, terminator: Option<&str>) -> Result<Vec<Inline>> {
+        self.depth += 1;
+        let result = if self.depth > MAX_NESTING {
+            Err(Error::at(
+                ErrorKind::Syntax(format!("nesting exceeds {MAX_NESTING} levels")),
+                self.loc(),
+            ))
+        } else {
+            self.scan_inner(dial, terminator)
+        };
+        self.depth -= 1;
+        result
+    }
+
+    fn scan_inner(&mut self, dial: &Dialektos, terminator: Option<&str>) -> Result<Vec<Inline>> {
         let sig = self.sigil.active();
         let inact = self.sigil.inactive();
         let mut inlines: Vec<Inline> = Vec::new();
@@ -1223,8 +1317,23 @@ impl Scanner {
                         inlines.push(Inline::OnymAnchor(onym));
                         continue;
                     }
-                    let rest: String = self.chars[self.pos + 1..].iter().collect();
-                    let Some(r) = resolve_sim_ref(dial, &rest, self.loc())? else {
+                    // Only the reference itself resolves it: a
+                    // braced name up to its closer, or the run of
+                    // symbolic characters (not the whole remainder,
+                    // which would make the scan quadratic).
+                    let tail = &self.chars[self.pos + 1..];
+                    let rest: String = if tail.first() == Some(&'{') {
+                        let end = tail
+                            .iter()
+                            .position(|&c| c == '}')
+                            .map_or(tail.len(), |i| i + 1);
+                        tail[..end].iter().collect()
+                    } else {
+                        tail.iter()
+                            .take_while(|&&c| sigil::is_symbolic(c))
+                            .collect()
+                    };
+                    let Some(r) = resolve_sim_ref(dial, &rest, || self.loc())? else {
                         let sym: String = rest
                             .chars()
                             .take_while(|&c| sigil::is_symbolic(c))
@@ -1516,11 +1625,14 @@ impl Scanner {
             }
             ann.onym = Some(onym);
         }
-        while self.peek(0) == Some('.') && self.peek(1).is_some_and(sigil::is_genos_start) {
+        // Any letter after the `.` opens a genos, and the whole
+        // identifier-shaped run is taken, so that a malformed one
+        // (`.Bad`) is reported as such instead of passing as text.
+        while self.peek(0) == Some('.') && self.peek(1).is_some_and(char::is_alphabetic) {
             self.pos += 1;
             let mut genos = String::new();
             while let Some(c) = self.peek(0) {
-                if sigil::is_genos_continue(c) {
+                if c == '-' || c.is_alphanumeric() {
                     genos.push(c);
                     self.pos += 1;
                 } else {

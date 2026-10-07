@@ -640,7 +640,12 @@ History of the Decline and Fall of the Roman Empire</title>.
         "{atd}"
     );
     assert!(!atd.contains("src"), "{atd}");
-    assert!(!atd.contains("without an id"), "{atd}");
+    // An entry without an id cannot be cited, but it keeps its
+    // place under a synthesized key (its ordinal).
+    assert!(
+        atd.contains("@& bibl-6\n@: note\nAn entry without an id cannot be cited.\n:@\n&@.misc"),
+        "{atd}"
+    );
     // The import is a valid litogramma document.
     atrep::check_source(&atd, std::path::Path::new("<memory>.atd")).unwrap();
 }
@@ -708,7 +713,7 @@ Rome fell slowly @@.@>[(gibbon1776)ch. 15.@@ and Persia was vast @@.@>[(herodotu
     assert!(
         x.assets
             .iter()
-            .any(|(_, body)| body.contains(r"\newcommand\ltcitespan[2]{\cite[#2]{#1}}"))
+            .any(|(_, body)| body.contains(r"\else\cite[#2]{#1}\fi"))
     );
 
     let route = morph::resolve_route(&tmp, "litogramma", "at-tei").unwrap();
