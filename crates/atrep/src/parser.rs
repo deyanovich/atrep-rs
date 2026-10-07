@@ -734,6 +734,9 @@ impl Parser {
             lemma: lemma_opt,
             hypograph: hypo_opt,
             stichoi: stichoi_grammata,
+            rows: _,
+            cells: _,
+            header: _,
         } = def.form
         else {
             unreachable!()

@@ -277,6 +277,10 @@ enum PatternKey {
     Row(String),
     /// `*cell <symbol>`: one cell of a row.
     Cell(String),
+    /// `<symbol> in <enclosing>`: the rule for a sim when the
+    /// nearest enclosing para-simmere is the given sim (a cell
+    /// inside a header row renders as a header cell).
+    Within(String, String),
     /// `<symbol>(<term>)`: a variant for nodes of a
     /// vocabulary-lemma sim whose canonical lemma is the term.
     TermKey(String, String),
@@ -293,6 +297,7 @@ impl std::fmt::Display for PatternKey {
             PatternKey::DeixisKey(s) => write!(f, "*deixis {s}"),
             PatternKey::Row(s) => write!(f, "*row {s}"),
             PatternKey::Cell(s) => write!(f, "*cell {s}"),
+            PatternKey::Within(s, p) => write!(f, "{s} in {p}"),
             PatternKey::TermKey(s, t) => write!(f, "{s}({t})"),
         }
     }
@@ -488,6 +493,7 @@ fn key_on_symbols(key: &PatternKey, symbols: &[String]) -> bool {
         | PatternKey::DeixisKey(s)
         | PatternKey::Row(s)
         | PatternKey::Cell(s)
+        | PatternKey::Within(s, _)
         | PatternKey::TermKey(s, _) => symbols.iter().any(|x| x == s),
         PatternKey::Structural(_) | PatternKey::MilestoneKey(_) => false,
     }
@@ -522,6 +528,7 @@ fn filter_remap(mut exo: Exo, kind: &InheritKind) -> Exo {
                             PatternKey::DeixisKey(_) => PatternKey::DeixisKey(alias.clone()),
                             PatternKey::Row(_) => PatternKey::Row(alias.clone()),
                             PatternKey::Cell(_) => PatternKey::Cell(alias.clone()),
+                            PatternKey::Within(_, p) => PatternKey::Within(alias.clone(), p),
                             PatternKey::TermKey(_, term) => {
                                 PatternKey::TermKey(alias.clone(), term)
                             }
@@ -846,6 +853,18 @@ fn parse_pattern(
             }
             (PatternKey::Structural(name), after.to_string())
         }
+    } else if let Some((head, enclosing)) = text.split_once(" in ")
+        && head.starts_with('*')
+    {
+        // `*paragraph in +:`: a structural pattern inside a sim.
+        let name = head.trim_start_matches('*').trim().to_string();
+        if !STRUCTURAL_NAMES.contains(&name.as_str()) {
+            return Err(format!("unknown structural pattern `*{name}`"));
+        }
+        (
+            PatternKey::Structural(name),
+            format!(" in {}", enclosing.trim()),
+        )
     } else {
         // Longest defined symbol of the source dialektos.
         let Some(def) = dial.longest_match(text) else {
@@ -873,6 +892,35 @@ fn parse_pattern(
         } else {
             (PatternKey::Sim(symbol), after)
         }
+    };
+    // `<symbol>[.genos...] in <enclosing>`: the enclosing sim's
+    // symbol closes the pattern.
+    let (rest, key) = match rest.split_once(" in ") {
+        Some((before, enclosing)) => {
+            let enclosing = enclosing.trim();
+            // A structural pattern keys by its `*name`; a sim
+            // pattern by its symbol (which never starts with `*`
+            // followed by a letter).
+            let symbol = match key {
+                PatternKey::Sim(symbol) => symbol,
+                PatternKey::Structural(name) => format!("*{name}"),
+                _ => return Err("`in` applies to a sim or structural pattern".to_string()),
+            };
+            let Some(def) = dial.longest_match(enclosing) else {
+                return Err(format!(
+                    "`in {enclosing}` does not name a defined sim symbol of dialektos `{}`",
+                    dial.id
+                ));
+            };
+            if def.symbol != enclosing {
+                return Err(format!("`in {enclosing}`: trailing text after the symbol"));
+            }
+            (
+                before.to_string(),
+                PatternKey::Within(symbol, def.symbol.clone()),
+            )
+        }
+        None => (rest, key),
     };
     let mut genoses = Vec::new();
     let mut rest = rest.as_str();
@@ -1075,6 +1123,7 @@ pub fn render_with_aux(doc: &Document, exo: &Exo, dir: &Path) -> Result<(String,
         dir,
         aux: std::cell::RefCell::new(Vec::new()),
         raw_depth: std::cell::Cell::new(0),
+        enclosing: std::cell::RefCell::new(Vec::new()),
     };
     let grammata = r.render_blocks(&doc.blocks)?;
     let main = match r.find_rule(&PatternKey::Structural("document".into()), &[])? {
@@ -1191,6 +1240,9 @@ struct Renderer<'a> {
     /// renders unescaped — math and verbatim-adjacent targets
     /// (LaTeX) need the source characters back.
     raw_depth: std::cell::Cell<u32>,
+    /// The para-simmeres being rendered, outermost first, for the
+    /// `<symbol> in <enclosing>` rules.
+    enclosing: std::cell::RefCell<Vec<String>>,
 }
 
 impl Renderer<'_> {
@@ -1519,9 +1571,23 @@ impl Renderer<'_> {
                     };
                     return self.fill(rule, &slots);
                 }
+                // `*paragraph in <sim>` wins inside that sim.
+                let within = match self.enclosing.borrow().last() {
+                    Some(parent) => self.find_rule(
+                        &PatternKey::Within("*paragraph".to_string(), parent.clone()),
+                        &[],
+                    )?,
+                    None => None,
+                };
                 let key = PatternKey::Structural("paragraph".into());
-                let Some(rule) = self.find_rule(&key, &[])? else {
-                    return Err(unhandled("*paragraph"));
+                let rule = match within {
+                    Some(rule) => rule,
+                    None => {
+                        let Some(rule) = self.find_rule(&key, &[])? else {
+                            return Err(unhandled("*paragraph"));
+                        };
+                        rule
+                    }
                 };
                 let slots = Slots {
                     grammata: Some(self.render_held(rule, inlines)?),
@@ -1548,7 +1614,16 @@ impl Renderer<'_> {
                     )?,
                     _ => None,
                 };
-                let rule = match term_rule {
+                // A rule for this sim inside its enclosing sim
+                // wins over the plain rule.
+                let within_rule = match self.enclosing.borrow().last() {
+                    Some(parent) => self.find_rule(
+                        &PatternKey::Within(symbol.clone(), parent.clone()),
+                        &ann.genoses,
+                    )?,
+                    None => None,
+                };
+                let rule = match term_rule.or(within_rule) {
                     Some(rule) => rule,
                     None => {
                         let key = PatternKey::Sim(symbol.clone());
@@ -1558,13 +1633,51 @@ impl Renderer<'_> {
                         rule
                     }
                 };
+                // The node's own inlines for sim-name slots: the
+                // lemma, and the monosims that open its grammata
+                // (first in the first paragraph) — the annotation
+                // idiom for a block. A rule that names them takes
+                // them over, so the paragraph renders without them.
+                let mut own: Vec<Inline> = lemma.clone();
+                let mut held: std::borrow::Cow<[Block]> = std::borrow::Cow::Borrowed(children);
+                if let Some(Block::Paragraph(first)) = children.first() {
+                    let leading = first
+                        .iter()
+                        .take_while(|i| matches!(i, Inline::Monosim { .. }))
+                        .count();
+                    own.extend(first[..leading].iter().cloned());
+                    let named = &rule.named;
+                    if leading > 0 && !named.is_empty() {
+                        let mut copy = children.to_vec();
+                        if let Block::Paragraph(p) = &mut copy[0] {
+                            p.retain(|i| {
+                                !matches!(i, Inline::Monosim { symbol, .. } if named.contains(symbol))
+                            });
+                            // The space that followed the monosims
+                            // goes with them.
+                            if let Some(Inline::Text(t)) = p.first_mut() {
+                                *t = t.trim_start().to_string();
+                                if t.is_empty() {
+                                    p.remove(0);
+                                }
+                            }
+                        }
+                        if matches!(&copy[0], Block::Paragraph(p) if p.is_empty()) {
+                            copy.remove(0);
+                        }
+                        held = std::borrow::Cow::Owned(copy);
+                    }
+                }
+                self.enclosing.borrow_mut().push(symbol.clone());
+                let grammata = if Self::wants_raw(&rule.template, &SlotName::Grammata) {
+                    self.render_raw(|| self.render_blocks(&held))
+                } else {
+                    self.render_blocks(&held)
+                };
+                self.enclosing.borrow_mut().pop();
                 let slots = Slots {
                     lemma: Some(self.render_inlines_for(rule, SlotName::Lemma, lemma)?),
-                    grammata: Some(if Self::wants_raw(&rule.template, &SlotName::Grammata) {
-                        self.render_raw(|| self.render_blocks(children))?
-                    } else {
-                        self.render_blocks(children)?
-                    }),
+                    grammata: Some(grammata?),
                     hypograph: Some(self.render_inlines_for(
                         rule,
                         SlotName::Hypograph,
@@ -1574,7 +1687,7 @@ impl Renderer<'_> {
                         Some(Taxis::Explicit(n)) => n.to_string(),
                         _ => String::new(),
                     }),
-                    inlines: Some(lemma),
+                    inlines: Some(&own),
                     onym: Some(ann.onym.as_deref().unwrap_or("")),
                     genoses: Some(ann.genoses.join(" ")),
                     ..Slots::default()
@@ -1708,6 +1821,7 @@ impl Renderer<'_> {
                         dir: self.dir,
                         aux: std::cell::RefCell::new(Vec::new()),
                         raw_depth: std::cell::Cell::new(0),
+                        enclosing: std::cell::RefCell::new(Vec::new()),
                     };
                     let content = inner.render_blocks(children)?;
                     // Whatever the inner renderer routed to its
@@ -1726,6 +1840,7 @@ impl Renderer<'_> {
                         dir: self.dir,
                         aux: std::cell::RefCell::new(Vec::new()),
                         raw_depth: std::cell::Cell::new(self.raw_depth.get()),
+                        enclosing: std::cell::RefCell::new(Vec::new()),
                     };
                     let content = inner.render_blocks(children)?;
                     self.aux.borrow_mut().extend(inner.aux.into_inner());

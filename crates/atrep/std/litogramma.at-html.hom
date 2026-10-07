@@ -67,7 +67,14 @@
 
 @@/ Figures and tables.
 @<# < !
-@:: + ~ .table
+@@/ at-html has no table family yet; a table and its rows, cells
+@@/ and spans drop (recorded loss, as into at-docbook).
+@-- +
+@-- +-
+@-- +=
+@-- +:
+@-- +>
+@-- +_
 
 @@/ Containers.
 @<# _ !

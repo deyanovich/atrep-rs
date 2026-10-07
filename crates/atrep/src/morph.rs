@@ -1444,6 +1444,9 @@ fn forms_compatible(src: &SimForm, tgt: &SimForm, lossy: bool) -> std::result::R
                 lemma: sl,
                 hypograph: sh,
                 stichoi: ss,
+                rows: sr,
+                cells: sc,
+                header: shd,
             },
             SimForm::Para {
                 autonym: _,
@@ -1451,10 +1454,16 @@ fn forms_compatible(src: &SimForm, tgt: &SimForm, lossy: bool) -> std::result::R
                 lemma: tl,
                 hypograph: th,
                 stichoi: ts,
+                rows: tr,
+                cells: tc,
+                header: thd,
             },
         ) => {
             if ss != ts {
                 return Err("stichoi-form flag differs".to_string());
+            }
+            if sr != tr || sc != tc || shd != thd {
+                return Err("rows/cells-form flag differs".to_string());
             }
             component("taxis", *st, *tt)?;
             component("lemma", *sl, *tl)?;

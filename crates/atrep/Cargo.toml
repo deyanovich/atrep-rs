@@ -13,9 +13,11 @@ repository.workspace = true
 [features]
 # net: remote resource fetching (ureq). bundle: .atk.tar.gz
 # archive output (tar/flate2). Disable both for wasm targets.
-default = ["net", "bundle"]
+default = ["net", "bundle", "docx"]
 net = ["dep:ureq"]
 bundle = ["dep:tar", "dep:flate2"]
+# docx: Word import/export (the OPC zip container).
+docx = ["dep:zip"]
 
 [dependencies]
 unicode-normalization.workspace = true
@@ -23,5 +25,6 @@ sha2.workspace = true
 ureq = { workspace = true, optional = true }
 tar = { workspace = true, optional = true }
 flate2 = { workspace = true, optional = true }
+zip = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true

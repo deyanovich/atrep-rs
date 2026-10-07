@@ -45,6 +45,17 @@ pub enum SimForm {
         /// (declared with the `autonym` property keyword;
         /// kanonizo computes and pins it).
         autonym: bool,
+        /// Grammata are rows (declared with the `rows` ostensive
+        /// keyword): the children are the row sim declared under
+        /// this one, and a plain paragraph of pipe-separated lines
+        /// is the shorthand kanonizo expands into rows.
+        rows: bool,
+        /// Grammata are cells (declared with the `cells` keyword):
+        /// the children are the cell sim declared under this one.
+        cells: bool,
+        /// A `cells`-form sim declared with the `header` property
+        /// keyword: the row that names the table's columns.
+        header: bool,
     },
     Mono {
         /// The ostensive parameter keyword (`param`, `onym`,
@@ -269,6 +280,9 @@ fn serialize_sim(def: &SimDef, out: &mut String) {
             hypograph,
             stichoi,
             autonym,
+            rows,
+            cells,
+            header,
         } => {
             out.push('@');
             out.push_str(&def.symbol);
@@ -294,8 +308,15 @@ fn serialize_sim(def: &SimDef, out: &mut String) {
             if *autonym {
                 out.push_str("\nautonym");
             }
+            if *header {
+                out.push_str("\nheader");
+            }
             out.push_str(if *stichoi {
                 "\nstichos\n"
+            } else if *rows {
+                "\nrows\n"
+            } else if *cells {
+                "\ncells\n"
             } else {
                 "\ngrammata\n"
             });
@@ -1012,22 +1033,54 @@ fn parse_sim_block(
             .map(|l| l.trim())
             .filter(|l| !l.is_empty())
             .collect();
-        let (stichoi, autonym) = match middles.as_slice() {
-            ["grammata"] => (false, false),
-            ["stichos"] => (true, false),
-            ["autonym", "grammata"] => (false, true),
-            ["autonym", "stichos"] => (true, true),
+        // Property keyword lines (`autonym`, `header`) precede the
+        // one grammata keyword line.
+        let (props, body) = match middles.split_last() {
+            Some((body, props)) => (props, *body),
+            None => (&[][..], ""),
+        };
+        let mut autonym = false;
+        let mut header = false;
+        for prop in props {
+            match *prop {
+                "autonym" => autonym = true,
+                "header" => header = true,
+                other => {
+                    return Err(Error::at(
+                        ErrorKind::InvalidLektos(format!(
+                            "sim `{name}`: unknown property keyword `{other}` \
+                             (expected `autonym` or `header`)"
+                        )),
+                        loc(idx),
+                    ));
+                }
+            }
+        }
+        let (stichoi, rows, cells) = match body {
+            "grammata" => (false, false, false),
+            "stichos" => (true, false, false),
+            "rows" => (false, true, false),
+            "cells" => (false, false, true),
+            _ if header => (false, false, false),
             _ => {
                 return Err(Error::at(
                     ErrorKind::InvalidLektos(format!(
                         "sim `{name}`: expected optional property keywords \
-                         (`autonym`) followed by a `grammata` or `stichos` \
-                         line in the ostensive definition"
+                         (`autonym`) followed by a `grammata`, `stichos`, \
+                         `rows` or `cells` line in the ostensive definition"
                     )),
                     loc(idx),
                 ));
             }
         };
+        if header && !cells {
+            return Err(Error::at(
+                ErrorKind::InvalidLektos(format!(
+                    "sim `{name}`: the `header` keyword belongs to a `cells`-form sim"
+                )),
+                loc(idx),
+            ));
+        }
         let hypograph = match tail.as_str() {
             "" => Optionality::Unsupported,
             "hypograph" => Optionality::Required,
@@ -1048,6 +1101,9 @@ fn parse_sim_block(
                 hypograph,
                 stichoi,
                 autonym,
+                rows,
+                cells,
+                header,
             },
             bm,
             close - idx + 1,
@@ -1250,6 +1306,9 @@ mod tests {
                 lemma: Optionality::Required,
                 hypograph: Optionality::Required,
                 stichoi: false,
+                rows: false,
+                cells: false,
+                header: false,
             }
         );
     }
@@ -1323,6 +1382,9 @@ mod tests {
                 lemma: Optionality::Required,
                 hypograph: Optionality::Required,
                 stichoi: false,
+                rows: false,
+                cells: false,
+                header: false,
             },
             true,
         );
@@ -1341,6 +1403,9 @@ mod tests {
                     lemma: Optionality::Unsupported,
                     hypograph: Optionality::Unsupported,
                     stichoi: false,
+                    rows: false,
+                    cells: false,
+                    header: false,
                 },
                 true,
             ),

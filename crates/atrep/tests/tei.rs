@@ -158,8 +158,11 @@ fn tei_endo_produces_litogramma() {
         "{atd}"
     );
     assert!(atd.contains("@@@@(lyre.svg)"));
-    assert!(atd.contains("| Year | Printer |"));
-    assert!(atd.contains("| 1717 | W. Bowyer |"));
+    // A TEI table imports as rows of cells (the table model).
+    assert!(
+        atd.contains("@+ Editions\n@+-\n@+:\nYear\n:+@\n\n@+:\nPrinter\n:+@\n-+@\n\n@+-\n@+:\n1717\n:+@\n\n@+:\nW. Bowyer\n:+@\n-+@\n+@"),
+        "{atd}"
+    );
     assert!(atd.contains("@.-(1)\nthe ode\n.-@") || atd.contains("@.-(1)\nthe ode\n"));
 
     // Cited quotation with attribution hypograph.

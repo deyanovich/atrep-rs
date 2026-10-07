@@ -192,7 +192,7 @@ fn note_bodies_land_everywhere() {
         ),
         (
             "<table><row><cell>a<note>n</note></cell></row></table>",
-            "| a@^(n1) |",
+            "a@^(n1)",
         ),
         (
             "<list><head>Heroes<note>a note</note></head><item>Achilles</item></list>",
@@ -241,8 +241,11 @@ fn table_cells_keep_wrapped_content() {
         "<table><row><cell><hi rend=\"italic\">Iliad</hi></cell><cell>Homer \
          <persName ref=\"#h\">Homer</persName></cell></row></table>",
     ));
-    assert!(atd.contains("| @/Iliad/@ | Homer @,"), "{atd}");
-    assert!(atd.contains("Homer,@.persname |"), "{atd}");
+    assert!(atd.contains("@+:\n@/Iliad/@\n:+@"), "{atd}");
+    assert!(
+        atd.contains("@+:\nHomer @,@?:(h)Homer,@.persname\n:+@"),
+        "{atd}"
+    );
     check(&atd);
 }
 

@@ -142,15 +142,64 @@ directory and ampersand-onym linkage are retired.
 
 @=== table
 @+[(taxis)] [lemma]
-stichos
+rows
 +@ [hypograph]
-@"table (PROVISIONAL: F1; row/cell model TENTATIVE)"@
+@"table: a sequence of rows, each a record of cells named by their column; the hypograph is the caption"@
 @""
-Stichoi grammata: one row per stichos, cells separated by
-pipes, a dash-run stichos separating a header row. The
-hypograph is the caption. Multi-paragraph cells are not
-supported.
+A table is data, not a grid: rows are records, cells are
+fields named by the column the header gives them (or by the
+cell's own lemma), and alignment, widths and rules belong to
+the exomorphoses. The grammata are row sims; a plain
+paragraph inside the table is the shorthand kanonizo expands
+into the same rows - one row per line, cells split on pipes,
+a dash-run line closing the header rows above it - so the
+kanon has one shape. Kanonizo pads a short row with empty
+cells and refuses a row wider than the header.
 ""@
+===@
+
+@=== row
+@+-
+cells
+-+@
+@"table row: a record of cells"@
+@^(+)
+===@
+
+@=== header-row
+@+=
+header
+cells
+=+@
+@"table header row: its cells name the columns; the first one fixes the table's width"@
+@^(+)
+===@
+
+@=== cell
+@+: [lemma]
+grammata
+:+@
+@"table cell: a field holding blocks; the optional lemma names its column explicitly, winning over the header's"@
+@""
+A cell spans by the hspan and vspan monosims written first
+inside it; a span covers the cells the following columns or
+rows omit: a row below a cell spanning two rows writes one
+cell fewer, and a cell spanning two columns stands for two.
+Kanonizo validates the grid against the header's width.
+""@
+@^(+-)
+===@
+
+@=== hspan
+@+>(columns)
+@"the cell spans this many columns to the right (2 or more); written first inside the cell"@
+@^(+:)
+===@
+
+@=== vspan
+@+_(rows)
+@"the cell spans this many rows down (2 or more); written first inside the cell"@
+@^(+:)
 ===@
 
 @@@/

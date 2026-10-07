@@ -4933,24 +4933,21 @@ fn tei_figure(
 /// head becomes the caption lemma.
 fn tei_table(toks: &[Tok], mut i: usize, ctx: &mut TeiCtx) -> Result<(Block, Vec<Block>, usize)> {
     let mut lemma: Vec<Inline> = Vec::new();
-    let mut rows: Vec<Vec<Inline>> = Vec::new();
+    let mut rows: Vec<Block> = Vec::new();
     let mut bodies: Vec<Block> = Vec::new();
+    let para = |symbol: &str, lemma: Vec<Inline>, children: Vec<Block>| Block::Para {
+        symbol: symbol.to_string(),
+        taxis: None,
+        lemma,
+        children,
+        hypograph: Vec::new(),
+        bracket_matching: true,
+        ann: Annotations::default(),
+    };
     while i < toks.len() {
         match &toks[i] {
             Tok::Close(name) if name == "table" => {
-                return Ok((
-                    Block::Stichoi {
-                        symbol: Some("+".to_string()),
-                        taxis: None,
-                        lemma,
-                        strophes: vec![Strophe(rows)],
-                        hypograph: Vec::new(),
-                        bracket_matching: true,
-                        ann: Annotations::default(),
-                    },
-                    bodies,
-                    i + 1,
-                ));
+                return Ok((para("+", lemma, rows), bodies, i + 1));
             }
             Tok::Text(t) if t.trim().is_empty() => i += 1,
             Tok::Open { name, .. } if name == "head" => {
@@ -4959,11 +4956,12 @@ fn tei_table(toks: &[Tok], mut i: usize, ctx: &mut TeiCtx) -> Result<(Block, Vec
                 bodies.extend(inner);
                 i = next;
             }
-            Tok::Open { name, .. } if name == "row" => {
-                // Cells keep their inline forms (a phrase, a
-                // name, a callout), pipe-separated in one line.
-                let mut row: Vec<Inline> = vec![Inline::Text("| ".to_string())];
-                let mut first = true;
+            Tok::Open { name, attrs, .. } if name == "row" => {
+                // A row labelled as such is a header row; a cell's
+                // cols / rows attributes are its spans, written
+                // first inside it; a cell keeps its inline forms.
+                let header = attr(attrs, "role") == Some("label");
+                let mut cells: Vec<Block> = Vec::new();
                 i += 1;
                 loop {
                     match toks.get(i) {
@@ -4973,16 +4971,41 @@ fn tei_table(toks: &[Tok], mut i: usize, ctx: &mut TeiCtx) -> Result<(Block, Vec
                             break;
                         }
                         Some(Tok::Text(t)) if t.trim().is_empty() => i += 1,
-                        Some(Tok::Open { name, .. }) if name == "cell" => {
-                            let ((mut content, inner), next) =
-                                tei_inline_run(toks, i + 1, "cell", ctx)?;
-                            trim_inline_edges(&mut content);
-                            if !first {
-                                row.push(Inline::Text(" | ".to_string()));
+                        Some(Tok::Open {
+                            name,
+                            attrs,
+                            self_closing,
+                        }) if name == "cell" => {
+                            let mut spans: Vec<Inline> = Vec::new();
+                            for (attribute, symbol) in [("cols", "+>"), ("rows", "+_")] {
+                                if let Some(n) = attr(attrs, attribute)
+                                    && n.parse::<usize>().is_ok_and(|n| n >= 2)
+                                {
+                                    spans.push(Inline::Monosim {
+                                        symbol: symbol.to_string(),
+                                        param: n.to_string(),
+                                        ann: Annotations::default(),
+                                    });
+                                }
                             }
-                            first = false;
-                            row.extend(content);
-                            bodies.extend(inner);
+                            let (mut content, next) = if *self_closing {
+                                (Vec::new(), i + 1)
+                            } else {
+                                let ((c, inner), next) = tei_inline_run(toks, i + 1, "cell", ctx)?;
+                                bodies.extend(inner);
+                                (c, next)
+                            };
+                            trim_inline_edges(&mut content);
+                            if !spans.is_empty() && !content.is_empty() {
+                                spans.push(Inline::Text(" ".to_string()));
+                            }
+                            spans.extend(content);
+                            let children = if spans.is_empty() {
+                                Vec::new()
+                            } else {
+                                vec![Block::Paragraph(spans)]
+                            };
+                            cells.push(para("+:", Vec::new(), children));
                             i = next;
                         }
                         other => {
@@ -4990,8 +5013,7 @@ fn tei_table(toks: &[Tok], mut i: usize, ctx: &mut TeiCtx) -> Result<(Block, Vec
                         }
                     }
                 }
-                row.push(Inline::Text(" |".to_string()));
-                rows.push(row);
+                rows.push(para(if header { "+=" } else { "+-" }, Vec::new(), cells));
             }
             other => return Err(tei_err(format!("unsupported {other:?} in <table>"))),
         }

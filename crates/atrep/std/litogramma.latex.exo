@@ -438,10 +438,38 @@ _ \_
 @-> +
 @[\ltlabel{@(onym)}]@@[\begin{center}\itshape @(lemma)\end{center}
 ]@\begin{center}
-\begin{tabular}{llllllll}
+\begin{tabular}{llllllll}\noalign{\ltfirstcell}
 @(grammata)
 \end{tabular}
 \end{center}
+>-@
+
+@@/ A row is \ltrow{\ltcell{...}\ltcell{...}}: the class joins the
+@@/ cells with the column separator and ends the row. A span is
+@@/ written out as \multicolumn / \multirow from the hspan and
+@@/ vspan monosims (the rows a vertical span covers omit the
+@@/ cell, as the model says, so their columns are not shifted - a
+@@/ recorded limitation).
+@-> +-
+\ltrow{@(grammata)}
+>-@
+
+@-> +=
+\ltrow{@(grammata)}
+>-@
+
+@-> +:
+\ltcell{@[\multicolumn{@(hspan)}{l}{]@@[\multirow{@(vspan)}{*}{]@@(grammata)@[@(?vspan)}]@@[@(?hspan)}]@}
+>-@
+
+@-> +: in +=
+\ltcell{@[\multicolumn{@(hspan)}{l}{]@@[\multirow{@(vspan)}{*}{]@\textbf{@(grammata)}@[@(?vspan)}]@@[@(?hspan)}]@}
+>-@
+
+@-> +>
+>-@
+
+@-> +_
 >-@
 
 @-> *row + |
@@ -709,6 +737,20 @@ _ \_
 \newcommand\ltindexed[1]{#1\index{#1}}
 \newcommand\ltindexhidden[1]{\index{#1}}
 \newcommand\ltmedia[1]{\includegraphics[width=0.7\linewidth]{#1}}
+% Tables: a row is \ltrow{\ltcell{..}\ltcell{..}}; the cells join
+% with the column separator. A \multicolumn must be the first
+% thing the alignment scanner reaches in a cell, after expansion
+% only, so \ltcell is a plain macro, the separator is produced by
+% an expandable conditional, the first-cell flag is set between
+% rows (inside \noalign) and cleared after the cell's content, and
+% the exomorphosis writes \multicolumn / \multirow itself.
+\RequirePackage{multirow}
+\newif\if@ltfirstcell
+\def\lt@amp{&}
+\def\lt@cellsep{\if@ltfirstcell\else\expandafter\lt@amp\fi}
+\def\ltcell#1{\lt@cellsep#1\global\@ltfirstcellfalse}
+\newcommand\ltfirstcell{\global\@ltfirstcelltrue}
+\newcommand\ltrow[1]{#1\\\noalign{\ltfirstcell}}
 
 \endinput
 END-OF-CLASS

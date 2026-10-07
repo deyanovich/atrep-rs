@@ -461,12 +461,31 @@
 </table>
 >-@
 
-@-> *row + |
-<row>@(cells)</row>
+@-> +-
+<row>
+@(grammata)
+</row>
 >-@
 
-@-> *cell +
-<cell>@(grammata)</cell>
+@-> +=
+<row role="label">
+@(grammata)
+</row>
+>-@
+
+@-> +:
+<cell@[ cols="@(hspan)"]@@[ rows="@(vspan)"]@>@(grammata)</cell>
+>-@
+
+@@/ A cell's paragraph is its text; several stay paragraphs.
+@-> *paragraph in +:
+@(grammata)
+>-@
+
+@-> +>
+>-@
+
+@-> +_
 >-@
 
 @-> <

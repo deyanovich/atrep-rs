@@ -84,9 +84,46 @@ grammata
 
 @=== table
 @+[(taxis)] [lemma]
-stichos
+rows
 +@
-@"table; one row per stichos, cells pipe-separated"@
+@"table: rows of cells (TEI table); the head is the lemma"@
+===@
+
+@=== row
+@+-
+cells
+-+@
+@"table row"@
+@^(+)
+===@
+
+@=== header-row
+@+=
+header
+cells
+=+@
+@"table row labelling the columns (row role=label)"@
+@^(+)
+===@
+
+@=== cell
+@+: [lemma]
+grammata
+:+@
+@"table cell; the hspan and vspan monosims first inside it are its cols and rows"@
+@^(+-)
+===@
+
+@=== hspan
+@+>(columns)
+@"cell cols"@
+@^(+:)
+===@
+
+@=== vspan
+@+_(rows)
+@"cell rows"@
+@^(+:)
 ===@
 
 @=== figure

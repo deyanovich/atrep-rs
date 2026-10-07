@@ -102,6 +102,7 @@ pub fn kanonizo_file_with(
     // autonym the source leaves to be computed.
     let base = path.parent().unwrap_or(Path::new(".")).to_path_buf();
     let dial = dialektos::resolve(&base, &doc.dialect_id)?;
+    expand_tables(&mut doc.blocks, &dial)?;
     let autonyms = assign_autonyms(&mut doc.blocks, &dial, &base)?;
     validate_deixes(&doc.blocks)?;
     canonicalize_onyms(&mut doc, &autonyms);
@@ -127,6 +128,412 @@ pub fn kanonizo_file_with(
     })
 }
 
+// ---------------------------------------------------------------
+// Table expansion (spec: "Table Expansion")
+// ---------------------------------------------------------------
+
+/// The sims a `rows`-form sim's table is built of: its row sim and
+/// header-row sim (the `cells`-form sims declared under it, the
+/// header one by the `header` keyword), the cell sim declared under
+/// the row sim, and the cell's span monosims (declared under the
+/// cell with the `columns` and `rows` keywords), when any.
+struct TableSims<'d> {
+    row: &'d dialektos::SimDef,
+    header: &'d dialektos::SimDef,
+    cell: &'d dialektos::SimDef,
+    hspan: Option<&'d str>,
+    vspan: Option<&'d str>,
+}
+
+fn table_sims<'d>(dial: &'d dialektos::Dialektos, table: &str) -> Result<TableSims<'d>> {
+    let find_row = |header: bool| {
+        dial.sims.values().find(|d| {
+            matches!(d.form, dialektos::SimForm::Para { cells: true, header: h, .. } if h == header)
+                && d.parent.as_deref() == Some(table)
+        })
+    };
+    let row = find_row(false).ok_or_else(|| {
+        Error::new(ErrorKind::Syntax(format!(
+            "table sim `{table}` declares no row sim (a `cells`-form sim with parent `{table}`)"
+        )))
+    })?;
+    let header = find_row(true).ok_or_else(|| {
+        Error::new(ErrorKind::Syntax(format!(
+            "table sim `{table}` declares no header-row sim (a `header` `cells`-form sim \
+             with parent `{table}`)"
+        )))
+    })?;
+    let cell = dial
+        .sims
+        .values()
+        .find(|d| {
+            matches!(
+                d.form,
+                dialektos::SimForm::Para {
+                    rows: false,
+                    cells: false,
+                    stichoi: false,
+                    ..
+                }
+            ) && d.parent.as_deref() == Some(row.symbol.as_str())
+        })
+        .ok_or_else(|| {
+            Error::new(ErrorKind::Syntax(format!(
+                "row sim `{}` declares no cell sim (a grammata-form sim with parent `{}`)",
+                row.symbol, row.symbol
+            )))
+        })?;
+    let span = |keyword: &str| {
+        dial.sims
+            .values()
+            .find(|d| {
+                matches!(&d.form, dialektos::SimForm::Mono { keyword: k } if k == keyword)
+                    && d.parent.as_deref() == Some(cell.symbol.as_str())
+            })
+            .map(|d| d.symbol.as_str())
+    };
+    Ok(TableSims {
+        row,
+        header,
+        cell,
+        hspan: span("columns"),
+        vspan: span("rows"),
+    })
+}
+
+/// The span a cell declares through the monosims that open it:
+/// columns across and rows down (each 2 or more); one each when
+/// absent.
+fn cell_span(cell: &Block, sims: &TableSims) -> Result<(usize, usize)> {
+    let Block::Para { children, .. } = cell else {
+        return Ok((1, 1));
+    };
+    let Some(Block::Paragraph(first)) = children.first() else {
+        return Ok((1, 1));
+    };
+    let mut h = 1;
+    let mut v = 1;
+    for inline in first
+        .iter()
+        .take_while(|i| matches!(i, Inline::Monosim { .. }))
+    {
+        let Inline::Monosim { symbol, param, .. } = inline else {
+            unreachable!()
+        };
+        let slot = if Some(symbol.as_str()) == sims.hspan {
+            &mut h
+        } else if Some(symbol.as_str()) == sims.vspan {
+            &mut v
+        } else {
+            continue;
+        };
+        *slot = param
+            .parse::<usize>()
+            .ok()
+            .filter(|n| *n >= 2)
+            .ok_or_else(|| {
+                Error::new(ErrorKind::Syntax(format!(
+                    "cell span `@{symbol}({param})`: a span is an integer of at least 2"
+                )))
+            })?;
+    }
+    Ok((h, v))
+}
+
+/// Split one shorthand line into cells on the pipe character;
+/// framing pipes are dropped, cell edges trimmed.
+fn split_shorthand_cells(line: &[Inline]) -> Vec<Vec<Inline>> {
+    let mut cells: Vec<Vec<Inline>> = vec![Vec::new()];
+    for inline in line {
+        match inline {
+            Inline::Text(t) => {
+                for (i, piece) in t.split('|').enumerate() {
+                    if i > 0 {
+                        cells.push(Vec::new());
+                    }
+                    if !piece.is_empty() {
+                        cells
+                            .last_mut()
+                            .unwrap()
+                            .push(Inline::Text(piece.to_string()));
+                    }
+                }
+            }
+            other => cells.last_mut().unwrap().push(other.clone()),
+        }
+    }
+    for cell in &mut cells {
+        normalize_inline_seq(cell);
+    }
+    let framed_start =
+        matches!(line.first(), Some(Inline::Text(t)) if t.trim_start().starts_with('|'));
+    let framed_end = matches!(line.last(), Some(Inline::Text(t)) if t.trim_end().ends_with('|'));
+    if framed_start && cells.first().is_some_and(Vec::is_empty) {
+        cells.remove(0);
+    }
+    if framed_end && cells.len() > 1 && cells.last().is_some_and(Vec::is_empty) {
+        cells.pop();
+    }
+    cells
+}
+
+/// A shorthand line of dashes, pipes, joints, alignment colons
+/// and spaces only: the header rule, closing the header rows
+/// above it.
+fn is_header_rule(line: &[Inline]) -> bool {
+    let mut saw_dash = false;
+    for inline in line {
+        match inline {
+            Inline::Text(t) => {
+                for c in t.chars() {
+                    match c {
+                        '-' => saw_dash = true,
+                        '|' | '+' | ':' | ' ' | '\t' => {}
+                        _ => return false,
+                    }
+                }
+            }
+            _ => return false,
+        }
+    }
+    saw_dash
+}
+
+/// Split a paragraph's inlines at line breaks (kanonizo has not
+/// normalized whitespace yet, so the author's lines are intact).
+fn paragraph_lines(inlines: &[Inline]) -> Vec<Vec<Inline>> {
+    let mut lines: Vec<Vec<Inline>> = vec![Vec::new()];
+    for inline in inlines {
+        match inline {
+            Inline::Text(t) => {
+                for (i, piece) in t.split('\n').enumerate() {
+                    if i > 0 {
+                        lines.push(Vec::new());
+                    }
+                    if !piece.is_empty() {
+                        lines
+                            .last_mut()
+                            .unwrap()
+                            .push(Inline::Text(piece.to_string()));
+                    }
+                }
+            }
+            other => lines.last_mut().unwrap().push(other.clone()),
+        }
+    }
+    lines.retain(|l| {
+        !l.iter()
+            .all(|i| matches!(i, Inline::Text(t) if t.trim().is_empty()))
+    });
+    lines
+}
+
+fn sim_block(def: &dialektos::SimDef, lemma: Vec<Inline>, children: Vec<Block>) -> Block {
+    Block::Para {
+        symbol: def.symbol.clone(),
+        taxis: None,
+        lemma,
+        children,
+        hypograph: Vec::new(),
+        bracket_matching: def.bracket_matching,
+        ann: Annotations::default(),
+    }
+}
+
+fn make_cell(def: &dialektos::SimDef, content: Vec<Inline>) -> Block {
+    let children = if content.is_empty() {
+        Vec::new()
+    } else {
+        vec![Block::Paragraph(content)]
+    };
+    sim_block(def, Vec::new(), children)
+}
+
+/// Expand and validate every table (spec: "Table Expansion"): a
+/// `rows`-form sim holds row and header-row sims, and a plain
+/// paragraph inside it is the shorthand — one row per line, cells
+/// split on pipes, a dash-run line turning the rows above it into
+/// header rows — which becomes the same sims. Then the grid is
+/// settled: the first header row names the columns, every row's
+/// cells (with the spans their monosims declare, a span covering
+/// the cells the following rows or columns omit) fit the columns,
+/// and a short row is padded with empty cells.
+fn expand_tables(blocks: &mut [Block], dial: &dialektos::Dialektos) -> Result<()> {
+    for block in blocks.iter_mut() {
+        match block {
+            Block::Para {
+                symbol, children, ..
+            } => {
+                let is_table = dial
+                    .sims
+                    .get(symbol)
+                    .is_some_and(|d| matches!(d.form, dialektos::SimForm::Para { rows: true, .. }));
+                if is_table {
+                    let sims = table_sims(dial, symbol)?;
+                    expand_table(symbol, children, &sims, dial)?;
+                }
+                expand_tables(children, dial)?;
+            }
+            Block::ParaDiaphane { children, .. } => expand_tables(children, dial)?,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn expand_table(
+    table: &str,
+    children: &mut Vec<Block>,
+    sims: &TableSims,
+    dial: &dialektos::Dialektos,
+) -> Result<()> {
+    let is_row = |b: &Block| matches!(b, Block::Para { symbol, .. } if *symbol == sims.row.symbol || *symbol == sims.header.symbol);
+    // Shorthand paragraphs become rows; row sims pass through;
+    // anything else is not a table's content.
+    let mut rows: Vec<Block> = Vec::new();
+    for child in std::mem::take(children) {
+        match child {
+            ref row if is_row(row) => rows.push(child),
+            Block::Paragraph(inlines) => {
+                let start = rows.len();
+                // One rule per paragraph: a later line of dashes
+                // is a row of dash cells.
+                let mut ruled = false;
+                for line in paragraph_lines(&inlines) {
+                    if !ruled && is_header_rule(&line) {
+                        ruled = true;
+                        for row in &mut rows[start..] {
+                            if let Block::Para {
+                                symbol,
+                                bracket_matching,
+                                ..
+                            } = row
+                            {
+                                *symbol = sims.header.symbol.clone();
+                                *bracket_matching = sims.header.bracket_matching;
+                            }
+                        }
+                        continue;
+                    }
+                    let cells = split_shorthand_cells(&line)
+                        .into_iter()
+                        .map(|c| make_cell(sims.cell, c))
+                        .collect();
+                    rows.push(sim_block(sims.row, Vec::new(), cells));
+                }
+            }
+            other => {
+                return Err(Error::new(ErrorKind::Syntax(format!(
+                    "table `{table}` holds a block that is neither a row nor a shorthand paragraph: {}",
+                    block_name(&other, dial)
+                ))));
+            }
+        }
+    }
+    // Every row holds cells only.
+    for row in &rows {
+        let Block::Para { children, .. } = row else {
+            unreachable!()
+        };
+        for cell in children {
+            if !matches!(cell, Block::Para { symbol, .. } if *symbol == sims.cell.symbol) {
+                return Err(Error::new(ErrorKind::Syntax(format!(
+                    "row of table `{table}` holds a block that is not a cell: {}",
+                    block_name(cell, dial)
+                ))));
+            }
+        }
+    }
+    // The grid: the first header row names the columns; without
+    // one, the widest row does. A vspan reserves its column in
+    // the rows below, which omit the cell; an hspan covers the
+    // columns to its right. A short row is padded, a long one
+    // refused.
+    let widths: Vec<usize> = rows
+        .iter()
+        .map(|r| {
+            let Block::Para { children, .. } = r else {
+                unreachable!()
+            };
+            children
+                .iter()
+                .map(|c| cell_span(c, sims).map(|(h, _)| h))
+                .sum::<Result<usize>>()
+        })
+        .collect::<Result<_>>()?;
+    let header_width = rows.iter().zip(&widths).find_map(|(r, w)| {
+        matches!(r, Block::Para { symbol, .. } if *symbol == sims.header.symbol).then_some(*w)
+    });
+    let columns = header_width
+        .or_else(|| widths.iter().copied().max())
+        .unwrap_or(0);
+    // Columns still covered by a vspan from above: rows remaining.
+    let mut reserved: Vec<usize> = vec![0; columns];
+    for (r, row) in rows.iter_mut().enumerate() {
+        let Block::Para { children, .. } = row else {
+            unreachable!()
+        };
+        let mut col = 0;
+        let mut placed: Vec<(usize, usize, usize)> = Vec::new();
+        for cell in children.iter() {
+            while col < columns && reserved[col] > 0 {
+                col += 1;
+            }
+            let (h, v) = cell_span(cell, sims)?;
+            if col + h > columns {
+                return Err(Error::new(ErrorKind::Syntax(format!(
+                    "table `{table}`, row {}: cells exceed the {columns} column(s) the header names",
+                    r + 1
+                ))));
+            }
+            if reserved[col..col + h].iter().any(|&n| n > 0) {
+                return Err(Error::new(ErrorKind::Syntax(format!(
+                    "table `{table}`, row {}: a cell spans into a column a vspan above still covers",
+                    r + 1
+                ))));
+            }
+            placed.push((col, h, v));
+            col += h;
+        }
+        // Pad the row to the columns a vspan above leaves free.
+        while col < columns {
+            if reserved[col] == 0 {
+                children.push(make_cell(sims.cell, Vec::new()));
+            }
+            col += 1;
+        }
+        for n in reserved.iter_mut() {
+            *n = n.saturating_sub(1);
+        }
+        for (c, h, v) in placed {
+            if v > 1 {
+                for n in &mut reserved[c..c + h] {
+                    *n = v - 1;
+                }
+            }
+        }
+    }
+    if reserved.iter().any(|&n| n > 0) {
+        return Err(Error::new(ErrorKind::Syntax(format!(
+            "table `{table}`: a vspan reaches past the last row"
+        ))));
+    }
+    *children = rows;
+    Ok(())
+}
+
+fn block_name(block: &Block, dial: &dialektos::Dialektos) -> String {
+    match block {
+        Block::Para { symbol, .. } => dial
+            .sims
+            .get(symbol)
+            .map_or_else(|| format!("`{symbol}`"), |d| d.name.clone()),
+        Block::Paragraph(_) => "a paragraph".to_string(),
+        Block::Stichoi { .. } => "stichoi".to_string(),
+        _ => "a core form".to_string(),
+    }
+}
+
 /// The sim symbols exempt from sibling-run taxis sequencing:
 /// autonym sims number per lemma (homographs) instead.
 fn autonym_symbols(dial: &dialektos::Dialektos) -> std::collections::HashSet<String> {
@@ -147,6 +554,7 @@ fn autonym_symbols(dial: &dialektos::Dialektos) -> std::collections::HashSet<Str
 /// embedded dialektos of englossis blocks (the document's
 /// directory, or `.` for in-memory sources).
 pub fn tasso(doc: &mut Document, dial: &dialektos::Dialektos, base: &Path) -> Result<()> {
+    expand_tables(&mut doc.blocks, dial)?;
     assign_autonyms(&mut doc.blocks, dial, base)?;
     evaluate_taxis_except(
         &mut doc.blocks,

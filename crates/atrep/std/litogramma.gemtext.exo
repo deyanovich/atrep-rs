@@ -375,6 +375,28 @@ edited by @(grammata)
 
 >-@
 
+@@/ Gemtext has no table: the preformatted block lists one cell per
+@@/ line, a blank line between rows, a span as a bracketed note.
+@-> +-
+@((grammata))
+
+>-@
+
+@-> +=
+@((grammata))
+
+>-@
+
+@-> +:
+@((grammata))@[[@(hspan) columns]]@@[[@(vspan) rows]]@
+>-@
+
+@-> +>
+>-@
+
+@-> +_
+>-@
+
 @-> _
 @(grammata)
 >-@

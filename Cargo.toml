@@ -3,19 +3,20 @@ resolver = "2"
 members = ["crates/atrep", "crates/atrep-cli"]
 
 [workspace.package]
-version = "0.3.6"
+version = "0.3.7"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 authors = ["Bojan Durickovic <dev@deyanovich.org>"]
 repository = "https://gitlab.com/atrep/atrep-rs"
 
 [workspace.dependencies]
-atrep = { path = "crates/atrep", version = "0.3.6" }
+atrep = { path = "crates/atrep", version = "0.3.7" }
 unicode-normalization = "0.1"
 sha2 = "0.10"
 ureq = "3"
 tar = "0.4"
 flate2 = "1"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 clap = { version = "4", features = ["derive"] }

@@ -12,6 +12,8 @@
 pub mod atramento;
 pub mod dendron;
 pub mod dialektos;
+#[cfg(feature = "docx")]
+pub mod docx;
 pub mod dsl;
 pub mod endo;
 pub mod epimerismos;
@@ -132,6 +134,18 @@ pub fn native_export(doc: &Document, target: &str) -> Option<Result<String>> {
 
 /// [`native_export`] with the document's directory, from which
 /// the FB2 export reads the media its images refer to.
+/// Built-in exomorphoses whose output is bytes, not text: Word
+/// (`docx`), a zip. None for any other target.
+pub fn native_export_bytes(doc: &Document, target: &str, dir: &Path) -> Option<Result<Vec<u8>>> {
+    match target {
+        #[cfg(feature = "docx")]
+        "docx" => Some(docx::document_to_docx(doc, &|param| {
+            std::fs::read(dir.join(param)).ok()
+        })),
+        _ => None,
+    }
+}
+
 pub fn native_export_in(doc: &Document, target: &str, dir: &Path) -> Option<Result<String>> {
     match target {
         "fb2" => Some(Ok(fb2::document_to_fb2_with(doc, &|param| {

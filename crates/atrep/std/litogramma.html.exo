@@ -458,20 +458,34 @@
 </table>
 >-@
 
-@-> *row + |
-<tr>@(cells)</tr>
+@-> +-
+<tr>
+@(grammata)
+</tr>
 >-@
 
-@-> *row + | .header
-<tr>@(cells)</tr>
+@-> +=
+<tr>
+@(grammata)
+</tr>
 >-@
 
-@-> *cell +
-<td>@(grammata)</td>
+@-> +:
+<td@[ colspan="@(hspan)"]@@[ rowspan="@(vspan)"]@>@[
+@(grammata)
+]@</td>
 >-@
 
-@-> *cell + .header
-<th>@(grammata)</th>
+@-> +: in +=
+<th@[ colspan="@(hspan)"]@@[ rowspan="@(vspan)"]@>@[
+@(grammata)
+]@</th>
+>-@
+
+@-> +>
+>-@
+
+@-> +_
 >-@
 
 @@/ ----- semantic containers -----

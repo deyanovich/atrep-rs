@@ -486,6 +486,12 @@ fn run() -> atrep::Result<()> {
                 .parent()
                 .unwrap_or(std::path::Path::new("."))
                 .to_path_buf();
+            // A binary built-in export (docx) is written as is.
+            if let Some(bytes) = atrep::native_export_bytes(&doc, &target, &dir) {
+                write_output(&out, bytes?)?;
+                println!("{}", out.display());
+                return Ok(());
+            }
             // Built-in exomorphoses (fb2, rnc, opencorpora, proiel):
             // formats whose output the template language cannot
             // produce.
@@ -686,8 +692,9 @@ fn run() -> atrep::Result<()> {
                 .map(|e| e.to_string_lossy().to_string())
                 .unwrap_or_default();
             // A DSL dictionary is bytes (UTF-16, a code page,
-            // gzip); every other format is read as text here.
-            let source = if matches!(ext.as_str(), "dsl" | "dz") {
+            // gzip) and a Word document a zip; every other format
+            // is read as text here.
+            let source = if matches!(ext.as_str(), "dsl" | "dz" | "docx") {
                 String::new()
             } else {
                 read_input(&file)?
@@ -705,6 +712,8 @@ fn run() -> atrep::Result<()> {
             // FictionBook binaries land beside the document as
             // media/<id>, where its image blocks point.
             let mut media: Vec<atrep::fb2::Fb2Media> = Vec::new();
+            // Word images land the same way, as media/<name>.
+            let mut docx_media: Vec<atrep::docx::DocxMedia> = Vec::new();
             let mut fb2_import = |source: &str| -> atrep::Result<atrep::Document> {
                 let (doc, m) = atrep::fb2::fb2_to_document_with_media(source)?;
                 media = m;
@@ -728,6 +737,12 @@ fn run() -> atrep::Result<()> {
                 "osis" => atrep::endo::osis_to_document(&source)?,
                 "fb2" => fb2_import(&source)?,
                 "dsl" | "dz" => dsl_import(&file)?,
+                "docx" => {
+                    let bytes = std::fs::read(&file).map_err(|e| io_at(&file, e))?;
+                    let (doc, m) = atrep::docx::docx_to_document_with_media(&bytes)?;
+                    docx_media = m;
+                    doc
+                }
                 "rnc" => atrep::epimerismos::rnc_to_document(&source)?,
                 "opencorpora" | "oc" => atrep::epimerismos::opencorpora_to_document(&source)?,
                 "proiel" => atrep::epimerismos::proiel_to_document(&source)?,
@@ -759,6 +774,11 @@ fn run() -> atrep::Result<()> {
             if let Some(scheme) = &milestone_scheme {
                 atrep::endo::usfm_apply_scheme(&mut doc, scheme);
             }
+            media.extend(docx_media.into_iter().map(|m| atrep::fb2::Fb2Media {
+                id: m.name,
+                content_type: String::new(),
+                bytes: m.bytes,
+            }));
             // A binary lands as media/<id>, so the id must be a
             // plain file name: no separator of either platform, no
             // drive prefix, no parent reference. Checked before

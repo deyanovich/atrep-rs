@@ -303,17 +303,23 @@ fn table_keeps_empty_edge_cells_and_dash_rows() {
     );
     let html = render(&tmp, &kanon, "litogramma", "html");
     assert!(
-        html.contains("<tr><th>Name</th><th>Book</th></tr>"),
-        "{html}"
-    );
-    assert!(html.contains("<tr><td></td><td>Iliad</td></tr>"), "{html}");
-    assert!(html.contains("<tr><td>-</td><td>-</td></tr>"), "{html}");
-    assert!(
-        html.contains("<tr><td>Hector</td><td>Iliad</td></tr>"),
+        html.contains("<tr>\n<th>\n<p>Name</p>\n</th>\n<th>\n<p>Book</p>\n</th>\n</tr>"),
         "{html}"
     );
     assert!(
-        html.contains("<tr><td>Odysseus</td><td></td></tr>"),
+        html.contains("<tr>\n<td></td>\n<td>\n<p>Iliad</p>\n</td>\n</tr>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<tr>\n<td>\n<p>-</p>\n</td>\n<td>\n<p>-</p>\n</td>\n</tr>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<tr>\n<td>\n<p>Hector</p>\n</td>\n<td>\n<p>Iliad</p>\n</td>\n</tr>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<tr>\n<td>\n<p>Odysseus</p>\n</td>\n<td></td>\n</tr>"),
         "{html}"
     );
     assert!(!html.contains("------"), "{html}");
@@ -329,7 +335,53 @@ fn table_keeps_empty_edge_cells_and_dash_rows() {
 #[test]
 fn aliased_import_carries_row_and_cell_rules() {
     let tmp = tmp_dir("alias-rows");
-    std::fs::write(tmp.join("tabl.dia"), "@@@!atrep\n\n@@::litogramma::+ #\n").unwrap();
+    // A stichoi table in a base dialektos, with the cell
+    // interpretation in its exo; `tabl` imports it under an alias.
+    std::fs::write(
+        tmp.join("grid.dia"),
+        "@@@!atrep\n\n@=== grid\n@+[(taxis)] [lemma]\nstichos\n+@ [hypograph]\n===@\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("grid.html.exo"),
+        "\
+@@@!atrep-exo
+@=grid=>html
+
+@-> *document
+@(grammata)
+>-@
+
+@-> *paragraph
+<p>@(grammata)</p>
+>-@
+
+@-> +
+<table>
+@[<caption>@(lemma)</caption>
+]@@(grammata)
+</table>
+>-@
+
+@-> *row + |
+<tr>@(cells)</tr>
+>-@
+
+@-> *row + | .header
+<tr>@(cells)</tr>
+>-@
+
+@-> *cell +
+<td>@(grammata)</td>
+>-@
+
+@-> *cell + .header
+<th>@(grammata)</th>
+>-@
+",
+    )
+    .unwrap();
+    std::fs::write(tmp.join("tabl.dia"), "@@@!atrep\n\n@@::grid::+ #\n").unwrap();
     std::fs::write(
         tmp.join("tabl.html.exo"),
         "\
