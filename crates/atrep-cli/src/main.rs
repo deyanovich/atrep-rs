@@ -431,8 +431,28 @@ fn run() -> atrep::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Check { file } => {
-            atrep::check_any(&file)?;
+            let checked = atrep::check_any(&file)?;
             println!("{}: OK", file.display());
+            // Reports: findings worth attention that are not
+            // errors (a dictionary's labels its abbreviations list
+            // does not resolve).
+            if let atrep::Checked::Document(doc) = &checked {
+                let dir = file.parent().unwrap_or(std::path::Path::new("."));
+                if let Ok(dial) = atrep::dialektos::resolve(dir, &doc.dialect_id) {
+                    for u in atrep::report::unresolved_labels(doc, &dial) {
+                        match &u.entry {
+                            Some(entry) => eprintln!(
+                                "atrep: warning: label `{}` in entry `{entry}` has no item in the abbreviations list",
+                                u.label
+                            ),
+                            None => eprintln!(
+                                "atrep: warning: label `{}` has no item in the abbreviations list",
+                                u.label
+                            ),
+                        }
+                    }
+                }
+            }
         }
         Command::Plero { file, lang } => print!("{}", respell(&file, true, lang.as_deref())?),
         Command::Brachy { file } => print!("{}", respell(&file, false, None)?),

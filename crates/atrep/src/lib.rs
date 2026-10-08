@@ -27,6 +27,7 @@ pub mod litosis;
 pub mod morph;
 pub mod outline;
 pub mod parser;
+pub mod report;
 pub mod scan;
 pub mod sigil;
 pub mod source;

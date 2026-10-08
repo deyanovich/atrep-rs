@@ -100,16 +100,25 @@ fn webster_imports_as_lexigramma() {
         "{s}"
     );
     assert!(s.contains("@=/en en/=@"), "{s}");
-    // The abbreviations dictionary as a typed definition list.
+    // The abbreviations dictionary as the abbreviations sim over a
+    // definition list.
+    assert!(
+        s.contains("@[[\n@::;\n@:: a.\n@;\nadjective\n;@\n::@"),
+        "{s}"
+    );
     assert!(
         s.contains("@:: v. i.\n@;\nverb intransitive\n;@\n::@"),
         "{s}"
     );
-    assert!(s.contains(";::@.abbreviations"), "{s}");
-    // Labels open the first line: the grammar line, then the rest.
+    assert!(
+        s.contains("@:: Etym:\n@;\netymology\n;@\n::@\n;::@\n]]@"),
+        "{s}"
+    );
+    // Labels open the first line: the grammar line; the etymology
+    // label makes the comment the etymology.
     assert!(
         s.contains(
-            "@! Liberal\n@=%lĭb′ẽr·al%=@\n\n@=&a. Etym:&=@\n\n@/F. libéral, L. liberalis, fr. liber free./@\n"
+            "@! Liberal\n@=%lĭb′ẽr·al%=@\n\n@=&a.&=@\n\n@=<@/F. libéral, L. liberalis, fr. liber free./@>=@\n"
         ),
         "{s}"
     );
@@ -175,11 +184,14 @@ fn dahl_imports_with_stress_and_language() {
         s.contains("Книжка @[умалит.]@ @~Записная книжка.~@\n:@\n!@"),
         "{s}"
     );
-    // A language-tagged run is a koine annotation with the code.
-    assert!(s.contains("@=&ср.&=@\n\n@,penna,@.la\n"), "{s}");
+    // A run in a named language is an equivalent in that language.
+    assert!(s.contains("@=&ср.&=@\n\n@=>penna<=@.la\n"), "{s}");
     // A reference without the stress resolves to the stressed
-    // headword's onym.
+    // headword's onym; so does one written with the stress tag.
     assert!(s.contains("См. @>(КНИ-ГА)."), "{s}");
+    let tagged = DAHL.replace("<<КНИГА>>", "<<КНИ[']ГА>>");
+    let s2 = dendron::serialize(&dsl::dsl_to_document(&utf16le(&tagged)).unwrap());
+    assert!(s2.contains("См. @>(КНИ-ГА)."), "{s2}");
 }
 
 /// The decodings: UTF-16 by its mark, cp1251 by the header,
@@ -253,4 +265,30 @@ fn dsl_import_kanonizes_and_exports() {
     let x = exo::resolve_exo(&tmp, "lexigramma", "latex").unwrap();
     let tex = exo::render(&kanon, &x, &tmp).unwrap();
     assert!(tex.contains("lĭb′ẽr·al"), "{tex}");
+}
+
+/// The labels an abbreviations list does not resolve are reported
+/// (not errors): a free-text label is legitimate, the report lets
+/// the maintainer complete the list. Without a list, nothing.
+#[test]
+fn unresolved_labels_are_reported() {
+    use atrep::{dialektos, report};
+    let doc = dsl::dsl_to_document_with_abbreviations(&utf16le(WEBSTER), &utf16le(ABBREV)).unwrap();
+    let dial = dialektos::resolve(Path::new("."), "lexigramma").unwrap();
+    let found = report::unresolved_labels(&doc, &dial);
+    assert!(found.is_empty(), "{found:?}");
+    // A label the list lacks, in an entry.
+    let dsl = WEBSTER.replace("[p]Obs.[/p]", "[p]Rare.[/p]");
+    let doc = dsl::dsl_to_document_with_abbreviations(&utf16le(&dsl), &utf16le(ABBREV)).unwrap();
+    let found = report::unresolved_labels(&doc, &dial);
+    assert_eq!(
+        found,
+        vec![report::UnresolvedLabel {
+            label: "Rare.".to_string(),
+            entry: Some("Liberal".to_string()),
+        }]
+    );
+    // No list: no report.
+    let doc = dsl::dsl_to_document(&utf16le(&dsl)).unwrap();
+    assert!(report::unresolved_labels(&doc, &dial).is_empty());
 }

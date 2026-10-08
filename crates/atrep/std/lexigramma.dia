@@ -23,11 +23,13 @@
 @@/   identity (s.v. δίκη, sense 3).
 @@/ - Presentation (bold headwords, label italics, column
 @@/   layout) belongs entirely to exomorphoses.
-@@/ - An abbreviations list is a koine definition list typed
-@@/   .abbreviations after the title: each item's lemma the
-@@/   abbreviation as the labels print it, its definition the
-@@/   expansion. Labels in the text stay the abbreviation; the
-@@/   list resolves them.
+@@/ - The abbreviations sim wraps a koine definition list, after
+@@/   the title: each item's lemma the abbreviation as the labels
+@@/   print it, its definition the expansion. Labels in the text
+@@/   stay the abbreviation; the list resolves them by text, as
+@@/   Lingvo's does, and `atrep check` reports a label the list
+@@/   lacks (a report, not an error: a free-text label is
+@@/   legitimate).
 @@/ - Text shown only in a full reading (a secondary gloss, the
 @@/   expanded translation) is an inline diaphane typed
 @@/   .secondary; a short rendering may leave it out.
@@ -106,6 +108,13 @@ grammata
 @=== inflection
 @=* grammata *=@
 @"inflected form of the headword, registered as a lookup key and nothing more: print registers do not display it, the Kindle exomorphosis compiles it into the lookup index; repeatable, typically embedded from a sourced inflection dataset at authoring time (e.g. tools/inflect-ru.py from OpenRussian); typed .sort it is the key the headword is sorted and found under when that differs from the headword as displayed (a headword whose displayed part is not indexed: DSL's braces) (TEI Lex-0 form[type=inflected])"@
+===@
+
+@=== abbreviations
+@[[
+grammata
+]]@
+@"the abbreviations: a koine definition list whose items are the abbreviations as the labels print them (several spellings comma-separated) with their expansions; the registry the labels resolve in by text"@
 ===@
 
 @=== languages

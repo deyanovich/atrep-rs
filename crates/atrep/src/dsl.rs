@@ -27,17 +27,18 @@
 //!   grammar line and pronunciation.
 //! - `[trn]` is an `equivalent` in the contents language, `[ex]`
 //!   a `citation`, `[p]` a `usage-label` (untyped: DSL does not
-//!   say what kind of label it is), `[t]` a `pronunciation`,
-//!   `[lang name="…"]` a koine annotation carrying the language
-//!   code, `[b]` / `[i]` koine strong / emphasis, `[url]` a koine
+//!   say what kind of label it is; an etymology label such as
+//!   Webster's "Etym:" makes the rest of the line the `etymology`),
+//!   `[t]` a `pronunciation`, `[lang name="…"]` an `equivalent` in
+//!   that language, `[b]` / `[i]` koine strong / emphasis, `[url]` a koine
 //!   link, `<<…>>` and `[ref]` the koine ref resolved to the target
 //!   card's onym, `['] … [/']` a combining acute on the stressed
 //!   letter, `[s]` an enmedia block in the entry, `[*] … [/*]` an
 //!   inline diaphane typed .secondary.
 //! - The `#INCLUDE`d abbreviations dictionary, when supplied,
-//!   becomes a koine definition list typed .abbreviations after
-//!   the title: the label stays the abbreviation in the text, the
-//!   list carries its expansion.
+//!   becomes the `abbreviations` sim after the title — a koine
+//!   definition list, one item per card: the label stays the
+//!   abbreviation in the text, the list carries its expansion.
 //! - Dropped, text kept: `[c]` colour, `[u]`, `[sub]`, `[sup]`,
 //!   `[com]`, `[!trs]`; `{{…}}` comments are dropped whole.
 
@@ -376,7 +377,11 @@ impl Lower<'_> {
                 }
                 '<' if chars.get(i + 1) == Some(&'<') => {
                     let end = find(&chars, i + 2, &['>', '>']).unwrap_or(chars.len());
-                    let target: String = chars[i + 2..end].iter().collect();
+                    let raw: String = chars[i + 2..end].iter().collect();
+                    // The target is written like any text (a stress
+                    // mark as a tag), so it is lowered before the
+                    // lookup.
+                    let target = text_of(&self.line(&raw).inlines);
                     flush(&mut buf, &mut stack);
                     stack
                         .last_mut()
@@ -504,11 +509,14 @@ impl Lower<'_> {
                     .unwrap_or("")
                     .trim()
                     .trim_matches('"');
+                // A run in a named language: an equivalent in that
+                // language (Dahl's Latin names, a bilingual's
+                // glosses in a third language).
                 let code = language_code(name);
                 if code.is_empty() {
                     content
                 } else {
-                    endo(",", content, vec![code])
+                    endo("=>", content, vec![code])
                 }
             }
             "ref" => {
@@ -747,6 +755,26 @@ fn leading_labels(inlines: &[Inline]) -> Option<(Vec<Inline>, Vec<Inline>)> {
     Some((labels, rest))
 }
 
+/// Whether the labels end in an etymology label ("Etym:", "Etym.",
+/// "Etymology", "Этим."); the label itself is dropped.
+fn split_etymology_label(mut labels: Vec<Inline>) -> (Vec<Inline>, bool) {
+    let is_etym = |t: &str| {
+        let t = t.trim().trim_end_matches([':', '.']).to_lowercase();
+        matches!(t.as_str(), "etym" | "etymology" | "этим" | "этимология")
+    };
+    let Some(Inline::Text(last)) = labels.last() else {
+        return (labels, false);
+    };
+    if !is_etym(last) {
+        return (labels, false);
+    }
+    labels.pop();
+    while matches!(labels.last(), Some(Inline::Text(t)) if t.trim().is_empty()) {
+        labels.pop();
+    }
+    (labels, true)
+}
+
 fn solo(symbol: &str, content: Vec<Inline>, genoses: Vec<String>) -> Block {
     Block::Paragraph(vec![Inline::Endo {
         symbol: symbol.to_string(),
@@ -928,10 +956,19 @@ fn entry(headwords: &[String], body: &[String], taxis: Option<u64>, lower: &Lowe
         {
             // A first line that opens with labels: the labels are
             // the grammar line, what follows them stays a
-            // paragraph of the entry.
-            preamble.push(solo("=&", labels, vec![]));
+            // paragraph of the entry — unless the last label is an
+            // etymology label (Webster's "Etym:"), which makes the
+            // rest the etymology.
+            let (labels, etymology) = split_etymology_label(labels);
+            if !labels.is_empty() {
+                preamble.push(solo("=&", labels, vec![]));
+            }
             if !rest.is_empty() {
-                preamble.push(Block::Paragraph(rest));
+                if etymology {
+                    preamble.push(solo("=<", rest, vec![]));
+                } else {
+                    preamble.push(Block::Paragraph(rest));
+                }
             }
         } else if forest.is_empty()
             && unnumbered.is_empty()
@@ -1100,17 +1137,23 @@ pub fn dsl_text_to_document(text: &str, abbreviations: Option<&str>) -> Result<D
             })
             .collect();
         if !items.is_empty() {
-            blocks.push(Block::Para {
+            let list = Block::Para {
                 symbol: "::;".to_string(),
                 taxis: None,
                 lemma: Vec::new(),
                 children: items,
                 hypograph: Vec::new(),
                 bracket_matching: false,
-                ann: Annotations {
-                    onym: None,
-                    genoses: vec!["abbreviations".to_string()],
-                },
+                ann: Annotations::default(),
+            };
+            blocks.push(Block::Para {
+                symbol: "[[".to_string(),
+                taxis: None,
+                lemma: Vec::new(),
+                children: vec![list],
+                hypograph: Vec::new(),
+                bracket_matching: true,
+                ann: Annotations::default(),
             });
         }
     }
