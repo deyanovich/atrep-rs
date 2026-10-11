@@ -74,6 +74,9 @@
 @:: "/ _ .epigraph
 @:: "" , .q
 @:: -/ , .date
+@:: -: , .addressee
+@:: -= , .salute
+@:: -_ , .signed
 
 @@/ Containers (free genoses ride the fallbacks).
 @:: _ _ .floatingtext

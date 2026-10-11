@@ -581,7 +581,7 @@ mod tests {
 
 use crate::error::{Error, ErrorKind};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum Tok {
     Open {
         name: String,
@@ -1777,8 +1777,16 @@ fn parse_rst_inline(text: &str) -> Vec<Inline> {
 // sp/speaker dialogue with stage directions (block and inline);
 // quote; epigraph with bibl attribution; note[place=foot] as a
 // deixis callout plus a footnote body; hi/emph/foreign inline;
-// lb as a space. Everything else is a strict error — the
-// point is to learn what litogramma cannot say.
+// lb as a space. The correspondence module: opener, closer and
+// postscript as transparent wrappers whose running text is a
+// paragraph, dateline as the composition date, salute and
+// signed as paragraphs, correspDesc's sending action as the
+// author line (prosopon, chora, chronos aphanes) when the
+// title statement names none, its receiving action the
+// addressee; salute and signed the salutation and signature
+// (at-epistole); noteGrp transparent. Running text at block
+// level is an implicit paragraph. Everything else is a strict
+// error — the point is to learn what litogramma cannot say.
 
 /// A choice element: prefer the regularized reading
 /// (expan/corr/reg) over the source form (abbr/sic/orig).
@@ -2254,16 +2262,23 @@ fn tei_choice(
 /// Trim the leading and trailing whitespace of an inline run
 /// (element boundaries carry no significant whitespace).
 fn trim_run(inlines: &mut Vec<Inline>) {
-    if let Some(Inline::Text(t)) = inlines.first_mut() {
+    // Several whitespace-only texts can stand at an edge (the
+    // spaces a page break and the prose around it leave): all
+    // of them go.
+    while let Some(Inline::Text(t)) = inlines.first_mut() {
         *t = t.trim_start().to_string();
         if t.is_empty() {
             inlines.remove(0);
+        } else {
+            break;
         }
     }
-    if let Some(Inline::Text(t)) = inlines.last_mut() {
+    while let Some(Inline::Text(t)) = inlines.last_mut() {
         *t = t.trim_end().to_string();
         if t.is_empty() {
             inlines.pop();
+        } else {
+            break;
         }
     }
 }
@@ -2465,8 +2480,17 @@ pub fn tei_to_document_lines(xml: &str, line_milestones: Option<&str>) -> Result
                 let next = tei_header(&toks, i + 1, &mut blocks, &mut ctx)?;
                 i = next;
             }
-            Tok::Open { name, .. } if name == "standOff" => {
-                i = skip_element(&toks, i + 1, "standOff".to_string())?;
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "standOff" || name == "xenoData" => {
+                // Stand-off annotation and foreign metadata
+                // (xenoData, which some editions place beside
+                // the header rather than inside it): skipped.
+                if *self_closing {
+                    i += 1;
+                } else {
+                    i = skip_element(&toks, i + 1, name.clone())?;
+                }
             }
             Tok::Open { name, .. } if name == "text" => i += 1,
             Tok::Close(name) if name == "text" => i += 1,
@@ -2942,6 +2966,17 @@ fn tei_header(
                 i = next;
             }
             Tok::Open {
+                name,
+                self_closing: false,
+                ..
+            } if name == "correspDesc" => {
+                // A letter's correspondence description: the
+                // sending action is the author line, when the
+                // title statement gave none.
+                let next = tei_corresp_desc(toks, i + 1, blocks)?;
+                i = next;
+            }
+            Tok::Open {
                 name, self_closing, ..
             } => {
                 // Everything else in the header is skipped.
@@ -2955,6 +2990,148 @@ fn tei_header(
         }
     }
     Err(tei_err("unterminated <teiHeader>".into()))
+}
+
+/// correspDesc: the sending action's persons become author lines
+/// (one `=:` each), when the title statement gave no author, each
+/// annotated with the person's key (prosopon), the place of
+/// sending (chora) and its date (chronos); the receiving action's
+/// persons become addressee lines (at-epistole `-:`, one each),
+/// annotated with the person's key. The rest of the description
+/// is skipped.
+fn tei_corresp_desc(toks: &[Tok], mut i: usize, blocks: &mut Vec<Block>) -> Result<usize> {
+    let has_author = blocks.iter().any(|b| {
+        matches!(b, Block::Paragraph(v)
+            if matches!(v.as_slice(), [Inline::Endo { symbol, .. }] if symbol == "=:"))
+    });
+    while i < toks.len() {
+        match &toks[i] {
+            Tok::Close(name) if name == "correspDesc" => return Ok(i + 1),
+            Tok::Open {
+                name,
+                attrs,
+                self_closing: false,
+            } if name == "correspAction" => {
+                let sending =
+                    attr(attrs, "type") == Some("sent") || attr(attrs, "type") == Some("sending");
+                let receiving = attr(attrs, "type") == Some("received")
+                    || attr(attrs, "type") == Some("receiving");
+                let mut persons: Vec<(String, Option<String>)> = Vec::new();
+                let mut place: Option<String> = None;
+                let mut when: Option<String> = None;
+                i += 1;
+                while i < toks.len() {
+                    match &toks[i] {
+                        Tok::Close(name) if name == "correspAction" => {
+                            i += 1;
+                            break;
+                        }
+                        Tok::Open {
+                            name,
+                            attrs,
+                            self_closing,
+                        } if matches!(name.as_str(), "persName" | "orgName" | "name") => {
+                            let key = attr(attrs, "ref")
+                                .or(attr(attrs, "key"))
+                                .map(str::to_string);
+                            if *self_closing {
+                                i += 1;
+                                continue;
+                            }
+                            let (text, next) = tei_text_of(toks, i + 1, name)?;
+                            let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                            if !text.is_empty() {
+                                persons.push((text, key));
+                            }
+                            i = next;
+                        }
+                        Tok::Open {
+                            name,
+                            attrs,
+                            self_closing,
+                        } if name == "placeName" || name == "settlement" => {
+                            let key = attr(attrs, "ref")
+                                .or(attr(attrs, "key"))
+                                .map(str::to_string);
+                            if *self_closing {
+                                place = place.or(key);
+                                i += 1;
+                                continue;
+                            }
+                            let (text, next) = tei_text_of(toks, i + 1, name)?;
+                            let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                            if place.is_none() {
+                                place = key.or((!text.is_empty()).then_some(text));
+                            }
+                            i = next;
+                        }
+                        Tok::Open {
+                            name,
+                            attrs,
+                            self_closing,
+                        } if name == "date" => {
+                            if when.is_none() {
+                                when = attr(attrs, "when")
+                                    .or(attr(attrs, "from"))
+                                    .or(attr(attrs, "notBefore"))
+                                    .or(attr(attrs, "notAfter"))
+                                    .map(str::to_string);
+                            }
+                            i += 1;
+                            if !*self_closing {
+                                i = skip_element(toks, i, "date".to_string())?;
+                            }
+                        }
+                        Tok::Open {
+                            name, self_closing, ..
+                        } => {
+                            i += 1;
+                            if !*self_closing {
+                                i = skip_element(toks, i, name.clone())?;
+                            }
+                        }
+                        _ => i += 1,
+                    }
+                }
+                if sending && !has_author {
+                    for (text, key) in persons {
+                        let mut marks = Vec::new();
+                        if let Some(key) = key {
+                            marks.push(aphanes(PROSOPON, &key));
+                        }
+                        if let Some(place) = &place {
+                            marks.push(aphanes(CHORA, place));
+                        }
+                        if let Some(when) = &when {
+                            marks.push(aphanes(CHRONOS, when));
+                        }
+                        blocks.push(solo_endo(
+                            "=:",
+                            with_aphanes(marks, vec![Inline::Text(text)]),
+                        ));
+                    }
+                } else if receiving {
+                    for (text, key) in persons {
+                        let marks = key.map(|k| vec![aphanes(PROSOPON, &k)]).unwrap_or_default();
+                        blocks.push(solo_endo(
+                            "-:",
+                            with_aphanes(marks, vec![Inline::Text(text)]),
+                        ));
+                    }
+                }
+            }
+            Tok::Open {
+                name, self_closing, ..
+            } => {
+                i += 1;
+                if !*self_closing {
+                    i = skip_element(toks, i, name.clone())?;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    Err(tei_err("unterminated <correspDesc>".into()))
 }
 
 /// The core milestone for a TEI milestone (spec v0.12): the
@@ -3703,6 +3880,124 @@ fn div_level(div_type: Option<&str>, parent_level: usize) -> usize {
 }
 
 /// Parse block content until the closing tag `until`.
+/// The elements that open a block of their own: a run of text
+/// at block level ends where one of them opens.
+fn tei_block_level(name: &str) -> bool {
+    matches!(
+        name,
+        "div"
+            | "p"
+            | "ab"
+            | "head"
+            | "lg"
+            | "l"
+            | "sp"
+            | "speaker"
+            | "stage"
+            | "said"
+            | "quote"
+            | "cit"
+            | "epigraph"
+            | "figure"
+            | "table"
+            | "list"
+            | "label"
+            | "opener"
+            | "closer"
+            | "postscript"
+            | "dateline"
+            | "salute"
+            | "signed"
+            | "trailer"
+            | "listPerson"
+            | "listBibl"
+            | "castList"
+            | "noteGrp"
+            | "metamark"
+            | "milestone"
+            | "app"
+            | "interpGrp"
+    )
+}
+
+/// The elements that only ever open inside running text: one of
+/// them at block level starts an implicit paragraph.
+fn tei_inline_only(name: &str) -> bool {
+    matches!(
+        name,
+        "choice"
+            | "hi"
+            | "emph"
+            | "foreign"
+            | "ref"
+            | "ptr"
+            | "name"
+            | "persName"
+            | "placeName"
+            | "orgName"
+            | "rs"
+            | "date"
+            | "del"
+            | "add"
+            | "seg"
+            | "num"
+            | "abbr"
+            | "expan"
+            | "sic"
+            | "corr"
+            | "reg"
+            | "orig"
+            | "term"
+            | "soCalled"
+            | "mentioned"
+            | "unclear"
+            | "supplied"
+            | "title"
+            | "bibl"
+    )
+}
+
+/// Running text at block level is an implicit paragraph: the run
+/// from `i` to the next block-level element (or the enclosing
+/// close), read as a paragraph's inline run. Notes inside it are
+/// footnotes of that paragraph, as in a `<p>`.
+fn tei_implicit_paragraph(toks: &[Tok], i: usize, ctx: &mut TeiCtx) -> Result<(Vec<Block>, usize)> {
+    let mut j = i;
+    let mut depth = 0usize;
+    while j < toks.len() {
+        match &toks[j] {
+            Tok::Open {
+                name, self_closing, ..
+            } => {
+                if depth == 0 && tei_block_level(name) {
+                    break;
+                }
+                if !*self_closing {
+                    depth += 1;
+                }
+            }
+            Tok::Close(_) => {
+                if depth == 0 {
+                    break;
+                }
+                depth -= 1;
+            }
+            Tok::Text(_) => {}
+        }
+        j += 1;
+    }
+    let mut run: Vec<Tok> = toks[i..j].to_vec();
+    run.push(Tok::Close("p".to_string()));
+    let ((mut content, bodies), _) = tei_inline_run(&run, 0, "p", ctx)?;
+    trim_inline_edges(&mut content);
+    let mut out = Vec::new();
+    if !content.is_empty() {
+        out.push(Block::Paragraph(content));
+    }
+    out.extend(bodies);
+    Ok((out, j))
+}
+
 fn tei_blocks(
     toks: &[Tok],
     mut i: usize,
@@ -3726,8 +4021,13 @@ fn tei_blocks(
                 // dropped, not an error.
                 i += 1;
             }
-            Tok::Text(t) => {
-                return Err(tei_err(format!("bare text at block level: `{}`", t.trim())));
+            Tok::Text(_) => {
+                // Running text at block level (an opener's line,
+                // a letter's text after its opener): an implicit
+                // paragraph up to the next block.
+                let (inner, next) = tei_implicit_paragraph(toks, i, ctx)?;
+                blocks.extend(inner);
+                i = next;
             }
             Tok::Open {
                 name,
@@ -3956,6 +4256,12 @@ fn tei_blocks(
                     let (run, next) = tei_inline_run(toks, i + 1, "p", ctx)?;
                     (run, next)
                 };
+                // A paragraph of nothing (a page break alone, a
+                // layout blank) says nothing.
+                if content.is_empty() && bodies.is_empty() {
+                    i = next;
+                    continue;
+                }
                 // A paragraph-level ana annotates the paragraph:
                 // its eidos marks come first inside it.
                 let content = match ana {
@@ -4170,15 +4476,61 @@ fn tei_blocks(
                 i = next;
             }
             Tok::Open { name, .. } if name == "salute" || name == "signed" || name == "ab" => {
+                // The salutation and the signature are at-epistole's
+                // own; an anonymous block is a paragraph.
                 let n = name.clone();
                 let ((content, bodies), next) = tei_inline_run(toks, i + 1, &n, ctx)?;
-                blocks.push(Block::Paragraph(content));
+                blocks.push(match n.as_str() {
+                    "salute" => solo_endo("-=", content),
+                    "signed" => solo_endo("-_", content),
+                    _ => Block::Paragraph(content),
+                });
                 blocks.extend(bodies);
                 i = next;
             }
-            Tok::Open { name, .. } if name == "closer" || name == "opener" => {
+            Tok::Open {
+                name, self_closing, ..
+            } if matches!(
+                name.as_str(),
+                "closer" | "opener" | "postscript" | "noteGrp"
+            ) =>
+            {
+                // The parts of a letter, and a group of notes:
+                // transparent wrappers. Their running text is a
+                // paragraph (an opener's line), their dateline,
+                // salute and signed their own blocks, a
+                // postscript's paragraphs paragraphs. An empty
+                // one is nothing.
+                if *self_closing {
+                    i += 1;
+                    continue;
+                }
                 let n = name.clone();
                 let (inner, next) = tei_blocks(toks, i + 1, &n, depth, ctx)?;
+                blocks.extend(inner);
+                i = next;
+            }
+            Tok::Open {
+                name,
+                attrs,
+                self_closing,
+            } if name == "metamark" => {
+                // A line drawn across the page separates what is
+                // above from what is below: the section break.
+                // Any other mark is skipped.
+                if attr(attrs, "function") == Some("line") {
+                    blocks.push(solo_endo("**", vec![Inline::Text(" * * * ".to_string())]));
+                }
+                let sc = *self_closing;
+                i += 1;
+                if !sc {
+                    i = skip_element(toks, i, "metamark".to_string())?;
+                }
+            }
+            Tok::Open { name, .. } if tei_inline_only(name) => {
+                // An inline element opening a run at block level:
+                // the run is an implicit paragraph.
+                let (inner, next) = tei_implicit_paragraph(toks, i, ctx)?;
                 blocks.extend(inner);
                 i = next;
             }
@@ -5032,6 +5384,16 @@ fn tei_figure(
             Tok::Open { name, .. } if name == "figDesc" => {
                 i = skip_element(toks, i + 1, "figDesc".to_string())?;
             }
+            Tok::Open { name, .. } if name == "p" => {
+                // A paragraph in a figure is its caption when no
+                // head gave one; otherwise description, skipped.
+                let ((content, inner), next) = tei_inline_run(toks, i + 1, "p", ctx)?;
+                if lemma.is_empty() {
+                    lemma = content;
+                }
+                bodies.extend(inner);
+                i = next;
+            }
             other => return Err(tei_err(format!("unsupported {other:?} in <figure>"))),
         }
     }
@@ -5656,6 +6018,24 @@ fn tei_inline_run(
                         inlines.extend(content);
                         inlines.extend(ids.iter().map(|id| mono(id)));
                     }
+                } else if !target.is_empty()
+                    && !target.contains(':')
+                    && !target.contains('/')
+                    && !target.contains('#')
+                {
+                    // A bare name as the target (a glossary, a
+                    // scheme of the edition's own): the text is
+                    // a reference whose mark is that name, the
+                    // skopos aphanes on an annotation.
+                    inlines.push(Inline::Endo {
+                        symbol: ",".to_string(),
+                        content: with_aphanes(vec![aphanes(SKOPOS, &target)], content),
+                        bracket_matching: true,
+                        ann: Annotations {
+                            onym: None,
+                            genoses: vec!["ref".to_string()],
+                        },
+                    });
                 } else if !target.is_empty() {
                     // External link.
                     if !content.is_empty() {
@@ -5680,6 +6060,16 @@ fn tei_inline_run(
                     inlines.extend(content);
                 }
                 i = next;
+            }
+            Tok::Open {
+                name, self_closing, ..
+            } if name == "metamark" => {
+                // A mark on the page is not text.
+                let sc = *self_closing;
+                i += 1;
+                if !sc {
+                    i = skip_element(toks, i, "metamark".to_string())?;
+                }
             }
             Tok::Open { name, .. } if name == "choice" => {
                 // Reading text: expan/corr/reg, with abbr/sic/orig

@@ -434,6 +434,30 @@
 ]@</blockquote>
 >-@
 
+@-> -:
+<span class="addressee">@(grammata)</span>
+>-@
+
+@-> *solo -:
+<p class="addressee">@(grammata)</p>
+>-@
+
+@-> -=
+<span class="salutation">@(grammata)</span>
+>-@
+
+@-> *solo -=
+<p class="salutation">@(grammata)</p>
+>-@
+
+@-> -_
+<span class="signature">@(grammata)</span>
+>-@
+
+@-> *solo -_
+<p class="signature">@(grammata)</p>
+>-@
+
 @-> -/
 <span class="composition-date">@(grammata)</span>
 >-@

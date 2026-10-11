@@ -1,0 +1,45 @@
+@@@!atrep
+
+@@/ at-epistole: the epistolary pack - the frame of a letter
+@@/ (ἐπιστολή): whom it is to, how it opens, who signs, and when.
+@@/ One symbol family on `-`, each sim its own paragraph.
+@@/ Part of the standard library; composes with koine and its
+@@/ sibling packs.
+
+@=== addressee
+@-: grammata :-@
+@"the person a letter is addressed to"@
+@""
+Own paragraph, at the head of the letter. The person's key rides
+as a prosopon aphanes first inside it (@-:@?:(lucilius)Lucilio
+suo:-@). A document that is one letter puts it after the front
+matter; a collection, at the head of each letter's section.
+""@
+===@
+
+@=== salutation
+@-= grammata =-@
+@"the salutation that opens a letter"@
+@""
+Own paragraph: the letter's own head line ("Dear Sir,"), as the
+title is the document's.
+""@
+===@
+
+@=== signature
+@-_ grammata _-@
+@"the signature that closes a letter"@
+@""
+Own paragraph: the line under the letter that attributes it, as
+the dialogue tag attributes speech.
+""@
+===@
+
+@=== composition-date
+@-/ grammata /-@
+@"composition date at the end of stories or letters"@
+@""
+Own paragraph. Poems use the verse hypograph instead. Formerly
+in at-poesia; the symbol is unchanged.
+""@
+===@

@@ -14,21 +14,24 @@ const WEBSTER: &str = "\
 #INCLUDE \"abbrev.dsl\"
 
 {{ Three entries after Webster 1913, in the DSL shape. }}
-Liberal
-\t[m1][t]lĭb′ẽr·al[/t][/m]
-\t[m1][p]a.[/p] [p]Etym:[/p] [com][i]F. libéral, L. liberalis, fr. liber free.[/i][/com][/m]
-\t[m1]1) Free by birth; hence, befitting a freeman or gentleman; refined; noble. [ex]a liberal ancestry[/ex][/m]
-\t[m1]2) Bestowing in a large and noble way, as a freeman; generous; bounteous. [ex]a liberal giver[/ex][/m]
-\t[m2]a) Not strict or rigorous; free; as, a liberal translation of a classic.[/m]
-\t[m2]b) Not narrow or contracted in mind; catholic.[/m]
-\t[m1]3) Free to excess; licentious. [p]Obs.[/p][/m]
-\t[m1]4) Not bound by orthodox tenets; independent in opinion. See <<Liberalism>>.[/m]
-\t[m1][*][b]Syn.[/b] — Generous; bountiful; munificent; ample; profuse; free.[/*][/m]
+Culture
+\t[m1][t]kŭl′tụr[/t] [s]culture.wav[/s][/m]
+\t[m1][p]n.[/p] [p]Etym:[/p] [com][i]F. culture, L. cultura, fr. colere to till, cultivate; of uncertain origin. Cf. <<Cultivation>>.[/i][/com][/m]
+\t[m1]1) The act or practice of cultivating, or of preparing the earth for seed and raising crops by tillage. [ex]the culture of the soil[/ex][/m]
+\t[m1]2) The act of, or any labor or means employed for, training, disciplining, or refining the moral and intellectual nature of man. [ex]the culture of the mind[/ex][/m]
+\t[m1]3) The state of being cultivated; result of cultivation; physical improvement; enlightenment and discipline acquired by mental and moral training; civilization; refinement in manners and taste.[/m]
+\t[m1]4) [p]Biol.[/p][/m]
+\t[m2]a) The cultivation of bacteria or other organisms in artificial media or under artificial conditions.[/m]
+\t[m2]b) The collection of organisms resulting from such a cultivation.[/m]
+\t[m1]5) [p]Cartography[/p] Those details of a map, collectively, which do not represent natural features of the area delineated, as names and the symbols for towns, roads, houses, bridges, meridians, and parallels.[/m]
+\t[m1][*][b]~ fluid[/b], a fluid in which the germs of microscopic organisms are made to develop, either for purposes of study or as a means of modifying their virulence.[/*][/m]
 
-Liberalism
-\t[m1][t]lĭb′ẽr·al·ĭz’m[/t][/m]
-\t[m1][p]n.[/p][/m]
-\t[m1]Liberal principles; the principles and methods of the liberals in politics or religion; specifically, the principles of the ~ party. [s]liberalism.wav[/s][/m]
+Cultivation
+\t[m1][t]kŭl′tĭ·vā′shŭn[/t][/m]
+\t[m1][p]n.[/p] [p]Etym:[/p] [com][i]Cf. F. cultivation. Cf. <<Culture>>.[/i][/com][/m]
+\t[m1]1) The art or act of cultivating; improvement for agricultural purposes or by agricultural processes; tillage; production by tillage.[/m]
+\t[m1]2) Bestowal of time or attention for self-improvement or for the benefit of others; fostering care.[/m]
+\t[m1]3) The state of being cultivated; advancement in physical, intellectual, or moral condition; refinement; culture. [ex]Italy . . . was but imperfectly reduced to cultivation before the irruption of the barbarians. — Hallam[/ex][/m]
 
 {to} bank
 bank
@@ -52,8 +55,8 @@ n.
 \tnoun
 v. i.
 \tverb intransitive
-Obs.
-\tobsolete
+Biol.
+\tbiology
 Etym:
 \tetymology
 ";
@@ -115,41 +118,55 @@ fn webster_imports_as_lexigramma() {
         "{s}"
     );
     // Labels open the first line: the grammar line; the etymology
-    // label makes the comment the etymology.
+    // label makes the comment the etymology, a reference inside it
+    // still a reference.
     assert!(
         s.contains(
-            "@! Liberal\n@=%lĭb′ẽr·al%=@\n\n@=&a.&=@\n\n@=<@/F. libéral, L. liberalis, fr. liber free./@>=@\n"
+            "@! Culture\n@=%kŭl′tụr%=@\n\n@=&n.&=@\n\n@=<@/F. culture, L. cultura, fr. colere to till, cultivate; of uncertain origin. Cf. @>(Cultivation)./@>=@\n"
         ),
         "{s}"
     );
     // Numbered senses, letters nested under the arabic sense before
-    // them, taxis positional.
-    assert!(s.contains("@:(1)\nFree by birth"), "{s}");
+    // them, taxis positional; a sense that is only a label.
     assert!(
-        s.contains("@:(2)\nBestowing in a large and noble way, as a freeman; generous; bounteous. @~a liberal giver~@\n\n@:(1)\nNot strict"),
+        s.contains("@:(1)\nThe act or practice of cultivating"),
         "{s}"
     );
     assert!(
-        s.contains("@:(2)\nNot narrow or contracted in mind; catholic.\n:@\n:@\n\n@:(3)\n"),
+        s.contains("@:(2)\nThe act of, or any labor or means employed for, training, disciplining, or refining the moral and intellectual nature of man. @~the culture of the mind~@\n:@\n\n@:(3)\n"),
         "{s}"
     );
-    // A label in the text, untyped; a reference to another card.
-    assert!(s.contains("licentious. @[Obs.]@\n"), "{s}");
-    assert!(s.contains("See @>(Liberalism).\n"), "{s}");
-    // The secondary text, a typed diaphane.
+    assert!(
+        s.contains("@:(4)\n@[Biol.]@\n\n@:(1)\nThe cultivation of bacteria"),
+        "{s}"
+    );
+    assert!(
+        s.contains("@:(2)\nThe collection of organisms resulting from such a cultivation.\n:@\n:@\n\n@:(5)\n"),
+        "{s}"
+    );
+    // A label in the text, untyped; a reference to another card,
+    // in the running text of an etymology.
+    assert!(
+        s.contains("@:(5)\n@[Cartography]@ Those details of a map"),
+        "{s}"
+    );
+    assert!(s.contains("Cf. @>(Culture)./@>=@\n"), "{s}");
+    // The secondary text, a typed diaphane; ~ is the headword.
     assert!(
         s.contains(
-            "@@.@*Syn.*@ — Generous; bountiful; munificent; ample; profuse; free..@@.secondary"
+            "@@.@*Culture fluid*@, a fluid in which the germs of microscopic organisms are made to develop, either for purposes of study or as a means of modifying their virulence..@@.secondary"
         ),
         "{s}"
     );
-    // A card with no numbering is one sense; ~ is the headword;
-    // the sound file an enmedia block.
+    // The sound file an enmedia block, before the senses.
     assert!(
-        s.contains("@! Liberalism\n@=%lĭb′ẽr·al·ĭz’m%=@\n\n@=&n.&=@\n@@@@(liberalism.wav)\n@:(1)\nLiberal principles"),
+        s.contains("@! Culture\n@=%kŭl′tụr%=@\n\n@=&n.&=@\n\n@=<@/F. culture, L. cultura, fr. colere to till, cultivate; of uncertain origin. Cf. @>(Cultivation)./@>=@\n@@@@(culture.wav)\n@:(1)\n"),
         "{s}"
     );
-    assert!(s.contains("the principles of the Liberalism party."), "{s}");
+    assert!(
+        s.contains("@! Cultivation\n@=%kŭl′tĭ·vā′shŭn%=@\n\n@=&n.&=@\n\n@=<@/Cf. F. cultivation. Cf. @>(Culture)./@>=@\n\n@:(1)\nThe art or act of cultivating"),
+        "{s}"
+    );
     // A braced headword: displayed whole, indexed by the rest (the
     // sort key); the second headword a spelling variant.
     assert!(
@@ -250,10 +267,10 @@ fn dsl_import_kanonizes_and_exports() {
     let doc = dsl::dsl_to_document_with_abbreviations(&utf16le(WEBSTER), &utf16le(ABBREV)).unwrap();
     let path = tmp.join("webster.atd");
     std::fs::write(&path, dendron::serialize(&doc)).unwrap();
-    std::fs::write(tmp.join("liberalism.wav"), b"RIFF").unwrap();
+    std::fs::write(tmp.join("culture.wav"), b"RIFF").unwrap();
     let kanon = kanonizo::kanonizo_file(&path).unwrap().document;
     let atk = dendron::serialize(&kanon);
-    assert!(atk.contains("@! Liberal\n"), "{atk}");
+    assert!(atk.contains("@! Culture\n"), "{atk}");
     let x = exo::resolve_exo(&tmp, "lexigramma", "kindle").unwrap();
     let html = exo::render(&kanon, &x, &tmp).unwrap();
     assert!(html.contains(r#"<idx:orth value="to bank">"#), "{html}");
@@ -264,7 +281,7 @@ fn dsl_import_kanonizes_and_exports() {
     assert!(html.contains("<span class=\"secondary\">"), "{html}");
     let x = exo::resolve_exo(&tmp, "lexigramma", "latex").unwrap();
     let tex = exo::render(&kanon, &x, &tmp).unwrap();
-    assert!(tex.contains("lĭb′ẽr·al"), "{tex}");
+    assert!(tex.contains("kŭl′tụr"), "{tex}");
 }
 
 /// The labels an abbreviations list does not resolve are reported
@@ -275,18 +292,27 @@ fn unresolved_labels_are_reported() {
     use atrep::{dialektos, report};
     let doc = dsl::dsl_to_document_with_abbreviations(&utf16le(WEBSTER), &utf16le(ABBREV)).unwrap();
     let dial = dialektos::resolve(Path::new("."), "lexigramma").unwrap();
+    // The fixture's list lacks one label, in an entry.
     let found = report::unresolved_labels(&doc, &dial);
-    assert!(found.is_empty(), "{found:?}");
-    // A label the list lacks, in an entry.
-    let dsl = WEBSTER.replace("[p]Obs.[/p]", "[p]Rare.[/p]");
+    let cartography = report::UnresolvedLabel {
+        label: "Cartography".to_string(),
+        entry: Some("Culture".to_string()),
+    };
+    assert_eq!(found, vec![cartography.clone()]);
+    // A label the list resolves, swapped for one it lacks: both
+    // reported, in document order.
+    let dsl = WEBSTER.replace("[p]Biol.[/p]", "[p]Rare.[/p]");
     let doc = dsl::dsl_to_document_with_abbreviations(&utf16le(&dsl), &utf16le(ABBREV)).unwrap();
     let found = report::unresolved_labels(&doc, &dial);
     assert_eq!(
         found,
-        vec![report::UnresolvedLabel {
-            label: "Rare.".to_string(),
-            entry: Some("Liberal".to_string()),
-        }]
+        vec![
+            report::UnresolvedLabel {
+                label: "Rare.".to_string(),
+                entry: Some("Culture".to_string()),
+            },
+            cartography,
+        ]
     );
     // No list: no report.
     let doc = dsl::dsl_to_document(&utf16le(&dsl)).unwrap();

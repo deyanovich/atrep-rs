@@ -64,6 +64,9 @@
 @:: "" , .quotation
 @<< "/
 @:: -/ , .date
+@:: -: , .addressee
+@:: -= , .salutation
+@:: -_ , .signature
 
 @@/ Figures and tables.
 @<# < !

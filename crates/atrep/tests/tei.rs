@@ -870,3 +870,215 @@ Miscellanies
     let back = kanonizo::kanonizo_file(&back_path).unwrap().document;
     assert_eq!(dendron::serialize(&back), dendron::serialize(&kanon));
 }
+
+/// The correspondence module: a letter's parts, its description
+/// in the header, and the editorial apparatus around it.
+const LETTER_TEI: &str = r##"<?xml version="1.0" encoding="UTF-8"?>
+<TEI xmlns="http://www.tei-c.org/ns/1.0">
+  <teiHeader>
+    <fileDesc>
+      <titleStmt>
+        <title type="main">Letter to a Publisher, 3 May 1858</title>
+        <title type="bibl">Letters, vol. 2, p. 14.</title>
+      </titleStmt>
+      <publicationStmt><p>Test specimen.</p></publicationStmt>
+      <sourceDesc><p>Born digital.</p></sourceDesc>
+    </fileDesc>
+    <profileDesc>
+      <correspDesc>
+        <correspAction type="sent">
+          <persName ref="p1">A. Writer</persName>
+          <placeName>Oak Hill</placeName>
+          <date when="1858-05-03"/>
+        </correspAction>
+        <correspAction type="received">
+          <persName ref="p2">B. Publisher</persName>
+        </correspAction>
+      </correspDesc>
+    </profileDesc>
+  </teiHeader>
+  <xenoData><number type="in a volume">14</number></xenoData>
+  <text>
+    <body>
+      <div>
+        <pb n="14"/>
+        <opener>
+          14. <name type="person" ref="p2">B. Publisher</name>. 1858. May 3. Oak Hill
+          <dateline>Oak Hill, 3 May 1858.</dateline>
+          <salute>Dear Sir,</salute>
+        </opener>
+        <p>I return the proofs of the <hi rend="italic">Histories</hi>,
+        book I.<ref target="#n1">1</ref><note xml:id="n1">The first of
+        nine.</note> The stain on the <del>second</del>Third sheet
+        is mine.</p>
+        <p rend="emptyline"><pb n="15"/></p>
+        <metamark function="line"/>
+        The second sheet wants a <ref target="slovar">colophon</ref>.
+        <closer>
+          <salute>Yours faithfully,</salute>
+          <signed>A. Writer</signed>
+        </closer>
+        <postscript>
+          <label>P. S.</label>
+          <p>Send the rest by the carrier.</p>
+        </postscript>
+        <noteGrp type="comments">
+          <note type="comments"><p>Published from the autograph.</p></note>
+          <note type="comments"><p>The reply is lost.</p></note>
+        </noteGrp>
+        <noteGrp type="comments"/>
+      </div>
+    </body>
+  </text>
+</TEI>
+"##;
+
+#[test]
+fn letter_imports_with_correspondence_module() {
+    let doc = endo::tei_to_document(LETTER_TEI).expect("letter imports");
+    let atd = dendron::serialize(&doc);
+    // The main title; xenoData beside the header is skipped.
+    assert!(
+        atd.contains("@=Letter to a Publisher, 3 May 1858=@"),
+        "{atd}"
+    );
+    assert!(!atd.contains("14\n"), "{atd}");
+    // The sending action is the author line, annotated with the
+    // person's key, the place and the date; the receiving action
+    // the addressee line, with the person's key.
+    assert!(
+        atd.contains(
+            "@=:@?:(p1)@?.(Oak-Hill)@?-(1858-05-03)A. Writer:=@\n\n@-:@?:(p2)B. Publisher:-@\n\n"
+        ),
+        "{atd}"
+    );
+    assert_eq!(atd.matches("@=:").count(), 1, "{atd}");
+    // The opener's running text is a paragraph, its dateline the
+    // composition date, its salute a paragraph.
+    assert!(
+        atd.contains("\n\n14. @,@?:(p2)B. Publisher,@.name. 1858. May 3. Oak Hill\n\n"),
+        "{atd}"
+    );
+    assert!(atd.contains("\n\n@-/Oak Hill, 3 May 1858./-@\n\n"), "{atd}");
+    assert!(atd.contains("\n\n@-=Dear Sir,=-@\n\n"), "{atd}");
+    // The paired ref drops for the note's deixis; a genos before
+    // text opening with a letter takes the separator.
+    assert!(
+        atd.contains("book I.@^(n1) The stain on the @,second,@.del|Third sheet is mine."),
+        "{atd}"
+    );
+    assert!(atd.contains("@^\nThe first of nine.\n^@(n1)"), "{atd}");
+    // A paragraph of nothing but a page break is nothing.
+    assert!(!atd.contains("\n\n\n"), "{atd}");
+    // The line drawn across the page is the section break.
+    assert!(atd.contains("\n\n@** * * * **@\n\n"), "{atd}");
+    // Running text at block level is a paragraph; a bare-name
+    // target is the skopos of the reference.
+    assert!(
+        atd.contains("\n\nThe second sheet wants a @,@?>(slovar)colophon,@.ref.\n\n"),
+        "{atd}"
+    );
+    // The closer's salute and signature, the postscript's label
+    // and paragraph.
+    assert!(
+        atd.contains("\n\n@-=Yours faithfully,=-@\n\n@-_A. Writer_-@\n\n"),
+        "{atd}"
+    );
+    assert!(
+        atd.contains("@,P. S.,@.label\n\nSend the rest by the carrier.\n\n"),
+        "{atd}"
+    );
+    // The comments are manuscript notes; an empty group is nothing.
+    assert!(
+        atd.contains("@^!\nPublished from the autograph.\n!^@\n\n@^!\nThe reply is lost.\n!^@\n"),
+        "{atd}"
+    );
+}
+
+/// A title statement that names the author keeps it: the
+/// correspondence description adds no second author line.
+#[test]
+fn letter_author_from_title_statement_wins() {
+    let tei = LETTER_TEI.replace(
+        "<title type=\"bibl\">",
+        "<author>A. Writer, Esq.</author><title type=\"bibl\">",
+    );
+    let doc = endo::tei_to_document(&tei).expect("letter imports");
+    let atd = dendron::serialize(&doc);
+    assert!(atd.contains("@=:A. Writer, Esq.:=@"), "{atd}");
+    assert_eq!(atd.matches("@=:").count(), 1, "{atd}");
+}
+
+/// A figure whose graphic the distribution lacks: kanonizo
+/// refuses by default (a kanon bundles its media), and under
+/// `MissingMedia::Keep` keeps the inclusion as written and
+/// reports it, so the letter still reads.
+#[test]
+fn missing_graphic_is_kept_on_request() {
+    use atrep::kanonizo::{self, KanonizoOptions, MissingMedia};
+    let tei = LETTER_TEI.replace(
+        "<postscript>",
+        "<figure><graphic url=\"./img/b00001115.png\"/><head>The enclosure</head></figure><postscript>",
+    );
+    let doc = endo::tei_to_document(&tei).expect("letter imports");
+    let atd = dendron::serialize(&doc);
+    assert!(atd.contains("@@@@(./img/b00001115.png)"), "{atd}");
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("tei-missing-graphic");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("letter.atd");
+    std::fs::write(&path, &atd).unwrap();
+    let fetcher = atrep::fetch::DeniedFetcher;
+    let err = kanonizo::kanonizo_file_with(&path, &fetcher, &KanonizoOptions::default())
+        .expect_err("refused by default");
+    assert!(err.to_string().contains("b00001115.png"), "{err}");
+    let opts = KanonizoOptions {
+        missing_media: MissingMedia::Keep,
+        ..Default::default()
+    };
+    let result = kanonizo::kanonizo_file_with(&path, &fetcher, &opts).expect("kept");
+    assert_eq!(
+        result.missing_media,
+        vec!["./img/b00001115.png".to_string()]
+    );
+    assert!(result.media.is_empty());
+    assert!(
+        result.kanon.contains("@@@@(./img/b00001115.png)"),
+        "{}",
+        result.kanon
+    );
+    assert!(result.kanon.contains("The enclosure"), "{}", result.kanon);
+}
+
+/// The letter's frame renders through the std exos: the pack's
+/// sims have LaTeX macros, HTML classes and TEI elements.
+#[test]
+fn letter_frame_renders_through_exos() {
+    use atrep::{exo, kanonizo};
+    let doc = endo::tei_to_document(LETTER_TEI).expect("letter imports");
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("tei-letter-exo");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("letter.atd");
+    std::fs::write(&path, dendron::serialize(&doc)).unwrap();
+    let kanon = kanonizo::kanonizo_file(&path).expect("kanonizes").document;
+    let x = exo::resolve_exo(&dir, "litogramma", "latex").unwrap();
+    let tex = exo::render(&kanon, &x, &dir).unwrap();
+    assert!(tex.contains("\\ltaddresseepar{B. Publisher}"), "{tex}");
+    assert!(tex.contains("\\ltsalutationpar{Dear Sir,}"), "{tex}");
+    assert!(tex.contains("\\ltsignaturepar{A. Writer}"), "{tex}");
+    assert!(
+        tex.contains("\\ltcompdatepar{Oak Hill, 3 May 1858.}"),
+        "{tex}"
+    );
+    let x = exo::resolve_exo(&dir, "litogramma", "html").unwrap();
+    let html = exo::render(&kanon, &x, &dir).unwrap();
+    assert!(
+        html.contains(r#"<p class="addressee">B. Publisher</p>"#),
+        "{html}"
+    );
+    assert!(
+        html.contains(r#"<p class="signature">A. Writer</p>"#),
+        "{html}"
+    );
+}

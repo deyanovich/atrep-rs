@@ -317,8 +317,14 @@ Implemented:
   into `litogramma` (`.xml`/`.tei`): teiHeader front matter,
   nested div sectioning with type/depth laddering, lg/l verse,
   sp/speaker drama with stage directions, epigraphs with
-  attribution, and notes as deixis callouts with footnote
-  bodies. Roundtrips are tested in all three
+  attribution, notes as deixis callouts with footnote bodies,
+  and the correspondence module into the `at-epistole` pack
+  (opener, closer and postscript as transparent wrappers,
+  dateline, salute and signed as the composition date,
+  salutation and signature, correspDesc's sending action as the
+  author line with person, place and date aphanes, its
+  receiving action as the addressee).
+  Roundtrips are tested in all three
   formats: the canonical form of each is a fixed point of
   export∘import.
   The `at-usfm` std dialektos maps scripture (`.usfm`/`.sfm`):

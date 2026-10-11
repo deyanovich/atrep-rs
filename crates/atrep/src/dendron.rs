@@ -412,12 +412,15 @@ fn push_inlines_in(
     for (i, inline) in inlines.iter().enumerate() {
         match inline {
             Inline::Text(t) => {
-                // Text opening with a genos-continue char directly
-                // after an emitted genos would extend it: separate.
+                // Text opening with a char the genos scanner takes
+                // (the parser reads the whole identifier-shaped run,
+                // uppercase included, to report a malformed genos)
+                // directly after an emitted genos would extend it:
+                // separate.
                 if after_genos
                     && t.chars()
                         .next()
-                        .is_some_and(crate::sigil::is_genos_continue)
+                        .is_some_and(|c| c == '-' || c.is_alphanumeric())
                 {
                     out.push('|');
                 }

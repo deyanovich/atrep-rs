@@ -315,6 +315,18 @@
 <date@[ when="@(chronos)"]@>@(grammata)</date>
 >-@
 
+@-> ,.addressee
+<name type="addressee"@[ ref="#@(prosopon)"]@>@(grammata)</name>
+>-@
+
+@-> ,.salute
+<salute>@(grammata)</salute>
+>-@
+
+@-> ,.signed
+<signed>@(grammata)</signed>
+>-@
+
 @-> ,.ref
 <ref@[ target="@(skopos)"]@>@(grammata)</ref>
 >-@

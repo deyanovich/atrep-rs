@@ -406,6 +406,7 @@ const STD_DIALEKTOI: &[(&str, &str)] = &[
     ("koine", include_str!("../std/koine.dia")),
     ("at-prosa", include_str!("../std/at-prosa.dia")),
     ("at-poesia", include_str!("../std/at-poesia.dia")),
+    ("at-epistole", include_str!("../std/at-epistole.dia")),
     ("at-drama", include_str!("../std/at-drama.dia")),
     ("at-aphanes", include_str!("../std/at-aphanes.dia")),
     ("at-epimerismos", include_str!("../std/at-epimerismos.dia")),
@@ -444,6 +445,16 @@ const STD_GLOSSAE: &[(&str, &str, &str)] = &[
         "at-epimerismos",
         "ru",
         include_str!("../std/at-epimerismos.ru.glossa"),
+    ),
+    (
+        "at-epistole",
+        "en",
+        include_str!("../std/at-epistole.en.glossa"),
+    ),
+    (
+        "at-epistole",
+        "ru",
+        include_str!("../std/at-epistole.ru.glossa"),
     ),
 ];
 

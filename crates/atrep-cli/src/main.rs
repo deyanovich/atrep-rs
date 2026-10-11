@@ -63,6 +63,11 @@ enum Command {
         /// Remote-fetch retries after a failed attempt.
         #[arg(long, default_value_t = 2)]
         retries: u32,
+        /// Keep a media inclusion whose file cannot be read or
+        /// fetched as written, with a warning, instead of refusing
+        /// the document.
+        #[arg(long)]
+        keep_missing_media: bool,
     },
     /// Export a kanon to an external format via its .exo rules.
     Exo {
@@ -462,6 +467,7 @@ fn run() -> atrep::Result<()> {
             output,
             timeout,
             retries,
+            keep_missing_media,
         } => {
             let source = read_input(&file)?;
             if atrep::is_definition_source(&source) {
@@ -476,6 +482,11 @@ fn run() -> atrep::Result<()> {
                         retries,
                         ..Default::default()
                     },
+                    missing_media: if keep_missing_media {
+                        atrep::kanonizo::MissingMedia::Keep
+                    } else {
+                        atrep::kanonizo::MissingMedia::Refuse
+                    },
                 };
                 let out = output_path(&file, output, file.with_extension("atk"))?;
                 let fetcher = atrep::fetch::HttpFetcher::new(&opts.fetch);
@@ -487,6 +498,9 @@ fn run() -> atrep::Result<()> {
                 println!("{}", out.display());
                 if !result.media.is_empty() {
                     println!("{}", out.with_extension("atk.tar.gz").display());
+                }
+                for param in &result.missing_media {
+                    eprintln!("atrep: warning: media `{param}` not found; kept as written");
                 }
             }
         }

@@ -411,6 +411,30 @@ _ \_
 \end{ltepigraph}
 >-@
 
+@-> -:
+\ltaddressee{@(grammata)}
+>-@
+
+@-> *solo -:
+\ltaddresseepar{@(grammata)}
+>-@
+
+@-> -=
+\ltsalutation{@(grammata)}
+>-@
+
+@-> *solo -=
+\ltsalutationpar{@(grammata)}
+>-@
+
+@-> -_
+\ltsignature{@(grammata)}
+>-@
+
+@-> *solo -_
+\ltsignaturepar{@(grammata)}
+>-@
+
 @-> -/
 \ltcompdate{@(grammata)}
 >-@
@@ -720,6 +744,12 @@ _ \_
 \newcommand\ltepihypo[1]{\begin{flushright}\upshape #1\end{flushright}}
 \newcommand\ltcompdate[1]{\hfill\textit{#1}}
 \newcommand\ltcompdatepar[1]{\begin{flushright}\textit{#1}\end{flushright}}
+\newcommand\ltaddressee[1]{\textit{#1}}
+\newcommand\ltaddresseepar[1]{\noindent\textit{#1}\par}
+\newcommand\ltsalutation[1]{#1}
+\newcommand\ltsalutationpar[1]{\noindent #1\par}
+\newcommand\ltsignature[1]{\hfill #1}
+\newcommand\ltsignaturepar[1]{\begin{flushright}#1\end{flushright}}
 
 % ---- milestones ----
 \newcommand\ltmilestone[2]{\marginpar{\footnotesize #1}}

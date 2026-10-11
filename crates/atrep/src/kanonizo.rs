@@ -38,12 +38,29 @@ pub struct KanonResult {
     /// Serialized canonical text.
     pub kanon: String,
     pub media: Vec<MediaEntry>,
+    /// Media the document declares that could not be read or
+    /// fetched, left in the kanon as written (only under
+    /// `MissingMedia::Keep`; otherwise kanonizo refuses).
+    pub missing_media: Vec<String>,
+}
+
+/// What kanonizo does with a media resource it cannot read or
+/// fetch: refuse the document (the default — a kanon bundles its
+/// media), or keep the inclusion as written and report it, for
+/// reading a corpus whose distribution lacks an illustration.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum MissingMedia {
+    #[default]
+    Refuse,
+    Keep,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct KanonizoOptions {
     /// Timeout/retry policy for remote resources.
     pub fetch: fetch::FetchConfig,
+    /// Policy for media that cannot be resolved.
+    pub missing_media: MissingMedia,
 }
 
 /// Kanonizo state threaded through expansion: the remote fetcher
@@ -55,6 +72,8 @@ struct Ctx<'a> {
     /// The root document's directory: every local transclusion and
     /// media target, at any inclusion depth, must stay inside it.
     base: PathBuf,
+    /// Keep an unresolvable media inclusion as written.
+    keep_missing_media: bool,
 }
 
 impl Ctx<'_> {
@@ -91,6 +110,7 @@ pub fn kanonizo_file_with(
         fetcher,
         cfg: &opts.fetch,
         base: path.parent().unwrap_or(Path::new(".")).to_path_buf(),
+        keep_missing_media: opts.missing_media == MissingMedia::Keep,
     };
     let mut seen = Seen::default();
     let mut doc = load_and_expand(path, &mut seen, &ctx)?;
@@ -118,13 +138,14 @@ pub fn kanonizo_file_with(
     unwrap_empty_diaphanes_blocks(&mut doc.blocks);
     normalize_document(&mut doc);
     let base_dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
-    let media = process_media(&mut doc.blocks, &base_dir, &ctx)?;
+    let (media, missing_media) = process_media(&mut doc.blocks, &base_dir, &ctx)?;
     dendron::check_serializable(&doc)?;
     let kanon = dendron::serialize(&doc);
     Ok(KanonResult {
         document: doc,
         kanon,
         media,
+        missing_media,
     })
 }
 
@@ -2367,10 +2388,19 @@ pub(crate) fn normalize_inline_seq(inlines: &mut Vec<Inline>) {
 // Media processing
 // ---------------------------------------------------------------
 
-fn process_media(blocks: &mut [Block], base_dir: &Path, ctx: &Ctx) -> Result<Vec<MediaEntry>> {
+/// Bundle the document's media: every inclusion read or fetched,
+/// hashed and renamed into `media/`. Returns the entries and, under
+/// `MissingMedia::Keep`, the parameters of the inclusions that
+/// could not be resolved and stay as written.
+fn process_media(
+    blocks: &mut [Block],
+    base_dir: &Path,
+    ctx: &Ctx,
+) -> Result<(Vec<MediaEntry>, Vec<String>)> {
     let mut entries = Vec::new();
-    process_media_blocks(blocks, base_dir, ctx, &mut entries)?;
-    Ok(entries)
+    let mut missing = Vec::new();
+    process_media_blocks(blocks, base_dir, ctx, &mut entries, &mut missing)?;
+    Ok((entries, missing))
 }
 
 fn process_media_blocks(
@@ -2378,22 +2408,33 @@ fn process_media_blocks(
     base_dir: &Path,
     ctx: &Ctx,
     entries: &mut Vec<MediaEntry>,
+    missing: &mut Vec<String>,
 ) -> Result<()> {
     for block in blocks.iter_mut() {
         match block {
             Block::Enmedia { param } => {
-                let (bytes, content_type) = if is_url(param) {
-                    let fetched = ctx.fetch(param)?;
-                    (fetched.bytes, fetched.content_type)
+                let resolved = if is_url(param) {
+                    ctx.fetch(param)
+                        .map(|fetched| (fetched.bytes, fetched.content_type))
                 } else {
-                    let resolved = contained_path(base_dir, base_dir, param)?;
-                    let bytes = std::fs::read(&resolved).map_err(|e| {
-                        Error::new(ErrorKind::MissingResource(format!(
-                            "{}: {e}",
-                            resolved.display()
-                        )))
-                    })?;
-                    (bytes, None)
+                    contained_path(base_dir, base_dir, param).and_then(|resolved| {
+                        std::fs::read(&resolved)
+                            .map(|bytes| (bytes, None))
+                            .map_err(|e| {
+                                Error::new(ErrorKind::MissingResource(format!(
+                                    "{}: {e}",
+                                    resolved.display()
+                                )))
+                            })
+                    })
+                };
+                let (bytes, content_type) = match resolved {
+                    Ok(found) => found,
+                    Err(_) if ctx.keep_missing_media => {
+                        missing.push(param.clone());
+                        continue;
+                    }
+                    Err(e) => return Err(e),
                 };
                 let sha256 = hex(&Sha256::digest(&bytes));
                 let n = entries.len() + 1;
@@ -2411,7 +2452,7 @@ fn process_media_blocks(
             Block::Para { children, .. }
             | Block::ParaDiaphane { children, .. }
             | Block::MonadEnglossis { children, .. } => {
-                process_media_blocks(children, base_dir, ctx, entries)?;
+                process_media_blocks(children, base_dir, ctx, entries, missing)?;
             }
             _ => {}
         }
