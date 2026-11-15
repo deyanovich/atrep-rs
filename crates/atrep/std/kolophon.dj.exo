@@ -1,0 +1,22 @@
+@@@!atrep-exo
+@=kolophon=>dj
+
+@@/ Djot export of a colophon: one paragraph a field, in the
+@@/ order written. The format has no place for a publication
+@@/ statement, so the fields stand as plain text.
+
+@%
+\ \\
+_ \_
+* \*
+` \`
+%@
+
+@-> *paragraph
+@(grammata)
+>-@
+
+@-> :
+@(grammata)
+
+>-@

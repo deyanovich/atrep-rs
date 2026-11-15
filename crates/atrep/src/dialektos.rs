@@ -419,6 +419,7 @@ const STD_DIALEKTOI: &[(&str, &str)] = &[
     ("at-usfm", include_str!("../std/at-usfm.dia")),
     ("litogramma", include_str!("../std/litogramma.dia")),
     ("bibliogramma", include_str!("../std/bibliogramma.dia")),
+    ("kolophon", include_str!("../std/kolophon.dia")),
     ("lexigramma", include_str!("../std/lexigramma.dia")),
 ];
 

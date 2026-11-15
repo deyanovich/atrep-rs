@@ -534,13 +534,24 @@ fn run() -> atrep::Result<()> {
             let (rendered, aux) = match atrep::native_export_in(&doc, &target, &dir) {
                 Some(rendered) => (rendered?, Vec::new()),
                 None => {
-                    let exo = atrep::exo::resolve_exo_variant(
+                    // A dialektos with no document exomorphosis
+                    // for the target exports through the one that
+                    // maps the format (litogramma to TEI through
+                    // at-tei). The route is the engine's business:
+                    // the command is the same for every format and
+                    // says nothing of it.
+                    let (route, exo) = atrep::exo::resolve_export(
                         &dir,
                         &doc.dialect_id,
                         &target,
                         variant.as_deref(),
                     )?;
-                    atrep::exo::render_with_aux(&doc, &exo, &dir)?
+                    if route.is_empty() {
+                        atrep::exo::render_with_aux(&doc, &exo, &dir)?
+                    } else {
+                        let mapped = atrep::morph::apply_route(&doc, &route)?;
+                        atrep::exo::render_with_aux(&mapped, &exo, &dir)?
+                    }
                 }
             };
             write_output(&out, rendered)?;

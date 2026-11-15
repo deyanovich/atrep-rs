@@ -1,0 +1,35 @@
+@@@!atrep-exo
+@=kolophon=>docbook
+
+@@/ DocBook export of a colophon, as children of an info: the
+@@/ publisher's name, the place as an address holding a city,
+@@/ the date as pubdate, any other field a bibliomisc whose role
+@@/ is the field name. All four stand directly in an info; the
+@@/ enclosing info is written by the host exo.
+
+@%
+& &amp;
+< &lt;
+> &gt;
+" &quot;
+%@
+
+@-> *paragraph
+@(grammata)
+>-@
+
+@-> :(officina)
+<publishername>@(grammata)</publishername>
+>-@
+
+@-> :(locus)
+<address><city>@(grammata)</city></address>
+>-@
+
+@-> :(datum)
+<pubdate>@(grammata)</pubdate>
+>-@
+
+@-> :
+<bibliomisc role="@(lemma)">@(grammata)</bibliomisc>
+>-@

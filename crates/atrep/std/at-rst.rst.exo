@@ -122,3 +122,9 @@ _ \_
 
 @-> *onym-anchor
 >-@
+
+@@/ The colophon (an embedded kolophon block) renders through
+@@/ its own exo, one paragraph a field, where the document has it.
+@-> *englossis kolophon
+@(grammata)
+>-@

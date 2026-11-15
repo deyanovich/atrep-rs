@@ -319,6 +319,19 @@ fn diaphane_text_ending_in_its_episymbol_keeps_the_separator() {
     assert_eq!(out, "@@@!review\n\n@,@@.foo,@^x^@.@@.g,@ end.\n");
 }
 
+/// A genos that closes a span whose episymbol opens with a hyphen
+/// (litogramma's said, `@:- ... -:@`) keeps its separator: without
+/// it the kanon reads back as a genos `persname-` and is refused.
+#[test]
+fn genos_before_a_hyphen_episymbol_keeps_the_separator() {
+    let dir = tmp_dir("genos-before-episymbol");
+    let src = "@@@!litogramma\n\n@:-No answer from @,Tom,@.persname|-:@ again.\n";
+    assert_eq!(idempotent_kanon(&dir, src), src);
+    // Text after the genos already closes it; nothing is added.
+    let src = "@@@!litogramma\n\n@:-No answer from @,Tom,@.persname yet-:@ again.\n";
+    assert_eq!(idempotent_kanon(&dir, src), src);
+}
+
 #[test]
 fn endo_axioma_text_ending_in_colon_keeps_the_separator() {
     use atrep::dendron::{Annotations, Block, Document, Inline};

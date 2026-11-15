@@ -1,0 +1,21 @@
+@@@!atrep-exo
+@=kolophon=>html
+
+@@/ HTML export of a colophon: one paragraph a field, classed
+@@/ with the field name. The host exo writes the enclosing
+@@/ element.
+
+@%
+& &amp;
+< &lt;
+> &gt;
+" &quot;
+%@
+
+@-> *paragraph
+@(grammata)
+>-@
+
+@-> :
+<p class="@(lemma)">@(grammata)</p>
+>-@

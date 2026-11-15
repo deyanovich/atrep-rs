@@ -59,6 +59,48 @@ _@.text
     assert!(tei.contains("<label>gloss-label</label>"));
 }
 
+/// A document frames itself when it holds a text block, and is
+/// framed when it holds none: either way one header, one text.
+#[test]
+fn text_and_body_are_written_once() {
+    let tmp = tmp_dir("attei-frame");
+    let x = exo::resolve_exo(&tmp, "at-tei", "tei").unwrap();
+    let render = |name: &str, doc: &str| {
+        std::fs::write(tmp.join(name), doc).unwrap();
+        let kanon = kanonizo::kanonizo_file(&tmp.join(name)).unwrap();
+        exo::render(&kanon.document, &x, &tmp).unwrap()
+    };
+
+    // No text block: the document is all body.
+    let bare = render(
+        "bare.atd",
+        "@@@!at-tei\n\n@#(1) The Claim\nInside.\n#@.chapter\n",
+    );
+    assert!(bare.contains(
+        "<titleStmt>\n<title/>\n</titleStmt>\n\
+         <publicationStmt>\n<p>Exported from an atrep document.</p>\n</publicationStmt>"
+    ));
+    assert!(bare.contains(
+        "</teiHeader>\n<text>\n<body>\n\
+         <div type=\"chapter\" n=\"1\">\n<head>The Claim</head>\n<p>Inside.</p>\n</div>\n\
+         </body>\n</text>\n</TEI>"
+    ));
+
+    // A text block with a lemma writes its own header and frame.
+    let titled = render(
+        "titled.atd",
+        "@@@!at-tei\n\n@_ On Solitude\nInside.\n_@.text\n",
+    );
+    assert!(titled.contains("<title>On Solitude</title>"));
+    assert!(!titled.contains("<title/>"));
+
+    for tei in [&bare, &titled] {
+        assert_eq!(tei.matches("<teiHeader>").count(), 1);
+        assert_eq!(tei.matches("<text>").count(), 1);
+        assert_eq!(tei.matches("<body>").count(), 1);
+    }
+}
+
 /// Unknown genoses ride the fallbacks instead of failing.
 #[test]
 fn free_genoses_survive() {

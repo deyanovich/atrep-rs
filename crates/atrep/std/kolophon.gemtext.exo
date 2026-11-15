@@ -1,0 +1,15 @@
+@@@!atrep-exo
+@=kolophon=>gemtext
+
+@@/ Gemtext export of a colophon: one paragraph a field, in the
+@@/ order written. The format has no place for a publication
+@@/ statement, so the fields stand as plain text.
+
+@-> *paragraph
+@(grammata)
+>-@
+
+@-> :
+@(grammata)
+
+>-@

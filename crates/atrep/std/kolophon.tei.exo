@@ -1,0 +1,36 @@
+@@@!atrep-exo
+@=kolophon=>tei
+
+@@/ TEI export of a colophon: the fields a publicationStmt has an
+@@/ element for as that element (publisher, pubPlace, date), any
+@@/ other field an idno typed with the field name - the one
+@@/ element of the statement that takes a free type. The
+@@/ enclosing publicationStmt is written by the host exo, which
+@@/ places the block in the header.
+
+@%
+& &amp;
+< &lt;
+> &gt;
+" &quot;
+%@
+
+@-> *paragraph
+@(grammata)
+>-@
+
+@-> :(officina)
+<publisher>@(grammata)</publisher>
+>-@
+
+@-> :(locus)
+<pubPlace>@(grammata)</pubPlace>
+>-@
+
+@-> :(datum)
+<date>@(grammata)</date>
+>-@
+
+@-> :
+<idno type="@(lemma)">@(grammata)</idno>
+>-@

@@ -178,3 +178,43 @@ fn docbook_root_title() {
     let out = dendron::serialize(&atrep::morph::apply(&kanon.document, &m).unwrap());
     assert!(out.contains("@=Solitude=@"), "{out}");
 }
+
+/// DocBook's numbered sections (sect1 to sect5) are the section
+/// sim at their depth, as `section` in `section` is.
+#[test]
+fn numbered_sections_nest() {
+    let doc = endo::docbook_to_document(
+        "<article xmlns=\"http://docbook.org/ns/docbook\" version=\"5.0\">\
+         <title>On the Sublime</title>\
+         <sect1><title>The sources</title>\
+         <sect2><title>Grandeur of thought</title>\
+         <sect3><title>Homer</title><para>The Iliad first.</para></sect3>\
+         </sect2></sect1></article>",
+    )
+    .unwrap();
+    let atd = dendron::serialize(&doc);
+    assert!(
+        atd.contains(
+            "@# The sources\n@# Grandeur of thought\n@# Homer\nThe Iliad first.\n#@\n#@\n#@"
+        ),
+        "{atd}"
+    );
+}
+
+/// A refusal names the element as the file writes it, not the
+/// tokenizer's view of it.
+#[test]
+fn refusal_names_the_element() {
+    let err = endo::docbook_to_document(
+        "<article xmlns=\"http://docbook.org/ns/docbook\" version=\"5.0\">\
+         <title>On the Sublime</title>\
+         <tip><para>Read Longinus twice.</para></tip></article>",
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("docbook import: unsupported <tip> at block level"),
+        "{err}"
+    );
+    assert!(!err.contains("Open {"), "{err}");
+}

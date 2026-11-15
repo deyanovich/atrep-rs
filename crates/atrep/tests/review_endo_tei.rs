@@ -249,6 +249,62 @@ fn table_cells_keep_wrapped_content() {
     check(&atd);
 }
 
+/// A said that ends on a pointed name: the name's genos stands
+/// against the said's closing `-:`, and the import still writes a
+/// document that reads back.
+#[test]
+fn said_ending_on_a_name_reads_back() {
+    let atd = import(&wrap(
+        "<p><said who=\"#polly\">No answer from \
+         <persName ref=\"#tom\">Tom</persName></said></p>",
+    ));
+    assert!(
+        atd.contains("@:-@?:(polly)No answer from @,@?:(tom)Tom,@.persname|-:@"),
+        "{atd}"
+    );
+    check(&atd);
+}
+
+/// A `<` inside a tag is not XML: a name tagged twice by a
+/// generator lands one element in another's attribute. The file
+/// is refused where the tag opens, and no pointer is made up from
+/// the pieces; the reference `&lt;` in a value is still text.
+#[test]
+fn lt_inside_a_tag_is_refused() {
+    let xml = wrap(
+        "<p><said who=\"#pechorin\">I was answered by \
+         <persName ref=\"#<persName ref=\"#maksim\">Maksim</persName> Maksimych\">Maksim \
+         Maksimych</persName></said></p>",
+    );
+    let err = endo::tei_to_document(&xml).unwrap_err().to_string();
+    assert!(err.contains("`<` inside the tag `<persName ref="), "{err}");
+    assert!(err.contains("not well-formed XML"), "{err}");
+
+    let atd = import(&wrap(
+        "<p>See <ref target=\"https://example.org/?a&lt;b\">the table</ref>.</p>",
+    ));
+    assert!(atd.contains("the table"), "{atd}");
+    check(&atd);
+}
+
+/// A refusal names the element as the file writes it, with its
+/// attributes: the reader has the file, not the tokenizer.
+#[test]
+fn refusal_names_the_element() {
+    let err = endo::tei_to_document(&wrap("<p>Water is H<sub>2</sub>O.</p>"))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("unsupported <sub> inline"), "{err}");
+
+    let err = endo::tei_to_document(&wrap(
+        "<floatingText type=\"letter\"><p>x</p></floatingText>",
+    ))
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("<floatingText type=\"letter\">"), "{err}");
+    assert!(!err.contains("Open {"), "{err}");
+}
+
 /// A self-closing <ptr/> paired with the note that follows it
 /// (the shape the at-tei exo writes) is the callout duplicate,
 /// as a paired <ref> is: only the deixis remains.

@@ -1,0 +1,28 @@
+@@@!atrep-exo
+@=kolophon=>latex
+
+@@/ LaTeX export of a colophon: one line a field, in stock LaTeX
+@@/ (no macro of a document class is assumed, so the block
+@@/ compiles under any class a host exo carries). The host exo
+@@/ sets the lines.
+
+@%
+\ \textbackslash{}
+{ \{
+} \}
+$ \$
+& \&
+# \#
+_ \_
+% \%
+~ \textasciitilde{}
+^ \textasciicircum{}
+%@
+
+@-> *paragraph
+@(grammata)
+>-@
+
+@-> :
+@(grammata)\par
+>-@

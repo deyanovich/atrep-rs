@@ -592,6 +592,43 @@ pub(crate) enum Tok {
     Text(String),
 }
 
+/// A token as a refusal names it: the tag as the file writes it
+/// (`<chapter>`, `</chapter>`, `<milestone unit="page"/>`), text
+/// by its opening words. The reader of the message has the file
+/// before them, not the tokenizer.
+impl std::fmt::Display for Tok {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Tok::Open {
+                name,
+                attrs,
+                self_closing,
+            } => {
+                write!(f, "<{name}")?;
+                for (attr, value) in attrs {
+                    let value = value
+                        .replace('&', "&amp;")
+                        .replace('<', "&lt;")
+                        .replace('"', "&quot;");
+                    write!(f, " {attr}=\"{value}\"")?;
+                }
+                f.write_str(if *self_closing { "/>" } else { ">" })
+            }
+            Tok::Close(name) => write!(f, "</{name}>"),
+            Tok::Text(text) => {
+                let trimmed = text.trim();
+                let shown: String = trimmed.chars().take(32).collect();
+                let more = if shown.len() < trimmed.len() {
+                    "…"
+                } else {
+                    ""
+                };
+                write!(f, "text \"{shown}{more}\"")
+            }
+        }
+    }
+}
+
 /// Import a useful subset of HTML as an `at-html` document.
 pub fn html_to_document(html: &str) -> Result<Document> {
     let toks = tokenize_html(html)?;
@@ -2253,7 +2290,7 @@ fn tei_choice(
                 fallback = content;
                 i = next;
             }
-            other => return Err(tei_err(format!("unsupported {other:?} in <choice>"))),
+            other => return Err(tei_err(format!("unsupported {other} in <choice>"))),
         }
     }
     Err(tei_err("unterminated <choice>".into()))
@@ -2334,6 +2371,16 @@ pub(crate) fn tokenize_xml(xml: &str) -> Result<Vec<Tok>> {
             }
             let end = tag_end(rest).ok_or_else(|| tei_err("unterminated tag".into()))?;
             let inner = &rest[1..end];
+            // XML has no `<` inside a tag: in an attribute value it
+            // is written `&lt;`. A file that carries one is not
+            // well-formed, and reading on would invent a value from
+            // the pieces (a tag pasted into an attribute).
+            if inner.contains('<') {
+                let shown: String = inner.chars().take(48).collect();
+                return Err(tei_err(format!(
+                    "`<` inside the tag `<{shown}`: the file is not well-formed XML"
+                )));
+            }
             rest = &rest[end + 1..];
             if let Some(name) = inner.strip_prefix('/') {
                 toks.push(Tok::Close(name.trim().to_string()));
@@ -2468,6 +2515,7 @@ pub fn tei_to_document_lines(xml: &str, line_milestones: Option<&str>) -> Result
                 _ => None,
             })
             .collect(),
+        kolophon: Vec::new(),
     };
     let mut i = 0;
     while i < toks.len() {
@@ -2527,7 +2575,7 @@ pub fn tei_to_document_lines(xml: &str, line_milestones: Option<&str>) -> Result
                     i += 1;
                 }
             }
-            other => return Err(tei_err(format!("unexpected {other:?} at document level"))),
+            other => return Err(tei_err(format!("unexpected {other} at document level"))),
         }
     }
     let mut ms_state = MsPass {
@@ -2544,6 +2592,11 @@ pub fn tei_to_document_lines(xml: &str, line_milestones: Option<&str>) -> Result
             ann: Annotations::default(),
         });
     }
+    // The colophon closes the document, after the bibliography:
+    // an exomorphosis places it by its dialektos name.
+    if !ctx.kolophon.is_empty() {
+        blocks.push(kolophon_block(std::mem::take(&mut ctx.kolophon)));
+    }
     Ok(Document {
         dialect_id: "litogramma".to_string(),
         dialect_version: None,
@@ -2554,11 +2607,36 @@ pub fn tei_to_document_lines(xml: &str, line_milestones: Option<&str>) -> Result
 /// The state one TEI import threads through its readers: the
 /// footnote counter (every note body is `n{notes}`) and the keys
 /// of the bibliography being imported (the xml:id of every
-/// listBibl entry), which make a ref at one of them a cite.
+/// listBibl entry), which make a ref at one of them a cite; and
+/// the colophon fields the header's publication statement gave,
+/// which close the document as a kolophon block.
 #[derive(Default)]
 struct TeiCtx {
     notes: usize,
     bib_keys: std::collections::HashSet<String>,
+    kolophon: Vec<(String, String)>,
+}
+
+/// The document's colophon as an embedded kolophon block: one
+/// field a pair, the lemma the field name, in the order given.
+fn kolophon_block(fields: Vec<(String, String)>) -> Block {
+    let children = fields
+        .into_iter()
+        .map(|(name, value)| Block::Para {
+            symbol: ":".to_string(),
+            taxis: None,
+            lemma: vec![Inline::Text(name)],
+            children: vec![Block::Paragraph(vec![Inline::Text(value)])],
+            hypograph: Vec::new(),
+            bracket_matching: true,
+            ann: Annotations::default(),
+        })
+        .collect();
+    Block::MonadEnglossis {
+        dialect: "kolophon".to_string(),
+        children,
+        ann: Annotations::default(),
+    }
 }
 
 /// The bibliography of a TEI text: every bibl or biblStruct
@@ -2837,8 +2915,10 @@ pub(crate) fn skip_element(toks: &[Tok], mut i: usize, name: String) -> Result<u
 }
 
 /// teiHeader: titleStmt children become litogramma front
-/// matter and a particDesc listPerson the cast; the rest of the
-/// header is skipped.
+/// matter, a particDesc listPerson the cast, and the publication
+/// statement's publisher, place and date the colophon fields the
+/// context carries to the document's end; the rest of the header
+/// is skipped.
 fn tei_header(
     toks: &[Tok],
     mut i: usize,
@@ -2957,6 +3037,13 @@ fn tei_header(
                 name,
                 self_closing: false,
                 ..
+            } if name == "publicationStmt" => {
+                i = tei_publication_stmt(toks, i + 1, &mut ctx.kolophon)?;
+            }
+            Tok::Open {
+                name,
+                self_closing: false,
+                ..
             } if name == "listPerson" => {
                 // The edition's cast (profileDesc/particDesc):
                 // the same dramatis-persona lines as a body-level
@@ -2990,6 +3077,57 @@ fn tei_header(
         }
     }
     Err(tei_err("unterminated <teiHeader>".into()))
+}
+
+/// publicationStmt: the publisher, the place and the date are
+/// the fields of the document's colophon (kolophon's officina,
+/// locus and datum), one field an element, in the order written.
+/// A date gives its printed text, or with none its `when`, or its
+/// `from` and `to` as a range. The rest of the statement (the
+/// availability, identifiers, a distributor, prose) is skipped.
+fn tei_publication_stmt(
+    toks: &[Tok],
+    mut i: usize,
+    fields: &mut Vec<(String, String)>,
+) -> Result<usize> {
+    while i < toks.len() {
+        match &toks[i] {
+            Tok::Close(name) if name == "publicationStmt" => return Ok(i + 1),
+            Tok::Open {
+                name,
+                attrs,
+                self_closing,
+            } => {
+                let field = match name.as_str() {
+                    "publisher" => Some("officina"),
+                    "pubPlace" => Some("locus"),
+                    "date" => Some("datum"),
+                    _ => None,
+                };
+                let (mut text, next) = match (field, *self_closing) {
+                    (_, true) => (String::new(), i + 1),
+                    (Some(_), false) => tei_text_of(toks, i + 1, name)?,
+                    (None, false) => (String::new(), skip_element(toks, i + 1, name.clone())?),
+                };
+                i = next;
+                let Some(field) = field else { continue };
+                text = text.trim().to_string();
+                if text.is_empty() && field == "datum" {
+                    text = match (attr(attrs, "when"), attr(attrs, "from"), attr(attrs, "to")) {
+                        (Some(when), _, _) => when.to_string(),
+                        (None, Some(from), Some(to)) => format!("{from}\u{2013}{to}"),
+                        (None, Some(one), None) | (None, None, Some(one)) => one.to_string(),
+                        (None, None, None) => String::new(),
+                    };
+                }
+                if !text.is_empty() {
+                    fields.push((field.to_string(), text));
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    Err(tei_err("unterminated <publicationStmt>".into()))
 }
 
 /// correspDesc: the sending action's persons become author lines
@@ -3582,7 +3720,7 @@ fn tei_inline_verse_quote(
                 i = next;
             }
             other => {
-                return Err(tei_err(format!("unsupported {other:?} in a verse quote")));
+                return Err(tei_err(format!("unsupported {other} in a verse quote")));
             }
         }
     }
@@ -3836,7 +3974,7 @@ fn tei_ab_lines(
                 i = next;
             }
             other => {
-                return Err(tei_err(format!("unsupported {other:?} in an <ab> verse")));
+                return Err(tei_err(format!("unsupported {other} in an <ab> verse")));
             }
         }
     }
@@ -4541,7 +4679,7 @@ fn tei_blocks(
                 i += 1;
             }
             other => {
-                return Err(tei_err(format!("unsupported {other:?} at block level")));
+                return Err(tei_err(format!("unsupported {other} at block level")));
             }
         }
     }
@@ -4735,7 +4873,7 @@ fn tei_verse(toks: &[Tok], mut i: usize, ctx: &mut TeiCtx) -> Result<(Block, Vec
                     i = skip_element(toks, i, name.clone())?;
                 }
             }
-            other => return Err(tei_err(format!("unsupported {other:?} in <lg>"))),
+            other => return Err(tei_err(format!("unsupported {other} in <lg>"))),
         }
     }
     Err(tei_err("unterminated <lg>".into()))
@@ -4952,7 +5090,7 @@ fn tei_speech_lines(
                 }
             }
             other => {
-                return Err(tei_err(format!("unsupported {other:?} in a verse speech")));
+                return Err(tei_err(format!("unsupported {other} in a verse speech")));
             }
         }
     }
@@ -5172,7 +5310,7 @@ fn tei_cit(toks: &[Tok], mut i: usize, ctx: &mut TeiCtx) -> Result<(Block, usize
                 children.extend(bodies);
                 i = next;
             }
-            other => return Err(tei_err(format!("unsupported {other:?} in <cit>"))),
+            other => return Err(tei_err(format!("unsupported {other} in <cit>"))),
         }
     }
     Err(tei_err("unterminated <cit>".into()))
@@ -5248,7 +5386,7 @@ fn tei_epigraph(toks: &[Tok], mut i: usize, ctx: &mut TeiCtx) -> Result<(Block, 
                 children.extend(bodies);
                 i = next;
             }
-            other => return Err(tei_err(format!("unsupported {other:?} in <epigraph>"))),
+            other => return Err(tei_err(format!("unsupported {other} in <epigraph>"))),
         }
     }
     Err(tei_err("unterminated <epigraph>".into()))
@@ -5394,7 +5532,7 @@ fn tei_figure(
                 bodies.extend(inner);
                 i = next;
             }
-            other => return Err(tei_err(format!("unsupported {other:?} in <figure>"))),
+            other => return Err(tei_err(format!("unsupported {other} in <figure>"))),
         }
     }
     Err(tei_err("unterminated <figure>".into()))
@@ -5479,14 +5617,14 @@ fn tei_table(toks: &[Tok], mut i: usize, ctx: &mut TeiCtx) -> Result<(Block, Vec
                             cells.push(para("+:", Vec::new(), children));
                             i = next;
                         }
-                        other => {
-                            return Err(tei_err(format!("unsupported {other:?} in <row>")));
+                        Some(other) => {
+                            return Err(tei_err(format!("unsupported {other} in <row>")));
                         }
                     }
                 }
                 rows.push(para(if header { "+=" } else { "+-" }, Vec::new(), cells));
             }
-            other => return Err(tei_err(format!("unsupported {other:?} in <table>"))),
+            other => return Err(tei_err(format!("unsupported {other} in <table>"))),
         }
     }
     Err(tei_err("unterminated <table>".into()))
@@ -5570,7 +5708,7 @@ fn tei_list(
                 items.extend(bodies);
                 i = next;
             }
-            other => return Err(tei_err(format!("unsupported {other:?} in <list>"))),
+            other => return Err(tei_err(format!("unsupported {other} in <list>"))),
         }
     }
     Err(tei_err("unterminated <list>".into()))
@@ -5632,7 +5770,7 @@ fn tei_cast_list(
                 items.extend(bodies);
                 i = next;
             }
-            other => return Err(tei_err(format!("unsupported {other:?} in <{until}>"))),
+            other => return Err(tei_err(format!("unsupported {other} in <{until}>"))),
         }
     }
     Err(tei_err(format!("unterminated <{until}>")))
@@ -5700,7 +5838,7 @@ fn tei_list_person(toks: &[Tok], mut i: usize, ctx: &mut TeiCtx) -> Result<(Vec<
                     i = skip_element(toks, i, n2)?;
                 }
             }
-            other => return Err(tei_err(format!("unsupported {other:?} in <listPerson>"))),
+            other => return Err(tei_err(format!("unsupported {other} in <listPerson>"))),
         }
     }
     Err(tei_err("unterminated <listPerson>".into()))
@@ -5781,7 +5919,7 @@ fn tei_person(
                     i = skip_element(toks, i, n2)?;
                 }
             }
-            other => return Err(tei_err(format!("unsupported {other:?} in <{until}>"))),
+            other => return Err(tei_err(format!("unsupported {other} in <{until}>"))),
         }
     }
     Err(tei_err(format!("unterminated <{until}>")))
@@ -6563,9 +6701,7 @@ fn tei_inline_run(
                             i = next;
                         }
                         other => {
-                            return Err(tei_err(format!(
-                                "unsupported {other:?} in an inline list"
-                            )));
+                            return Err(tei_err(format!("unsupported {other} in an inline list")));
                         }
                     }
                 }
@@ -6600,7 +6736,7 @@ fn tei_inline_run(
                     .rev()
                     .collect();
                 return Err(tei_err(format!(
-                    "unsupported {other:?} inline (near: \"...{near}\")"
+                    "unsupported {other} inline (near: \"...{near}\")"
                 )));
             }
         }
@@ -7441,13 +7577,18 @@ pub fn docbook_to_document(xml: &str) -> Result<Document> {
                         ann: Annotations::default(),
                     }]));
                 }
+                // The colophon the root's <info> gave closes the
+                // document: an exomorphosis places it by name.
+                let kolophon = inner.iter().position(
+                    |b| matches!(b, Block::MonadEnglossis { dialect, .. } if dialect == "kolophon"),
+                );
+                let kolophon = kolophon.map(|at| inner.remove(at));
                 blocks.extend(inner);
+                blocks.extend(kolophon);
                 i = next;
             }
             other => {
-                return Err(docbook_err(format!(
-                    "unexpected {other:?} at document level"
-                )));
+                return Err(docbook_err(format!("unexpected {other} at document level")));
             }
         }
     }
@@ -7457,6 +7598,13 @@ pub fn docbook_to_document(xml: &str) -> Result<Document> {
         dialect_version: None,
         blocks,
     })
+}
+
+/// The plain text of a DocBook element, whitespace collapsed.
+fn docbook_text_of(toks: &[Tok], i: usize, until: &str) -> Result<(String, usize)> {
+    tei_text_of(toks, i, until)
+        .map(|(text, next)| (text.trim().to_string(), next))
+        .map_err(|_| docbook_err(format!("unterminated <{until}>")))
 }
 
 /// The sentinel symbol a `<title>` carries until its container
@@ -7523,7 +7671,11 @@ fn docbook_blocks(
             }
             Tok::Open { name, .. } if name == "info" => {
                 // Metadata is skipped, except the title, which
-                // rides the sentinel like a bare <title>.
+                // rides the sentinel like a bare <title>, and at
+                // the root the publisher, its place and the date,
+                // which are the document's colophon.
+                let root = matches!(until.as_str(), "article" | "book" | "chapter");
+                let mut kolophon: Vec<(String, String)> = Vec::new();
                 i += 1;
                 loop {
                     match toks.get(i) {
@@ -7531,6 +7683,33 @@ fn docbook_blocks(
                         Some(Tok::Close(name)) if name == "info" => {
                             i += 1;
                             break;
+                        }
+                        // A publisher wraps its name and address:
+                        // both are read where they stand, inside
+                        // it or directly in the info.
+                        Some(Tok::Open {
+                            name,
+                            self_closing: false,
+                            ..
+                        }) if root && name == "publisher" => i += 1,
+                        Some(Tok::Close(name)) if root && name == "publisher" => i += 1,
+                        Some(Tok::Open {
+                            name,
+                            self_closing: false,
+                            ..
+                        }) if root
+                            && matches!(name.as_str(), "publishername" | "address" | "pubdate") =>
+                        {
+                            let field = match name.as_str() {
+                                "publishername" => "officina",
+                                "address" => "locus",
+                                _ => "datum",
+                            };
+                            let (text, next) = docbook_text_of(toks, i + 1, name)?;
+                            if !text.is_empty() {
+                                kolophon.push((field.to_string(), text));
+                            }
+                            i = next;
                         }
                         Some(Tok::Open {
                             name, self_closing, ..
@@ -7562,6 +7741,16 @@ fn docbook_blocks(
                         Some(_) => i += 1,
                     }
                 }
+                if !kolophon.is_empty() {
+                    // An info orders its children freely; the
+                    // colophon reads publisher, place, date.
+                    kolophon.sort_by_key(|(field, _)| match field.as_str() {
+                        "officina" => 0,
+                        "locus" => 1,
+                        _ => 2,
+                    });
+                    blocks.push(kolophon_block(kolophon));
+                }
             }
             Tok::Open { name, .. } if name == "title" => {
                 // Sentinel-wrapped; the enclosing section (or the
@@ -7576,7 +7765,14 @@ fn docbook_blocks(
                 blocks.extend(inner);
                 i = next;
             }
-            Tok::Open { name, attrs, .. } if name == "section" || name == "sect1" => {
+            // DocBook's numbered sections are the one section sim
+            // at their depth: sections nest.
+            Tok::Open { name, attrs, .. }
+                if matches!(
+                    name.as_str(),
+                    "section" | "sect1" | "sect2" | "sect3" | "sect4" | "sect5"
+                ) =>
+            {
                 let onym = attr(attrs, "xml:id").map(str::to_string);
                 let n = name.clone();
                 let (mut children, next) = docbook_blocks(toks, i + 1, n, notes)?;
@@ -7718,7 +7914,7 @@ fn docbook_blocks(
                 i = next;
             }
             other => {
-                return Err(docbook_err(format!("unsupported {other:?} at block level")));
+                return Err(docbook_err(format!("unsupported {other} at block level")));
             }
         }
     }
@@ -7758,7 +7954,7 @@ fn docbook_raw_text(toks: &[Tok], mut i: usize, until: &str) -> Result<(String, 
                 out.push_str(&decode_entities(t));
                 i += 1;
             }
-            other => return Err(docbook_err(format!("unsupported {other:?} in <{until}>"))),
+            other => return Err(docbook_err(format!("unsupported {other} in <{until}>"))),
         }
     }
     Err(docbook_err(format!("unterminated <{until}>")))
@@ -7916,7 +8112,7 @@ fn docbook_inline_run(
                 }
                 i = next;
             }
-            other => return Err(docbook_err(format!("unsupported {other:?} inline"))),
+            other => return Err(docbook_err(format!("unsupported {other} inline"))),
         }
     }
     Err(docbook_err(format!("unterminated <{until}>")))
@@ -8193,7 +8389,7 @@ pub fn jats_to_document(xml: &str) -> Result<Document> {
             Tok::Open { name, .. } if name == "back" => {
                 i = jats_back(&toks, i + 1, &mut refs)?;
             }
-            other => return Err(jats_err(format!("unexpected {other:?} at document level"))),
+            other => return Err(jats_err(format!("unexpected {other} at document level"))),
         }
     }
     if !refs.is_empty() {
@@ -8399,7 +8595,7 @@ fn jats_blocks(
                 });
                 i = next;
             }
-            other => return Err(jats_err(format!("unsupported {other:?} at block level"))),
+            other => return Err(jats_err(format!("unsupported {other} at block level"))),
         }
     }
     Err(jats_err(format!("unterminated <{until}>")))
@@ -8529,7 +8725,7 @@ fn jats_inline_run(
                 });
                 i = next;
             }
-            other => return Err(jats_err(format!("unsupported {other:?} inline"))),
+            other => return Err(jats_err(format!("unsupported {other} inline"))),
         }
     }
     Err(jats_err(format!("unterminated <{until}>")))
@@ -9751,7 +9947,7 @@ pub fn usx_to_document(xml: &str) -> Result<Document> {
                 }
             }
             other => {
-                return Err(usx_err(format!("unexpected {other:?} at book level")));
+                return Err(usx_err(format!("unexpected {other} at book level")));
             }
         }
     }
@@ -10006,7 +10202,7 @@ fn usx_inlines(toks: &[Tok], mut i: usize, until: &str) -> Result<(Vec<Inline>, 
             }
             Tok::Close(name) if name == "ref" => i += 1,
             other => {
-                return Err(usx_err(format!("unexpected {other:?} in inline content")));
+                return Err(usx_err(format!("unexpected {other} in inline content")));
             }
         }
     }
@@ -10078,7 +10274,7 @@ fn usx_note_inlines(toks: &[Tok], mut i: usize) -> Result<(Vec<Inline>, usize)> 
                 }
             }
             other => {
-                return Err(usx_err(format!("unexpected {other:?} in a note")));
+                return Err(usx_err(format!("unexpected {other} in a note")));
             }
         }
     }
@@ -10144,7 +10340,7 @@ pub fn osis_to_document(xml: &str) -> Result<Document> {
             }
             Tok::Close(name) if name == "div" => i += 1,
             other => {
-                return Err(osis_err(format!("unexpected {other:?} at document level")));
+                return Err(osis_err(format!("unexpected {other} at document level")));
             }
         }
     }
@@ -10376,7 +10572,7 @@ fn osis_blocks(toks: &[Tok], mut i: usize, until: &str) -> Result<(Vec<Block>, u
                 }
             }
             other => {
-                return Err(osis_err(format!("unexpected {other:?} at block level")));
+                return Err(osis_err(format!("unexpected {other} at block level")));
             }
         }
     }
@@ -10429,7 +10625,7 @@ fn osis_verse_lines(toks: &[Tok], mut i: usize) -> Result<(Vec<Strophe>, usize)>
                 i = next;
             }
             other => {
-                return Err(osis_err(format!("unexpected {other:?} in an lg")));
+                return Err(osis_err(format!("unexpected {other} in an lg")));
             }
         }
     }

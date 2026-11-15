@@ -8,7 +8,9 @@
 @@/ outside the vocabularies pass through, so uncommon
 @@/ elements ride as free genoses rather than failing.
 @@/ Convention: a document is a teiheader block (fields)
-@@/ followed by a text block. The reverse morphism into
+@@/ followed by a text block; a document with no text block
+@@/ is all body, and the tei exo writes the header, text and
+@@/ body around it. The reverse morphism into
 @@/ litogramma awaits genos-dispatched morphism rules
 @@/ (spec follow-up); litogramma INTO at-tei works today via
 @@/ renames with genoses.

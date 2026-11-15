@@ -26,10 +26,45 @@
 " &quot;
 %@
 
-@-> *document
+@@/ A document that holds a text block frames itself: the block
+@@/ writes text and body, and the header comes from its lemma or
+@@/ from the teiheader block before it.
+@-> *document.text
 <?xml version="1.0" encoding="UTF-8"?>
 <TEI xmlns="http://www.tei-c.org/ns/1.0">
 @(grammata)
+</TEI>
+>-@
+
+@@/ A document with no text block is all body (a litogramma
+@@/ document that opens with no title comes through the hom this
+@@/ way): the frame TEI requires is written around it. The title
+@@/ is left empty, which an importer reads as no title, so the
+@@/ document comes back as it went out.
+@-> *document
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xmlns="http://www.tei-c.org/ns/1.0">
+<teiHeader>
+<fileDesc>
+<titleStmt>
+<title/>
+</titleStmt>
+<publicationStmt>
+@[@(!kolophon)
+<availability>
+]@<p>Exported from an atrep document.</p>
+@[@(?!kolophon)</availability>
+]@</publicationStmt>
+<sourceDesc>
+<p>An atrep document.</p>
+</sourceDesc>
+</fileDesc>
+</teiHeader>
+<text>
+<body>
+@(grammata)
+</body>
+</text>
 </TEI>
 >-@
 
@@ -50,6 +85,14 @@
 @@/ under its title): the lemma is the title, and the header TEI
 @@/ requires is written around it. A native text block has no
 @@/ lemma and follows its own teiheader block.
+@@/ The document's colophon (an embedded kolophon block, wherever
+@@/ it stands) is drawn into the publication statement by its
+@@/ dialektos slot, in both frames: its fields come first, as TEI
+@@/ orders them, and the export note then stands as the
+@@/ statement's availability, since a statement holds either
+@@/ prose or fields. With no colophon the note is the statement.
+@@/ A section cannot nest, so the header a lemma gates is written
+@@/ as a run of sections, each gated on the lemma.
 @-> _.text
 @[<teiHeader>
 <fileDesc>
@@ -57,8 +100,11 @@
 <title>@(lemma)</title>
 </titleStmt>
 <publicationStmt>
-<p>Exported from an atrep document.</p>
-</publicationStmt>
+]@@[@(?lemma)@(!kolophon)
+<availability>
+]@@[@(?lemma)<p>Exported from an atrep document.</p>
+]@@[@(?lemma)@(?!kolophon)</availability>
+]@@[@(?lemma)</publicationStmt>
 <sourceDesc>
 <p>An atrep document.</p>
 </sourceDesc>
@@ -230,6 +276,23 @@
 
 @-> ,.emph
 <emph>@(grammata)</emph>
+>-@
+
+@@/ Litogramma's emphasis arrives as `.emph`; when it also names
+@@/ a TEI phrase element (the importer writes foreign, title and
+@@/ term this way), the two-genos variants break the tie in
+@@/ favour of the element named. A language genos beside foreign
+@@/ is not written back as xml:lang.
+@-> ,.emph.foreign
+<foreign>@(grammata)</foreign>
+>-@
+
+@-> ,.emph.title
+<title>@(grammata)</title>
+>-@
+
+@-> ,.emph.term
+<term>@(grammata)</term>
 >-@
 
 @-> ,.hi
@@ -539,6 +602,12 @@
 <milestone@[ n="@(param)"]@/>
 >-@
 
+@@/ A core milestone is TEI's milestone: the scheme its unit, the
+@@/ value its n, as the importer reads them.
+@-> *milestone
+<milestone unit="@(scheme)" n="@(value)"/>
+>-@
+
 @-> =(title)
 <title>@(grammata)</title>
 >-@
@@ -632,11 +701,18 @@
 >-@
 
 @@/ An embedded dialektos renders through its own tei exo; the
-@@/ one that has one is bibliogramma, the bibliography.
-@-> *englossis
+@@/ one that has one is bibliogramma, the bibliography. The rule
+@@/ names it: a block of any other dialektos is no bibliography.
+@-> *englossis bibliogramma
 <listBibl>
 @(grammata)
 </listBibl>
+>-@
+
+@@/ A block of any other dialektos (a transcluded file comes in
+@@/ as a block of this one) stands in the flow as it renders.
+@-> *englossis
+@(grammata)
 >-@
 
 @-> *diaphane-inline

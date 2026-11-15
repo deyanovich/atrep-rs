@@ -523,6 +523,19 @@ fn push_inlines_in(
             _ => false,
         };
     }
+    // A genos closing the sequence stands directly before the
+    // enclosing episymbol, and one that opens with a char the genos
+    // scanner takes (`-:`, closing a said span) would extend it as
+    // text does: separate.
+    if after_genos
+        && terminator.is_some_and(|term| {
+            term.chars()
+                .next()
+                .is_some_and(|c| c == '-' || c.is_alphanumeric())
+        })
+    {
+        out.push('|');
+    }
 }
 
 /// Escape text for canonical output: `@` becomes `\@`. Directly

@@ -59,6 +59,11 @@ atrep exo <file> <target> [-o out]
                                    render a kanon to an external
                                    format via <dialektos>.<target>.exo
                                    (.atd input is kanonized first);
+                                   a dialektos with no document
+                                   exo for the target exports
+                                   through the nearest one that
+                                   has it (litogramma to tei
+                                   through at-tei);
                                    fb2, docx, rnc, opencorpora,
                                    proiel and conllu are built-in
                                    exporters (docx: Word, with
@@ -191,7 +196,27 @@ Implemented:
   dialektos with no `.exo` of its own still renders through
   inherited rules, and the most derived non-empty escape table
   applies. The spec's worked example (`exempli.html.exo`) is a
-  golden test.
+  golden test. Three things here run ahead of the spec. The
+  `*document` rule takes genos variants, selected on the genoses
+  of the document's top-level para-simmeres (`*document.text` in
+  the tei exo: a document that holds a text block frames itself,
+  one that holds none is framed). An export resolves through
+  the morphism graph (`exo::resolve_export`): a dialektos whose
+  effective exo for the target has no `*document` rule exports
+  through the nearest dialektos that has one, by the morphism
+  route to it; two candidates at the same distance are an error.
+  And an embedded block is targeted by the name of its dialektos:
+  `*englossis <dialektos>` is the rule for blocks of that
+  dialektos (the bare `*englossis` takes the rest), and the
+  dialektos slot `@(!<dialektos>)`, in any template, places the
+  document's blocks of that dialektos, which then leave nothing
+  where they stand (a bibliography in the back matter, whatever
+  its place in the source). The standard tei and LaTeX exos name
+  bibliogramma in their bibliography rule and render a block of
+  any other dialektos in place (a transcluded file comes in as a
+  block of the document's own). The tei exo draws a `kolophon`
+  block into the header's publication statement by its slot, and
+  the docbook exo into an `info` after the title.
 - A standard library, embedded in the binary and used when local
   resolution fails: `at-html`, a syntax mapper between a useful
   subset of HTML and atrep (each sim corresponds to one HTML
@@ -211,7 +236,16 @@ Implemented:
   litogramma↔at-html/at-docbook/at-tei homs — so the
   litogramma-targeting importers (TEI, JATS, BibTeX, atramento)
   have their target resolvable everywhere, with no local
-  definition files. The
+  definition files. Beside them stands `kolophon`, the
+  publication statement of a work (who issued it, where, when)
+  as a micro-dialektos a document embeds as it embeds its
+  bibliography: one field sim, the lemma the field name, on
+  bibliogramma's own terms (`officina`, `locus`, `datum`, with
+  their aliases). It has an exo for every target a litogramma
+  document exports to (`tei`, `docbook`, `html`, `xhtml`,
+  `latex`, `md`, `dj`, `org`, `rst`, `gemtext`), so a document
+  that carries a colophon exports wherever it did without one.
+  The
   publisher-register exos (Loeb, OCT, Penguin, GOST, …) remain
   in the litogramma repo.
 - Morphisms (spec v0.11, optional conformance class):
@@ -296,11 +330,16 @@ Implemented:
   URIs as the visible-URL link), Org-mode and Djot subset
   importers into the `at-org` and `at-djot` std dialektoi, a
   DocBook subset importer into `at-docbook` (`.dbk`; quote and
-  link included); the `at-tei` std dialektos
+  link included; `sect1` to `sect5` as nested sections; the root
+  `info`'s publisher name, address and `pubdate` as a `kolophon`
+  block closing the document); the `at-tei` std dialektos
   applies the bibliogramma pattern to TEI — ~15 form sims with
   the TEI element identity in vocabulary-bound genoses
   (`@,x,@.persname`), a `tei` exo emitting real TEI XML, and a
-  litogramma hom giving litogramma TEI export via morph+exo, a
+  litogramma hom giving litogramma TEI export in one step
+  (`atrep exo doc.atd tei`: the hom, then the exo; a complete
+  TEI document whether or not the source opens with a title,
+  which the TEI importer reads back as it went out), a
   BibTeX importer into
   `bibliogramma` (`.bib`), a JATS subset importer (`.jats`) into
   litogramma with the ref-list embedded as a bibliogramma
@@ -315,6 +354,9 @@ Implemented:
   pipe tables as stichoi rows, footnotes as deixis callouts,
   links), plus a TEI P5 basic-subset importer
   into `litogramma` (`.xml`/`.tei`): teiHeader front matter,
+  the publication statement's publisher, place and date as a
+  `kolophon` block closing the document (a statement in prose
+  gives none; the dictionary path takes none),
   nested div sectioning with type/depth laddering, lg/l verse,
   sp/speaker drama with stage directions, epigraphs with
   attribution, notes as deixis callouts with footnote bodies,

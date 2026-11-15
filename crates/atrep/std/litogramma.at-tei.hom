@@ -13,7 +13,9 @@
 @@/ (as canonical litogramma has it) it groups everything after
 @@/ it into the text block and rides as that block's lemma, from
 @@/ which the tei exo writes the header; a title inside running
-@@/ text stays a phrase.
+@@/ text stays a phrase. A document with no title makes no text
+@@/ block: it arrives as loose divisions and paragraphs, and the
+@@/ tei exo frames it as it stands, under an empty title.
 @># = _ .text
 @:: = , .title
 @:: =_ , .title

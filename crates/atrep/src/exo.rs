@@ -19,6 +19,7 @@ use std::path::Path;
 use crate::dendron::{Block, Document, Inline, Taxis};
 use crate::dialektos::{self, Dialektos, InheritKind, SimForm};
 use crate::error::{Error, ErrorKind, Location, Result};
+use crate::morph::{self, Morph};
 use crate::sigil::{self, Sigil};
 use crate::source::{DirSource, Source, fetch_normalized};
 
@@ -183,6 +184,32 @@ const STD_EXOS: &[(&str, &str, &str)] = &[
         "bibtex",
         include_str!("../std/bibliogramma.bibtex.exo"),
     ),
+    ("kolophon", "tei", include_str!("../std/kolophon.tei.exo")),
+    (
+        "kolophon",
+        "docbook",
+        include_str!("../std/kolophon.docbook.exo"),
+    ),
+    ("kolophon", "html", include_str!("../std/kolophon.html.exo")),
+    (
+        "kolophon",
+        "xhtml",
+        include_str!("../std/kolophon.xhtml.exo"),
+    ),
+    (
+        "kolophon",
+        "latex",
+        include_str!("../std/kolophon.latex.exo"),
+    ),
+    ("kolophon", "md", include_str!("../std/kolophon.md.exo")),
+    ("kolophon", "dj", include_str!("../std/kolophon.dj.exo")),
+    ("kolophon", "org", include_str!("../std/kolophon.org.exo")),
+    ("kolophon", "rst", include_str!("../std/kolophon.rst.exo")),
+    (
+        "kolophon",
+        "gemtext",
+        include_str!("../std/kolophon.gemtext.exo"),
+    ),
     (
         "lexigramma",
         "latex",
@@ -217,6 +244,11 @@ enum SlotName {
     /// mechanism by which an unseen annotation (at-aphanes)
     /// becomes an attribute of the element its host emits.
     Named(String),
+    /// A dialektos slot `@(!<dialektos>)` (spec: Slots and
+    /// Templates): the document's embedded blocks of that
+    /// dialektos, rendered as they would be where they stand and
+    /// placed here instead.
+    Englossis(String),
 }
 
 impl SlotName {
@@ -272,6 +304,9 @@ enum PatternKey {
     MilestoneKey(Option<String>),
     /// `*deixis <symbol>`: a deixis pointing at the given sim.
     DeixisKey(String),
+    /// `*englossis <dialektos>`: an embedded block of the named
+    /// dialektos; the bare `*englossis` is the fallback.
+    EnglossisKey(String),
     /// `*row <symbol> <separator>`: cell interpretation of a
     /// stichoi sim's lines (the separator lives on the rule).
     Row(String),
@@ -295,6 +330,7 @@ impl std::fmt::Display for PatternKey {
             PatternKey::MilestoneKey(Some(s)) => write!(f, "*milestone {s}"),
             PatternKey::MilestoneKey(None) => write!(f, "*milestone"),
             PatternKey::DeixisKey(s) => write!(f, "*deixis {s}"),
+            PatternKey::EnglossisKey(d) => write!(f, "*englossis {d}"),
             PatternKey::Row(s) => write!(f, "*row {s}"),
             PatternKey::Cell(s) => write!(f, "*cell {s}"),
             PatternKey::Within(s, p) => write!(f, "{s} in {p}"),
@@ -436,6 +472,157 @@ pub fn resolve_exo_from(ctx: &dyn Source, dialect: &str, target: &str) -> Result
         .ok_or_else(|| Error::new(ErrorKind::UnresolvableExo(format!("{dialect}=>{target}"))))
 }
 
+impl Exo {
+    /// Whether the exomorphosis can render a whole document: it
+    /// has a `*document` rule. A pack's exo (rules for its own
+    /// sims, pulled in by the dialektoi that inherit it) has none.
+    pub fn renders_documents(&self) -> bool {
+        self.rules
+            .contains_key(&PatternKey::Structural("document".into()))
+    }
+
+    /// The dialektoi a dialektos slot (`@(!id)`) names in any
+    /// template of the exomorphosis, sorted.
+    fn slotted_dialektoi(&self) -> Vec<String> {
+        fn walk(segs: &[Seg], out: &mut Vec<String>) {
+            for seg in segs {
+                match seg {
+                    Seg::Slot {
+                        name: SlotName::Englossis(id),
+                        ..
+                    } => out.push(id.clone()),
+                    Seg::Group(inner) => walk(inner, out),
+                    _ => {}
+                }
+            }
+        }
+        let mut ids: Vec<String> = Vec::new();
+        for variants in self.rules.values() {
+            for rule in variants {
+                walk(&rule.template, &mut ids);
+            }
+        }
+        ids.sort();
+        ids.dedup();
+        ids
+    }
+}
+
+/// Resolve how a document of `dialect` is exported to `target`:
+/// the morphism route to apply first (empty when the dialektos
+/// renders the target itself) and the exomorphosis to render the
+/// result with.
+///
+/// A dialektos whose effective exomorphosis for the target has a
+/// `*document` rule exports directly. One that has none (no .exo
+/// of its own for the target, at most the rules its packs bring)
+/// exports through a dialektos that maps the format: every
+/// dialektos with a document exomorphosis for the target and a
+/// morphism route from `dialect` is a candidate, and the nearest
+/// is taken (litogramma reaches TEI through at-tei). Two
+/// candidates at the same distance are an error, as two shortest
+/// routes to one dialektos are: the platform never chooses
+/// silently. With no candidate the answer is the dialektos's own
+/// exomorphosis, absent or incomplete as it is, and the error is
+/// the one it always gave. A named variant is the variant of the
+/// exomorphosis that renders.
+pub fn resolve_export(
+    dir: &Path,
+    dialect: &str,
+    target: &str,
+    variant: Option<&str>,
+) -> Result<(Vec<Morph>, Exo)> {
+    resolve_export_from(&DirSource::new(dir), dialect, target, variant)
+}
+
+/// [`resolve_export`] over an arbitrary resolution [`Source`].
+pub fn resolve_export_from(
+    ctx: &dyn Source,
+    dialect: &str,
+    target: &str,
+    variant: Option<&str>,
+) -> Result<(Vec<Morph>, Exo)> {
+    match resolve_exo_inner(ctx, dialect, target)? {
+        Some(own) if own.renders_documents() => {
+            let exo = match variant {
+                None => own,
+                Some(_) => resolve_exo_variant_from(ctx, dialect, target, variant)?,
+            };
+            return Ok((Vec::new(), exo));
+        }
+        _ => {}
+    }
+    // The dialektoi with an .exo of their own for the target:
+    // the standard library's and the context's.
+    let mut ids: Vec<String> = STD_EXOS
+        .iter()
+        .filter(|(_, t, _)| *t == target)
+        .map(|(d, _, _)| d.to_string())
+        .collect();
+    let suffix = format!(".{target}.exo");
+    for name in ctx.names() {
+        if let Some(stem) = name.strip_suffix(&suffix)
+            && !stem.is_empty()
+            && !stem.contains('.')
+        {
+            ids.push(stem.to_string());
+        }
+    }
+    ids.sort();
+    ids.dedup();
+    let mut nearest: Vec<(String, Vec<Morph>)> = Vec::new();
+    for id in ids {
+        if id == dialect {
+            continue;
+        }
+        let exo = match resolve_exo_inner(ctx, &id, target) {
+            Ok(Some(exo)) => exo,
+            Ok(None) => continue,
+            // An .exo left beside the document for a dialektos
+            // that does not resolve here names no candidate.
+            Err(e) if matches!(e.kind, ErrorKind::UnresolvableDialektos(_)) => continue,
+            Err(e) => return Err(e),
+        };
+        if !exo.renders_documents() {
+            continue;
+        }
+        let route = match morph::resolve_route_from(ctx, dialect, &id) {
+            Ok(route) => route,
+            Err(e) if matches!(e.kind, ErrorKind::UnresolvableMorph(_)) => continue,
+            Err(e) => return Err(e),
+        };
+        match nearest.first().map(|(_, r)| r.len()) {
+            Some(len) if route.len() > len => {}
+            Some(len) if route.len() == len => nearest.push((id, route)),
+            _ => nearest = vec![(id, route)],
+        }
+    }
+    if nearest.len() > 1 {
+        let routes: Vec<String> = nearest
+            .iter()
+            .map(|(_, route)| {
+                std::iter::once(route[0].source.as_str())
+                    .chain(route.iter().map(|m| m.target.as_str()))
+                    .collect::<Vec<&str>>()
+                    .join(" => ")
+            })
+            .collect();
+        return Err(Error::new(ErrorKind::AmbiguousMorphRoute(
+            routes.join(" | "),
+        )));
+    }
+    match nearest.pop() {
+        Some((id, route)) => {
+            let exo = resolve_exo_variant_from(ctx, &id, target, variant)?;
+            Ok((route, exo))
+        }
+        None => {
+            let exo = resolve_exo_variant_from(ctx, dialect, target, variant)?;
+            Ok((Vec::new(), exo))
+        }
+    }
+}
+
 fn resolve_exo_inner(ctx: &dyn Source, dialect: &str, target: &str) -> Result<Option<Exo>> {
     // Definition-level cycle detection in dialektos resolution
     // guards this recursion: a cyclic lineage cannot resolve.
@@ -495,7 +682,9 @@ fn key_on_symbols(key: &PatternKey, symbols: &[String]) -> bool {
         | PatternKey::Cell(s)
         | PatternKey::Within(s, _)
         | PatternKey::TermKey(s, _) => symbols.iter().any(|x| x == s),
-        PatternKey::Structural(_) | PatternKey::MilestoneKey(_) => false,
+        PatternKey::Structural(_) | PatternKey::MilestoneKey(_) | PatternKey::EnglossisKey(_) => {
+            false
+        }
     }
 }
 
@@ -847,6 +1036,28 @@ fn parse_pattern(
                 }
             };
             (key, tail)
+        } else if name == "englossis" {
+            // `*englossis <dialektos>[.genos...]`: the embedded
+            // dialektos keys the rule; bare, it is the fallback
+            // for every dialektos without a rule of its own.
+            let arg = after.trim_start();
+            let id: String = arg
+                .chars()
+                .take_while(|&c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+                .collect();
+            let enclosing_form = id == "in" && arg[id.len()..].starts_with(char::is_whitespace);
+            if id.is_empty() || enclosing_form || arg.len() == after.len() {
+                (PatternKey::Structural(name), after.to_string())
+            } else if !sigil::is_valid_genos(&id) {
+                return Err(format!(
+                    "`*englossis` argument `{id}` is not a dialektos identifier"
+                ));
+            } else {
+                (
+                    PatternKey::EnglossisKey(id.clone()),
+                    arg[id.len()..].to_string(),
+                )
+            }
         } else {
             if !STRUCTURAL_NAMES.contains(&name.as_str()) {
                 return Err(format!("unknown structural pattern `*{name}`"));
@@ -1021,14 +1232,37 @@ fn parse_segs(
                         }
                         j += 1;
                     }
+                    // `@(!<dialektos>)`: the dialektos slot, which
+                    // places the document's embedded blocks of
+                    // that dialektos.
+                    let placing = chars.get(j) == Some(&'!');
+                    if placing {
+                        if raw {
+                            return Err("a dialektos slot has no raw form".to_string());
+                        }
+                        j += 1;
+                    }
                     let name_start = j;
-                    while j < chars.len() && (chars[j].is_ascii_lowercase() || chars[j] == '-') {
+                    while j < chars.len()
+                        && (chars[j].is_ascii_lowercase()
+                            || chars[j] == '-'
+                            || (placing && chars[j].is_ascii_digit()))
+                    {
                         j += 1;
                     }
                     let name: String = chars[name_start..j].iter().collect();
-                    let slot = match SlotName::parse(&name) {
-                        Some(slot) => slot,
-                        None => named_slot(&name, dial)?,
+                    let slot = if placing {
+                        if !sigil::is_valid_genos(&name) {
+                            return Err(format!(
+                                "dialektos slot `!{name}` does not name a dialektos"
+                            ));
+                        }
+                        SlotName::Englossis(name.clone())
+                    } else {
+                        match SlotName::parse(&name) {
+                            Some(slot) => slot,
+                            None => named_slot(&name, dial)?,
+                        }
                     };
                     let prefix = if chars.get(j) == Some(&':') {
                         j += 1;
@@ -1118,15 +1352,11 @@ pub fn render_with_aux(doc: &Document, exo: &Exo, dir: &Path) -> Result<(String,
             doc.dialect_id, exo.source
         ))));
     }
-    let r = Renderer {
-        exo,
-        dir,
-        aux: std::cell::RefCell::new(Vec::new()),
-        raw_depth: std::cell::Cell::new(0),
-        enclosing: std::cell::RefCell::new(Vec::new()),
-    };
+    let r = renderer(exo, dir, 0);
+    r.place(&doc.blocks)?;
     let grammata = r.render_blocks(&doc.blocks)?;
-    let main = match r.find_rule(&PatternKey::Structural("document".into()), &[])? {
+    let genoses = document_genoses(&doc.blocks);
+    let main = match r.find_rule(&PatternKey::Structural("document".into()), &genoses)? {
         Some(rule) => r.fill(rule, &Slots::document(&grammata))?,
         None => return Err(unhandled("*document")),
     };
@@ -1139,6 +1369,25 @@ pub fn render_with_aux(doc: &Document, exo: &Exo, dir: &Path) -> Result<(String,
 
 fn unhandled(pattern: &str) -> Error {
     Error::new(ErrorKind::ExoUnhandled(pattern.to_string()))
+}
+
+/// The genoses a `*document` variant selects on: those of the
+/// document's top-level para-simmeres, in document order. A target
+/// whose frame depends on what the document holds keys on them
+/// (the tei exo writes text and body around a document that has no
+/// text block of its own, `*document.text` leaves one that has).
+fn document_genoses(blocks: &[Block]) -> Vec<String> {
+    let mut genoses: Vec<String> = Vec::new();
+    for block in blocks {
+        if let Block::Para { ann, .. } | Block::Stichoi { ann, .. } = block {
+            for genos in &ann.genoses {
+                if !genoses.contains(genos) {
+                    genoses.push(genos.clone());
+                }
+            }
+        }
+    }
+    genoses
 }
 
 /// Slot values available for one node.
@@ -1243,6 +1492,45 @@ struct Renderer<'a> {
     /// The para-simmeres being rendered, outermost first, for the
     /// `<symbol> in <enclosing>` rules.
     enclosing: std::cell::RefCell<Vec<String>>,
+    /// The dialektoi the exo places through a dialektos slot
+    /// (`@(!id)` anywhere in its templates): their embedded
+    /// blocks render into `placed`, not where they stand.
+    slotted: Vec<String>,
+    /// What each dialektos slot holds: the embedded blocks of
+    /// that dialektos, rendered ahead of the document.
+    placed: std::cell::RefCell<HashMap<String, String>>,
+}
+
+/// A renderer for one document (or one embedded block's content)
+/// under `exo`.
+fn renderer<'a>(exo: &'a Exo, dir: &'a Path, raw_depth: u32) -> Renderer<'a> {
+    Renderer {
+        exo,
+        dir,
+        aux: std::cell::RefCell::new(Vec::new()),
+        raw_depth: std::cell::Cell::new(raw_depth),
+        enclosing: std::cell::RefCell::new(Vec::new()),
+        slotted: exo.slotted_dialektoi(),
+        placed: std::cell::RefCell::new(HashMap::new()),
+    }
+}
+
+/// The embedded blocks of `dialect` in document order. The content
+/// of an embedded block is another document: it is not searched.
+fn collect_englossis<'b>(blocks: &'b [Block], dialect: &str, out: &mut Vec<&'b Block>) {
+    for block in blocks {
+        match block {
+            Block::MonadEnglossis { dialect: d, .. } => {
+                if d == dialect {
+                    out.push(block);
+                }
+            }
+            Block::Para { children, .. }
+            | Block::ParaDiaphane { children, .. }
+            | Block::ParaAxioma { children, .. } => collect_englossis(children, dialect, out),
+            _ => {}
+        }
+    }
 }
 
 impl Renderer<'_> {
@@ -1407,6 +1695,12 @@ impl Renderer<'_> {
                         SlotName::Named(symbol) => {
                             (Some(Self::named_value(slots.inlines, symbol)), true)
                         }
+                        // Rendered already, by the rules of its
+                        // own dialektos; absent, it is empty.
+                        SlotName::Englossis(id) => (
+                            Some(self.placed.borrow().get(id).cloned().unwrap_or_default()),
+                            false,
+                        ),
                     };
                     let Some(value) = value else {
                         return Err(Error::new(ErrorKind::InvalidExo(format!(
@@ -1443,9 +1737,35 @@ impl Renderer<'_> {
     fn render_blocks(&self, blocks: &[Block]) -> Result<String> {
         let rendered: Vec<String> = blocks
             .iter()
+            .filter(|b| !self.placed_by_slot(b))
             .map(|b| self.render_block(b))
             .collect::<Result<_>>()?;
         Ok(rendered.join("\n"))
+    }
+
+    /// Whether a dialektos slot places this block: it then leaves
+    /// nothing where it stands, not even a line.
+    fn placed_by_slot(&self, block: &Block) -> bool {
+        matches!(block, Block::MonadEnglossis { dialect, .. } if self.slotted.contains(dialect))
+    }
+
+    /// Render the embedded blocks the exo places by slot, each as
+    /// it would render where it stands, joined as block renderings
+    /// are. Done ahead of the document: the slot may stand in any
+    /// template, the `*document` rule's or one filled on the way.
+    fn place(&self, blocks: &[Block]) -> Result<()> {
+        for id in &self.slotted {
+            let mut found: Vec<&Block> = Vec::new();
+            collect_englossis(blocks, id, &mut found);
+            let rendered: Vec<String> = found
+                .iter()
+                .map(|b| self.render_block(b))
+                .collect::<Result<_>>()?;
+            self.placed
+                .borrow_mut()
+                .insert(id.clone(), rendered.join("\n"));
+        }
+        Ok(())
     }
 
     /// Render a strophe's lines as table rows: split each line
@@ -1801,9 +2121,18 @@ impl Renderer<'_> {
                 children,
                 ann,
             } => {
-                let key = PatternKey::Structural("englossis".into());
-                let Some(rule) = self.find_rule(&key, &ann.genoses)? else {
-                    return Err(unhandled("*englossis"));
+                // The rule for the embedded dialektos by name, or
+                // the bare `*englossis` for any other.
+                let named = PatternKey::EnglossisKey(dialect.clone());
+                let rule = match self.find_rule(&named, &ann.genoses)? {
+                    Some(rule) => rule,
+                    None => {
+                        let key = PatternKey::Structural("englossis".into());
+                        match self.find_rule(&key, &ann.genoses)? {
+                            Some(rule) => rule,
+                            None => return Err(unhandled(&named.to_string())),
+                        }
+                    }
                 };
                 // The enclosed dialektos renders with its own
                 // rules - inline for the same target, or into an
@@ -1816,13 +2145,8 @@ impl Renderer<'_> {
                     .cloned();
                 let grammata = if let Some((_, aux_target)) = association {
                     let inner_exo = resolve_exo(self.dir, dialect, &aux_target)?;
-                    let inner = Renderer {
-                        exo: &inner_exo,
-                        dir: self.dir,
-                        aux: std::cell::RefCell::new(Vec::new()),
-                        raw_depth: std::cell::Cell::new(0),
-                        enclosing: std::cell::RefCell::new(Vec::new()),
-                    };
+                    let inner = renderer(&inner_exo, self.dir, 0);
+                    inner.place(children)?;
                     let content = inner.render_blocks(children)?;
                     // Whatever the inner renderer routed to its
                     // own auxiliary outputs travels up with it.
@@ -1835,13 +2159,8 @@ impl Renderer<'_> {
                     self.render_blocks(children)?
                 } else {
                     let inner_exo = resolve_exo(self.dir, dialect, &self.exo.target)?;
-                    let inner = Renderer {
-                        exo: &inner_exo,
-                        dir: self.dir,
-                        aux: std::cell::RefCell::new(Vec::new()),
-                        raw_depth: std::cell::Cell::new(self.raw_depth.get()),
-                        enclosing: std::cell::RefCell::new(Vec::new()),
-                    };
+                    let inner = renderer(&inner_exo, self.dir, self.raw_depth.get());
+                    inner.place(children)?;
                     let content = inner.render_blocks(children)?;
                     self.aux.borrow_mut().extend(inner.aux.into_inner());
                     content

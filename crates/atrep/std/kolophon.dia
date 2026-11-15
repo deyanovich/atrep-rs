@@ -1,0 +1,38 @@
+@@@!atrep
+
+@@/ kolophon: the publication statement of a work - who issued
+@@/ it, where, and when - as an atrep dialektos (κολοφών, the
+@@/ finishing stroke: the closing inscription of a manuscript,
+@@/ the imprint of a printed book). A document carries it as an
+@@/ embedded block (englossis), as it carries its bibliography
+@@/ in bibliogramma, and an exomorphosis places the block by its
+@@/ dialektos name where the target format keeps such a
+@@/ statement: a TEI publicationStmt, a DocBook info, the foot
+@@/ of a printed text. One sim, bibliogramma's field: the lemma
+@@/ names the field. The terms are bibliogramma's own campi,
+@@/ with its aliases - a publisher is officina in a bibliography
+@@/ entry and in the kolophon alike - so a kolophon authored in
+@@/ any covered language kanonizes, and hashes, identically.
+@@/ The vocabulary lists the three fields the importers write;
+@@/ a lemma outside it stands as written.
+
+@=== field
+@: lemma=campi
+grammata
+:@
+@"colophon field; the lemma is the field name (campus)"@
+===@
+
+@==% campi
+officina: botues casa-editrice editora editorial forlag förlag izdavač
+officina: izdevniecība kiadó kustantaja leidykla nakladatelství
+officina: nhà-xuất-bản penerbit publisher uitgeverij verlag
+officina: wydawnictwo yayınevi εκδότης видавництво издателство
+officina: издательство הוצאה ناشر प्रकाशक প্রকাশক สำนักพิมพ์ 出版社 출판사
+locus: address hely lieu local location lugar luogo miejsce mjesto
+locus: místo ort paikka plaats sted tempat vend vieta yer τόπος место
+locus: място місце מקום مكان مکان स्थान স্থান สถานที่ 地点 場所 장소
+datum: data date dato datum datums datë dátum fecha ngày päivämäärä
+datum: tanggal tarih ημερομηνία датa дата תאריך تاريخ تاریخ दिनांक
+datum: তারিখ วันที่ 日付 日期 날짜
+%==@

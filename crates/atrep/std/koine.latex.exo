@@ -174,9 +174,15 @@
 \ltlabel{@(onym)}
 >-@
 
-@-> *englossis
+@-> *englossis bibliogramma
 \bibliographystyle{plain}
 \bibliography{\jobname}
+>-@
+
+@@/ A block of any other dialektos (a transcluded file comes in
+@@/ as a block of this one) stands in the flow as it renders.
+@-> *englossis
+@(grammata)
 >-@
 
 @-> *media

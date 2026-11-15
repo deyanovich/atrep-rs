@@ -23,8 +23,20 @@
 <para>@(grammata)</para>
 >-@
 
+@@/ The document's colophon (an embedded kolophon block, wherever
+@@/ it stands) is drawn into an info after the title, the one
+@@/ place DocBook gives an info beside a bare title.
 @-> *solo =
-<title>@(grammata)</title>
+<title>@(grammata)</title>@[
+<info>
+@(!kolophon)
+</info>]@
+>-@
+
+@@/ The colophon's fields, as its own exo writes them; the title
+@@/ rule above places them.
+@-> *englossis kolophon
+@(grammata)
 >-@
 
 @-> =
