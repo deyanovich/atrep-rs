@@ -50,7 +50,10 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-          - os: macos-14
+          # macos-latest for both Apple targets: a pinned image
+          # label is retired on GitHub's schedule (macos-14 went
+          # on 2026-11-02 and took a release's arm64 job with it).
+          - os: macos-latest
             target: aarch64-apple-darwin
           - os: macos-latest
             target: x86_64-apple-darwin
