@@ -79,6 +79,23 @@ const STD_EXOS: &[(&str, &str, &str)] = &[
         include_str!("../std/at-aphanes.docbook.exo"),
     ),
     (
+        "at-aphanes",
+        "xhtml",
+        include_str!("../std/at-aphanes.xhtml.exo"),
+    ),
+    ("at-aphanes", "md", include_str!("../std/at-aphanes.md.exo")),
+    ("at-aphanes", "dj", include_str!("../std/at-aphanes.dj.exo")),
+    (
+        "at-aphanes",
+        "org",
+        include_str!("../std/at-aphanes.org.exo"),
+    ),
+    (
+        "at-aphanes",
+        "rst",
+        include_str!("../std/at-aphanes.rst.exo"),
+    ),
+    (
         "at-epimerismos",
         "latex",
         include_str!("../std/at-epimerismos.latex.exo"),

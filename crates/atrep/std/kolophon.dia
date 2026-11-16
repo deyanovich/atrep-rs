@@ -15,6 +15,13 @@
 @@/ any covered language kanonizes, and hashes, identically.
 @@/ The vocabulary lists the three fields the importers write;
 @@/ a lemma outside it stands as written.
+@@/ A field's value is its wording as printed. What the eye
+@@/ never sees rides the at-aphanes monosims, written first in
+@@/ the field's text: the normalized value of the date
+@@/ (chronos) beside its printed form, @?-(1502-09)September
+@@/ 1502. Litosis strips them, so the litos is the wording.
+
+@@::at-aphanes
 
 @=== field
 @: lemma=campi

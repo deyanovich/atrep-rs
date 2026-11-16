@@ -1990,6 +1990,21 @@ fn tei_said_mode(attrs: &[(String, String)]) -> Vec<String> {
     genoses
 }
 
+/// The normalized value a TEI date carries, as a chronos value:
+/// its `when` (or `when-iso`), else its `from` and `to` as an ISO
+/// 8601 interval, open at the side the date leaves out.
+fn tei_date_chronos(attrs: &[(String, String)]) -> Option<String> {
+    if let Some(when) = attr(attrs, "when").or_else(|| attr(attrs, "when-iso")) {
+        return Some(when.to_string());
+    }
+    match (attr(attrs, "from"), attr(attrs, "to")) {
+        (Some(from), Some(to)) => Some(format!("{from}/{to}")),
+        (Some(from), None) => Some(format!("{from}/")),
+        (None, Some(to)) => Some(format!("/{to}")),
+        (None, None) => None,
+    }
+}
+
 /// A TEI name, date, or seg that carries an unseen attribute
 /// becomes an annotation span (genos = the element name) with
 /// the marks first inside; one that carries none stays
@@ -2016,15 +2031,7 @@ fn tei_aphanes_span(name: &str, attrs: &[(String, String)]) -> Option<(String, V
             }
         }
         "date" | "dateRange" => {
-            if let Some(when) = attr(attrs, "when") {
-                marks.push(aphanes(CHRONOS, when));
-            } else if let (Some(from), Some(to)) = (attr(attrs, "from"), attr(attrs, "to")) {
-                marks.push(aphanes(CHRONOS, &format!("{from}/{to}")));
-            } else if let Some(from) = attr(attrs, "from") {
-                marks.push(aphanes(CHRONOS, &format!("{from}/")));
-            } else if let Some(to) = attr(attrs, "to") {
-                marks.push(aphanes(CHRONOS, &format!("/{to}")));
-            }
+            marks.extend(tei_date_chronos(attrs).map(|when| aphanes(CHRONOS, &when)));
         }
         _ => {}
     }
@@ -2614,22 +2621,42 @@ pub fn tei_to_document_lines(xml: &str, line_milestones: Option<&str>) -> Result
 struct TeiCtx {
     notes: usize,
     bib_keys: std::collections::HashSet<String>,
-    kolophon: Vec<(String, String)>,
+    kolophon: Vec<KolophonField>,
+}
+
+/// One field of a colophon: its name (kolophon's campi), the
+/// value as the source prints it, and for a date the normalized
+/// value the source carries beside the printed one.
+struct KolophonField {
+    name: &'static str,
+    value: String,
+    chronos: Option<String>,
 }
 
 /// The document's colophon as an embedded kolophon block: one
-/// field a pair, the lemma the field name, in the order given.
-fn kolophon_block(fields: Vec<(String, String)>) -> Block {
+/// field a pair, the lemma the field name, in the order given. A
+/// date's normalized value is the chronos aphanes that opens the
+/// field's text, so the printed wording stays the field's value.
+fn kolophon_block(fields: Vec<KolophonField>) -> Block {
     let children = fields
         .into_iter()
-        .map(|(name, value)| Block::Para {
-            symbol: ":".to_string(),
-            taxis: None,
-            lemma: vec![Inline::Text(name)],
-            children: vec![Block::Paragraph(vec![Inline::Text(value)])],
-            hypograph: Vec::new(),
-            bracket_matching: true,
-            ann: Annotations::default(),
+        .map(|field| {
+            let marks = field
+                .chronos
+                .map(|when| vec![aphanes(CHRONOS, &when)])
+                .unwrap_or_default();
+            Block::Para {
+                symbol: ":".to_string(),
+                taxis: None,
+                lemma: vec![Inline::Text(field.name.to_string())],
+                children: vec![Block::Paragraph(with_aphanes(
+                    marks,
+                    vec![Inline::Text(field.value)],
+                ))],
+                hypograph: Vec::new(),
+                bracket_matching: true,
+                ann: Annotations::default(),
+            }
         })
         .collect();
     Block::MonadEnglossis {
@@ -3083,12 +3110,15 @@ fn tei_header(
 /// the fields of the document's colophon (kolophon's officina,
 /// locus and datum), one field an element, in the order written.
 /// A date gives its printed text, or with none its `when`, or its
-/// `from` and `to` as a range. The rest of the statement (the
-/// availability, identifiers, a distributor, prose) is skipped.
+/// `from` and `to` as a range; the normalized value it carries
+/// (`when`, `when-iso`, or `from` and `to` as an interval) rides
+/// the field as a chronos aphanes, whatever the date prints. The
+/// rest of the statement (the availability, identifiers, a
+/// distributor, prose) is skipped.
 fn tei_publication_stmt(
     toks: &[Tok],
     mut i: usize,
-    fields: &mut Vec<(String, String)>,
+    fields: &mut Vec<KolophonField>,
 ) -> Result<usize> {
     while i < toks.len() {
         match &toks[i] {
@@ -3112,16 +3142,25 @@ fn tei_publication_stmt(
                 i = next;
                 let Some(field) = field else { continue };
                 text = text.trim().to_string();
-                if text.is_empty() && field == "datum" {
-                    text = match (attr(attrs, "when"), attr(attrs, "from"), attr(attrs, "to")) {
-                        (Some(when), _, _) => when.to_string(),
-                        (None, Some(from), Some(to)) => format!("{from}\u{2013}{to}"),
-                        (None, Some(one), None) | (None, None, Some(one)) => one.to_string(),
-                        (None, None, None) => String::new(),
-                    };
+                let mut chronos = None;
+                if field == "datum" {
+                    let when = attr(attrs, "when").or_else(|| attr(attrs, "when-iso"));
+                    if text.is_empty() {
+                        text = match (when, attr(attrs, "from"), attr(attrs, "to")) {
+                            (Some(when), _, _) => when.trim().to_string(),
+                            (None, Some(from), Some(to)) => format!("{from}\u{2013}{to}"),
+                            (None, Some(one), None) | (None, None, Some(one)) => one.to_string(),
+                            (None, None, None) => String::new(),
+                        };
+                    }
+                    chronos = tei_date_chronos(attrs).filter(|c| !aphanes_key(c).is_empty());
                 }
                 if !text.is_empty() {
-                    fields.push((field.to_string(), text));
+                    fields.push(KolophonField {
+                        name: field,
+                        value: text,
+                        chronos,
+                    });
                 }
             }
             _ => i += 1,
@@ -7675,7 +7714,7 @@ fn docbook_blocks(
                 // the root the publisher, its place and the date,
                 // which are the document's colophon.
                 let root = matches!(until.as_str(), "article" | "book" | "chapter");
-                let mut kolophon: Vec<(String, String)> = Vec::new();
+                let mut kolophon: Vec<KolophonField> = Vec::new();
                 i += 1;
                 loop {
                     match toks.get(i) {
@@ -7707,7 +7746,11 @@ fn docbook_blocks(
                             };
                             let (text, next) = docbook_text_of(toks, i + 1, name)?;
                             if !text.is_empty() {
-                                kolophon.push((field.to_string(), text));
+                                kolophon.push(KolophonField {
+                                    name: field,
+                                    value: text,
+                                    chronos: None,
+                                });
                             }
                             i = next;
                         }
@@ -7744,7 +7787,7 @@ fn docbook_blocks(
                 if !kolophon.is_empty() {
                     // An info orders its children freely; the
                     // colophon reads publisher, place, date.
-                    kolophon.sort_by_key(|(field, _)| match field.as_str() {
+                    kolophon.sort_by_key(|field| match field.name {
                         "officina" => 0,
                         "locus" => 1,
                         _ => 2,

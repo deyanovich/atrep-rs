@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use atrep::dendron::{self, Block, Document, Inline};
-use atrep::{dialektos, endo, exo, kanonizo, morph};
+use atrep::{dialektos, endo, exo, kanonizo, litosis, morph};
 
 fn tmp_dir(name: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
@@ -34,7 +34,9 @@ fn export(tmp: &Path, doc: &Document, target: &str) -> String {
 }
 
 /// The fields of the document's kolophon block, in order; `None`
-/// when it has none. The block must be the document's last.
+/// when it has none. The block must be the document's last. A
+/// field's value is its text, and a chronos reads as it is
+/// spelled in the source (`@?-(1858)`).
 fn kolophon_of(doc: &Document) -> Option<Vec<(String, String)>> {
     let at = doc.blocks.iter().position(
         |b| matches!(b, Block::MonadEnglossis { dialect, .. } if dialect == "kolophon"),
@@ -47,8 +49,11 @@ fn kolophon_of(doc: &Document) -> Option<Vec<(String, String)>> {
         inlines
             .iter()
             .map(|i| match i {
-                Inline::Text(t) => t.as_str(),
-                _ => panic!("a colophon field is plain text"),
+                Inline::Text(t) => t.clone(),
+                Inline::Monosim { symbol, param, .. } if symbol == "?-" => {
+                    format!("@?-({param})")
+                }
+                other => panic!("neither text nor a chronos: {other:?}"),
             })
             .collect()
     };
@@ -82,6 +87,32 @@ fn fields(pairs: &[(&str, &str)]) -> Option<Vec<(String, String)>> {
             .collect(),
     )
 }
+
+/// The Aldine Herodotus: a colophon whose date is printed in
+/// words and carries its normalized value as a chronos.
+const ALDINE: &str = "\
+@@@!litogramma
+
+@=The Histories=@
+
+@=== Clio
+These are the researches of Herodotus of Halicarnassus.
+===@
+
+@@@!(kolophon)
+@: officina
+Aldus Manutius
+:@
+
+@: locus
+Venice
+:@
+
+@: datum
+@?-(1502-09)September 1502
+:@
+!@@@
+";
 
 const HISTORIES: &str = "\
 @@@!litogramma
@@ -155,8 +186,9 @@ fn field_names_kanonize_to_the_latin_terms() {
 }
 
 /// A TEI publication statement's publisher, place and date are
-/// the colophon, at the document's end; the rest of the header
-/// reads as before.
+/// the colophon, at the document's end; the date's `when` rides
+/// its field as a chronos. The rest of the header reads as
+/// before.
 #[test]
 fn tei_publication_statement_is_the_colophon() {
     let doc = endo::tei_to_document(&tei(
@@ -169,7 +201,7 @@ fn tei_publication_statement_is_the_colophon() {
         fields(&[
             ("officina", "Clarendon Press"),
             ("locus", "Oxford"),
-            ("datum", "1858"),
+            ("datum", "@?-(1858)1858"),
         ])
     );
     let text = dendron::serialize(&doc);
@@ -186,7 +218,9 @@ fn tei_publication_statement_is_the_colophon() {
 
 /// A publisher that wraps a name gives its text; a date with no
 /// printed text gives its `when`, or its `from` and `to` as a
-/// range; the availability and the identifiers are skipped.
+/// range, and the chronos is the value itself, a `from` and `to`
+/// as an ISO 8601 interval; the availability and the identifiers
+/// are skipped.
 #[test]
 fn tei_statement_children_read_as_text() {
     let doc = endo::tei_to_document(&tei(
@@ -200,11 +234,64 @@ fn tei_statement_children_read_as_text() {
         kolophon_of(&doc),
         fields(&[
             ("officina", "Clarendon Press"),
-            ("datum", "1858\u{2013}1860"),
+            ("datum", "@?-(1858/1860)1858\u{2013}1860"),
         ])
     );
     let doc = endo::tei_to_document(&tei("<date when=\"1858-03\"/>")).unwrap();
-    assert_eq!(kolophon_of(&doc), fields(&[("datum", "1858-03")]));
+    assert_eq!(
+        kolophon_of(&doc),
+        fields(&[("datum", "@?-(1858-03)1858-03")])
+    );
+}
+
+/// A date printed in words keeps its wording as the field's
+/// value, and the normalized value the source carries beside it
+/// is the chronos: a `when`, a `when-iso`, a `from` or a `to`
+/// alone as an interval open at the other side. A date with no
+/// such attribute has no chronos. The chronos is unseen: the
+/// litos of the document is the same with it and without.
+#[test]
+fn tei_date_keeps_its_wording_and_its_normalized_value() {
+    let aldine = |date: &str| {
+        endo::tei_to_document(&tei(&format!(
+            "<publisher>Aldus Manutius</publisher><pubPlace>Venice</pubPlace>{date}"
+        )))
+        .unwrap()
+    };
+    let datum = |date: &str| kolophon_of(&aldine(date)).unwrap()[2].1.clone();
+    assert_eq!(
+        datum("<date when=\"1502-09\">September 1502</date>"),
+        "@?-(1502-09)September 1502"
+    );
+    assert_eq!(
+        datum("<date when-iso=\"1502-09\">September 1502</date>"),
+        "@?-(1502-09)September 1502"
+    );
+    assert_eq!(
+        datum("<date from=\"1502-09\">from September 1502</date>"),
+        "@?-(1502-09/)from September 1502"
+    );
+    assert_eq!(
+        datum("<date to=\"1502-09\">until September 1502</date>"),
+        "@?-(/1502-09)until September 1502"
+    );
+    assert_eq!(datum("<date>September 1502</date>"), "September 1502");
+    assert_eq!(
+        datum("<date when=\"\">September 1502</date>"),
+        "September 1502"
+    );
+
+    let tmp = tmp_dir("kolophon-chronos-litos");
+    let litos = |name: &str, date: &str| {
+        let kanon = kanon_of(&tmp, name, &dendron::serialize(&aldine(date)));
+        litosis::litosis(&kanon, &|_| Ok(Vec::new())).unwrap().litos
+    };
+    let with = litos("with.atd", "<date when=\"1502-09\">September 1502</date>");
+    assert_eq!(with, litos("without.atd", "<date>September 1502</date>"));
+    assert!(
+        with.contains("September 1502") && !with.contains("1502-09"),
+        "{with}"
+    );
 }
 
 /// A statement in prose, as `atrep exo` itself writes it for a
@@ -278,6 +365,54 @@ fn tei_export_places_the_colophon_in_the_header() {
     assert!(!body.contains("Clarendon"), "{out}");
     let back = endo::tei_to_document(&out).unwrap();
     assert_eq!(kolophon_of(&back), kolophon_of(&doc));
+}
+
+/// The date's chronos is written as its `when-iso`, which takes
+/// an interval as it takes a single date, and the importer reads
+/// the statement back as the same colophon. The exported header
+/// is the one a `when` in the source gives after an import.
+#[test]
+fn tei_export_writes_the_chronos_as_the_normalized_date() {
+    let tmp = tmp_dir("kolophon-tei-chronos");
+    let doc = kanon_of(&tmp, "doc.atd", ALDINE);
+    assert_eq!(
+        kolophon_of(&doc).unwrap()[2],
+        (
+            "datum".to_string(),
+            "@?-(1502-09)September 1502".to_string()
+        )
+    );
+    let out = export(&tmp, &doc, "tei");
+    assert!(
+        out.contains(
+            "<pubPlace>Venice</pubPlace>\n\
+             <date when-iso=\"1502-09\">September 1502</date>\n\
+             <availability>\n"
+        ),
+        "{out}"
+    );
+    let back = endo::tei_to_document(&out).unwrap();
+    assert_eq!(kolophon_of(&back), kolophon_of(&doc));
+    // A `when` in a source comes back out as the same header.
+    let from_when = endo::tei_to_document(&out.replace("when-iso=", "when=")).unwrap();
+    let kanon = kanon_of(&tmp, "when.atd", &dendron::serialize(&from_when));
+    assert_eq!(export(&tmp, &kanon, "tei"), out);
+
+    let interval = kanon_of(
+        &tmp,
+        "interval.atd",
+        &ALDINE.replace(
+            "@?-(1502-09)September 1502",
+            "@?-(1502-09/1502-12)autumn 1502",
+        ),
+    );
+    let out = export(&tmp, &interval, "tei");
+    assert!(
+        out.contains("<date when-iso=\"1502-09/1502-12\">autumn 1502</date>\n"),
+        "{out}"
+    );
+    let back = endo::tei_to_document(&out).unwrap();
+    assert_eq!(kolophon_of(&back), kolophon_of(&interval));
 }
 
 /// The same in the frame of a document with no title, and a field
@@ -390,6 +525,30 @@ fn every_export_renders_the_colophon() {
     ] {
         let out = export(&tmp, &doc, target);
         assert!(out.contains(expected), "{target}:\n{out}");
+    }
+}
+
+/// The chronos is unseen in every format but TEI: the date
+/// renders as its wording, and the normalized value reaches no
+/// output. DocBook's pubdate has no attribute for it.
+#[test]
+fn the_chronos_reaches_no_other_export() {
+    let tmp = tmp_dir("kolophon-chronos-exports");
+    let doc = kanon_of(&tmp, "doc.atd", ALDINE);
+    for (target, expected) in [
+        ("docbook", "<pubdate>September 1502</pubdate>\n"),
+        ("html", "<p class=\"datum\">September 1502</p>\n"),
+        ("xhtml", "<p class=\"datum\">September 1502</p>\n"),
+        ("latex", "Venice\\par\nSeptember 1502\\par\n"),
+        ("md", "\n\nVenice\n\nSeptember 1502\n"),
+        ("dj", "\n\nVenice\n\nSeptember 1502\n"),
+        ("org", "\n\nVenice\n\nSeptember 1502\n"),
+        ("rst", "\n\nVenice\n\nSeptember 1502\n"),
+        ("gemtext", "\n\nVenice\n\nSeptember 1502\n"),
+    ] {
+        let out = export(&tmp, &doc, target);
+        assert!(out.contains(expected), "{target}:\n{out}");
+        assert!(!out.contains("1502-09"), "{target}:\n{out}");
     }
 }
 

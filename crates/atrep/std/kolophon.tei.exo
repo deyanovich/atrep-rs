@@ -5,8 +5,11 @@
 @@/ element for as that element (publisher, pubPlace, date), any
 @@/ other field an idno typed with the field name - the one
 @@/ element of the statement that takes a free type. The
-@@/ enclosing publicationStmt is written by the host exo, which
-@@/ places the block in the header.
+@@/ normalized value of the date (the chronos aphanes) is the
+@@/ date's when-iso: the attribute takes every ISO 8601 form a
+@@/ chronos does, an interval included, where when takes a
+@@/ single date. The enclosing publicationStmt is written by
+@@/ the host exo, which places the block in the header.
 
 @%
 & &amp;
@@ -28,7 +31,7 @@
 >-@
 
 @-> :(datum)
-<date>@(grammata)</date>
+<date@[ when-iso="@(chronos)"]@>@(grammata)</date>
 >-@
 
 @-> :

@@ -134,6 +134,35 @@ fn aphanes_renders_across_litogramma_targets() {
     assert!(!tei.contains("?:"), "{tei}");
 }
 
+/// A date's normalized value is its chronos whichever attribute
+/// carries it: `when`, `when-iso`, or `from` and `to` as an ISO
+/// 8601 interval, open at the side the date leaves out.
+#[test]
+fn tei_date_attributes_give_one_chronos() {
+    let chronos = |attrs: &str| {
+        let doc = endo::tei_to_document(&format!(
+            "<TEI xmlns=\"http://www.tei-c.org/ns/1.0\">\n\
+             <teiHeader><fileDesc><titleStmt><title>Tom Sawyer</title></titleStmt>\
+             </fileDesc></teiHeader>\n\
+             <text><body><p>On <date {attrs}>that day</date> he stayed.</p></body></text></TEI>"
+        ))
+        .unwrap();
+        let atd = dendron::serialize(&doc);
+        let at = atd
+            .find("@?-(")
+            .unwrap_or_else(|| panic!("no chronos: {atd}"));
+        atd[at..atd[at..].find(')').unwrap() + at + 1].to_string()
+    };
+    assert_eq!(chronos("when=\"1876-06-01\""), "@?-(1876-06-01)");
+    assert_eq!(chronos("when-iso=\"1876-06-01\""), "@?-(1876-06-01)");
+    assert_eq!(
+        chronos("from=\"1876-06-01\" to=\"1876-06-04\""),
+        "@?-(1876-06-01/1876-06-04)"
+    );
+    assert_eq!(chronos("from=\"1876-06-01\""), "@?-(1876-06-01/)");
+    assert_eq!(chronos("to=\"1876-06-04\""), "@?-(/1876-06-04)");
+}
+
 /// The TEI importer: a speech paragraph attributed by pointer
 /// alone is a prose dialogue line with the prosopon; inline said
 /// and q carry who and ana; names with ref keep their span; a

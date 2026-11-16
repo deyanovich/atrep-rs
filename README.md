@@ -241,11 +241,16 @@ Implemented:
   as a micro-dialektos a document embeds as it embeds its
   bibliography: one field sim, the lemma the field name, on
   bibliogramma's own terms (`officina`, `locus`, `datum`, with
-  their aliases). It has an exo for every target a litogramma
-  document exports to (`tei`, `docbook`, `html`, `xhtml`,
-  `latex`, `md`, `dj`, `org`, `rst`, `gemtext`), so a document
-  that carries a colophon exports wherever it did without one.
-  The
+  their aliases). A field's value is its wording as printed;
+  the normalized value of the date rides the field as the
+  `chronos` of the at-aphanes pack, which kolophon inherits
+  (`@?-(1502-09)September 1502`), and litosis strips it. It has
+  an exo for every target a litogramma document exports to
+  (`tei`, `docbook`, `html`, `xhtml`, `latex`, `md`, `dj`,
+  `org`, `rst`, `gemtext`), so a document that carries a
+  colophon exports wherever it did without one; the tei exo
+  writes the chronos as the date's `when-iso`, and no other
+  target shows it. The
   publisher-register exos (Loeb, OCT, Penguin, GOST, …) remain
   in the litogramma repo.
 - Morphisms (spec v0.11, optional conformance class):
@@ -356,7 +361,9 @@ Implemented:
   into `litogramma` (`.xml`/`.tei`): teiHeader front matter,
   the publication statement's publisher, place and date as a
   `kolophon` block closing the document (a statement in prose
-  gives none; the dictionary path takes none),
+  gives none; the dictionary path takes none), the date's
+  `when`, `when-iso` or `from` and `to` as the chronos of its
+  field beside the printed wording,
   nested div sectioning with type/depth laddering, lg/l verse,
   sp/speaker drama with stage directions, epigraphs with
   attribution, notes as deixis callouts with footnote bodies,
